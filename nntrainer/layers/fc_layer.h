@@ -102,6 +102,8 @@ public:
    * &value)
    */
   void setProperty(const std::vector<std::string> &values) override;
+  
+  void forwarding_lora(RunLayerContext &context, Tensor &weight);
 
   inline static const std::string type = "fully_connected";
 
