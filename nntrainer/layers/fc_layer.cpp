@@ -158,16 +158,13 @@ void FullyConnectedLayer::setProperty(const std::vector<std::string> &values) {
   LayerImpl::setProperty(remain_props);
 }
 
-/**
- * @brief forwarding function for lora. 
- * It would be called during `forwarding` of FC layer.
-*/
-void FullyConnectedLayer::forwarding_lora(RunLayerContext &context, Tensor &weight){
+void FullyConnectedLayer::forwarding_lora(RunLayerContext &context,
+                                          Tensor &weight) {
   Tensor &loraA = context.getWeight(lora_idx[LORAParams::loraA]);
   Tensor &loraB = context.getWeight(lora_idx[LORAParams::loraB]);
   Tensor &weight_lora = context.getTensor(lora_idx[LORAParams::loraW]);
-  loraA.dot(loraB, weight_lora);   // weight_lora = loraA @ loraB
-  weight.add(weight_lora, weight); // weight += weight_lora
+  loraA.dot(loraB, weight_lora); // weight_lora = loraA @ loraB
+  weight.add_i(weight_lora);
 }
 
 void FullyConnectedLayer::forwarding(RunLayerContext &context, bool training) {
@@ -188,11 +185,11 @@ void FullyConnectedLayer::forwarding(RunLayerContext &context, bool training) {
       context.getWeightObject(weight_idx[FCParams::weight]).getOutputAxis();
 
     weight.dequantize(weight_, axis);
-    if(!std::get<props::LoraRank>(fc_props).empty()) 
+    if (!std::get<props::LoraRank>(fc_props).empty())
       forwarding_lora(context, weight_);
     input_.dot(weight_, hidden_, false, false);
   } else {
-    if(!std::get<props::LoraRank>(fc_props).empty())
+    if (!std::get<props::LoraRank>(fc_props).empty())
       forwarding_lora(context, weight);
     input_.dot(weight, hidden_, false, false);
   }
@@ -256,11 +253,6 @@ void FullyConnectedLayer::incremental_forwarding(RunLayerContext &context,
   }
 }
 
-/**
- * @note 
- * [note for LoRA] implicit calcDerivative is implicitly applied. 
- * The weight is already updated with the LoRA's (W = W + W_lora)
-*/
 void FullyConnectedLayer::calcDerivative(RunLayerContext &context) {
   Tensor &weight = context.getWeight(weight_idx[FCParams::weight]);
 
