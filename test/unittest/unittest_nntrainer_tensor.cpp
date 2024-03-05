@@ -4460,6 +4460,250 @@ TEST(nntrainer_Tensor, dequantize_05_n) {
   EXPECT_THROW({ input.dequantize(output, 1); }, std::invalid_argument);
 }
 
+TEST(nntrainer_Tensor, sin_contiguous_p) {
+  int batch = 1;
+  int channel = 1;
+  int height = 1440;
+  int width = 1440;
+
+  const int MOD = 10;
+
+  const float eps = 1e-6;
+
+  nntrainer::Tensor input(batch, channel, height, width);
+  nntrainer::Tensor sin_output(batch, channel, height, width);
+
+  GEN_TEST_INPUT(input, (i * (channel * width * height) + j * (height * width) +
+                         k * (width) + l + 1) %
+                          MOD);
+
+  nntrainer::Tensor result_sine(batch, channel, height, width);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          result_sine.setValue(b, c, h, w,
+                               std::sin(input.getValue(b, c, h, w)));
+        }
+      }
+    }
+  }
+
+  input.sin(sin_output);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          EXPECT_NEAR(sin_output.getValue(b, c, h, w),
+                      result_sine.getValue(b, c, h, w), eps);
+        }
+      }
+    }
+  }
+}
+
+TEST(nntrainer_Tensor, cos_contiguous_p) {
+  int batch = 1;
+  int channel = 1;
+  int height = 1440;
+  int width = 1440;
+
+  nntrainer::Tensor input(batch, channel, height, width);
+  nntrainer::Tensor cos_output(batch, channel, height, width);
+
+  const int MOD = 10;
+  const float eps = 1e-6;
+
+  GEN_TEST_INPUT(input, (i * (channel * width * height) + j * (height * width) +
+                         k * (width) + l + 1) %
+                          MOD);
+
+  nntrainer::Tensor result_cosine(batch, channel, height, width);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          result_cosine.setValue(b, c, h, w,
+                                 std::cos(input.getValue(b, c, h, w)));
+        }
+      }
+    }
+  }
+
+  input.cos(cos_output);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          EXPECT_NEAR(cos_output.getValue(b, c, h, w),
+                      result_cosine.getValue(b, c, h, w), eps);
+        }
+      }
+    }
+  }
+}
+
+TEST(nntrainer_Tensor, cos_uncontiguous_p) {
+  int batch = 3;
+  int channel = 1;
+  int height = 3;
+  int width = 10;
+
+  nntrainer::TensorDim dim(batch, channel, height, width);
+  nntrainer::Tensor input(batch, channel, height, 2 * width);
+  nntrainer::Tensor shared_output(batch, channel, height, width);
+  nntrainer::Tensor ground_truth(batch, channel, height, width);
+
+  const int MOD = 10;
+  const float eps = 1e-5;
+
+  GEN_TEST_INPUT(input, (i * (channel * width * height) + j * (height * width) +
+                         k * (width) + l + 1) %
+                          MOD);
+
+  nntrainer::Tensor shared_input = input.getSharedDataTensor(dim, 0, false);
+  ground_truth.copy_with_stride(shared_input);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          ground_truth.setValue(b, c, h, w,
+                                std::cos(ground_truth.getValue(b, c, h, w)));
+        }
+      }
+    }
+  }
+
+  shared_input.cos(shared_output);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          EXPECT_NEAR(shared_output.getValue(b, c, h, w),
+                      ground_truth.getValue(b, c, h, w), eps);
+        }
+      }
+    }
+  }
+}
+
+TEST(nntrainer_Tensor, sin_uncontiguous_p) {
+  int batch = 3;
+  int channel = 1;
+  int height = 3;
+  int width = 10;
+
+  nntrainer::TensorDim dim(batch, channel, height, width);
+  nntrainer::Tensor input(batch, channel, height, 2 * width);
+  nntrainer::Tensor shared_output(batch, channel, height, width);
+  nntrainer::Tensor ground_truth(batch, channel, height, width);
+
+  const int MOD = 10;
+  const float eps = 1e-5;
+
+  GEN_TEST_INPUT(input, (i * (channel * width * height) + j * (height * width) +
+                         k * (width) + l + 1) %
+                          MOD);
+
+  nntrainer::Tensor shared_input = input.getSharedDataTensor(dim, 0, false);
+  ground_truth.copy_with_stride(shared_input);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          ground_truth.setValue(b, c, h, w,
+                                std::sin(ground_truth.getValue(b, c, h, w)));
+        }
+      }
+    }
+  }
+
+  shared_input.sin(shared_output);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          EXPECT_NEAR(shared_output.getValue(b, c, h, w),
+                      ground_truth.getValue(b, c, h, w), eps);
+        }
+      }
+    }
+  }
+}
+
+TEST(nntrainer_Tensor, sin_unmatched_dim_n) {
+  int batch = 3;
+  int channel = 1;
+  int height = 3;
+  int width = 10;
+
+  nntrainer::Tensor input(batch, channel, height, 2 * width);
+  nntrainer::Tensor output(batch, channel, height, width);
+
+  const int MOD = 10;
+
+  GEN_TEST_INPUT(input, (i * (channel * width * height) + j * (height * width) +
+                         k * (width) + l + 1) %
+                          MOD);
+
+  EXPECT_THROW({ input.sin(output); }, std::invalid_argument);
+}
+
+TEST(nntrainer_Tensor, inv_sqrt_i_uncontiguous_p) {
+  int batch = 3;
+  int channel = 1;
+  int height = 3;
+  int width = 10;
+
+  nntrainer::TensorDim dim(batch, channel, height, width);
+  nntrainer::Tensor input(batch, channel, height, 2 * width);
+  nntrainer::Tensor ground_truth(batch, channel, height, width);
+
+  const int MOD = 10;
+
+  GEN_TEST_INPUT(input, (i * (channel * width * height) + j * (height * width) +
+                         k * (width) + l + 1) %
+                            MOD +
+                          1);
+
+  nntrainer::Tensor shared_input = input.getSharedDataTensor(dim, 0, false);
+  ground_truth.copy_with_stride(shared_input);
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          ground_truth.setValue(
+            b, c, h, w, 1 / std::sqrt(ground_truth.getValue(b, c, h, w)));
+        }
+      }
+    }
+  }
+
+  shared_input.inv_sqrt_i();
+
+  const float eps = 1e-5;
+
+  for (int b = 0; b < batch; b++) {
+    for (int c = 0; c < channel; c++) {
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          EXPECT_NEAR(shared_input.getValue(b, c, h, w),
+                      ground_truth.getValue(b, c, h, w), eps);
+        }
+      }
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   int result = -1;
 

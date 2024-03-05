@@ -38,6 +38,7 @@
 #include <nntrainer_log.h>
 #include <realizer.h>
 #include <tensor.h>
+#include <tensor_v2.h>
 
 /** tolerance is reduced for packaging, but CI runs at full tolerance */
 #ifdef REDUCE_TOLERANCE
@@ -108,7 +109,7 @@ private:
       for (int j = 0; j < height; ++j) {            \
         for (int k = 0; k < width; ++k) {           \
           for (int l = 0; l < channel; ++l) {       \
-            float val = eqation_i_j_k_l;            \
+            float val = (eqation_i_j_k_l);          \
             input.setValue(i, l, j, k, val);        \
           }                                         \
         }                                           \
@@ -122,12 +123,26 @@ private:
       for (int j = 0; j < channel; ++j) {      \
         for (int k = 0; k < height; ++k) {     \
           for (int l = 0; l < width; ++l) {    \
-            float val = eqation_i_j_k_l;       \
+            float val = (eqation_i_j_k_l);     \
             input.setValue(i, j, k, l, val);   \
           }                                    \
         }                                      \
       }                                        \
     }                                          \
+  } while (0)
+
+#define GEN_TEST_INPUT_B(input, equation_i_j_k_l) \
+  do {                                            \
+    for (int i = 0; i < batch; ++i) {             \
+      for (int j = 0; j < channel; ++j) {         \
+        for (int k = 0; k < height_b; ++k) {      \
+          for (int l = 0; l < width_b; ++l) {     \
+            float val = (equation_i_j_k_l);       \
+            input.setValue(i, j, k, l, val);      \
+          }                                       \
+        }                                         \
+      }                                           \
+    }                                             \
   } while (0)
 
 /**
@@ -154,6 +169,31 @@ randUniform(unsigned int batch, unsigned channel, unsigned height,
             unsigned width, float min = -1, float max = 1,
             nntrainer::Tformat fm = nntrainer::Tformat::NCHW,
             nntrainer::Tdatatype d_type = nntrainer::Tdatatype::FP32);
+
+/**
+ * @brief return a tensor filled with contant value with dimension
+ */
+nntrainer::TensorV2
+constantV2(float value, unsigned int d0, unsigned d1, unsigned d2, unsigned d3,
+           nntrainer::Tformat fm = nntrainer::Tformat::NCHW,
+           nntrainer::Tdatatype d_type = nntrainer::Tdatatype::FP32);
+
+/**
+ * @brief return a tensor filled with ranged value with given dimension
+ */
+nntrainer::TensorV2
+rangedV2(unsigned int batch, unsigned channel, unsigned height, unsigned width,
+         nntrainer::Tformat fm = nntrainer::Tformat::NCHW,
+         nntrainer::Tdatatype d_type = nntrainer::Tdatatype::FP32);
+
+/**
+ * @brief return a tensor filled with random value with given dimension
+ */
+nntrainer::TensorV2
+randUniformV2(unsigned int batch, unsigned channel, unsigned height,
+              unsigned width, float min = -1, float max = 1,
+              nntrainer::Tformat fm = nntrainer::Tformat::NCHW,
+              nntrainer::Tdatatype d_type = nntrainer::Tdatatype::FP32);
 
 /**
  * @brief replace string and save in file
@@ -306,6 +346,35 @@ float mse(Ta *A, Tb *B, uint32_t size) {
   float mse = mse_error / size;
   return mse;
 }
+
+/**
+ * @brief A helper struct for performing static_cast operations on types.
+ *
+ * This struct provides a templated function that can be used to perform a
+ * static_cast operation between two types. It is intended to be used with the
+ * std::transform() function from the STL.
+ *
+ * @tparam T The target type to which the value will be converted.
+ */
+template <typename T> // T models Any
+struct static_cast_func {
+  /**
+   * @brief Performs a static_cast operation on a given value.
+   *
+   * This function takes a constant reference to a value of type T1, where T1 is
+   * a type that is statically convertible to T. It performs a static_cast
+   * operation on the value and returns the result as a value of type T.
+   *
+   * @tparam T1 The source type of the value being converted.
+   * @param[in] x The input value to convert.
+   * @return result of the static_cast operation as a value of type
+   * T.
+   */
+  template <typename T1> // T1 models type statically convertible to T
+  T operator()(const T1 &x) const {
+    return static_cast<T>(x);
+  }
+};
 
 #endif /* __cplusplus */
 #endif /* __NNTRAINER_TEST_UTIL_H__ */
