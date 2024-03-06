@@ -9,7 +9,8 @@ const int epochs = 1;
 const float learning_rate = 0.001;
 
 const int input_dim = 5;
-const int unit_dim = 10;
+const int unit_dim1 = 10;
+const int unit_dim2 = 5;
 const int rank = 3;
 
 /** create test model */
@@ -21,7 +22,11 @@ std::unique_ptr<ml::train::Model> create_model() {
     "input", {"input_shape=1:1:" + std::to_string(input_dim)}));
 
   model->addLayer(ml::train::createLayer("fully_connected",
-                                         {"unit=" + std::to_string(unit_dim),
+                                         {"unit=" + std::to_string(unit_dim1),
+                                          "lora_rank=" + std::to_string(rank),
+                                          "disable_bias=true"}));
+  model->addLayer(ml::train::createLayer("fully_connected",
+                                         {"unit=" + std::to_string(unit_dim2),
                                           "lora_rank=" + std::to_string(rank),
                                           "disable_bias=true"}));
 
