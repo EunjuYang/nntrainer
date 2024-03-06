@@ -158,15 +158,6 @@ void FullyConnectedLayer::setProperty(const std::vector<std::string> &values) {
   LayerImpl::setProperty(remain_props);
 }
 
-void FullyConnectedLayer::forwarding_lora(RunLayerContext &context,
-                                          Tensor &weight) {
-  Tensor &loraA = context.getWeight(lora_idx[LORAParams::loraA]);
-  Tensor &loraB = context.getWeight(lora_idx[LORAParams::loraB]);
-  Tensor &weight_lora = context.getTensor(lora_idx[LORAParams::loraW]);
-  loraA.dot(loraB, weight_lora); // weight_lora = loraA @ loraB
-  weight.add_i(weight_lora);
-}
-
 void FullyConnectedLayer::forwarding(RunLayerContext &context, bool training) {
   Tensor &weight = context.getWeight(weight_idx[FCParams::weight]);
   Tensor &hidden_ = context.getOutput(SINGLE_INOUT_IDX);
@@ -185,12 +176,8 @@ void FullyConnectedLayer::forwarding(RunLayerContext &context, bool training) {
       context.getWeightObject(weight_idx[FCParams::weight]).getOutputAxis();
 
     weight.dequantize(weight_, axis);
-    if (!std::get<props::LoraRank>(fc_props).empty())
-      forwarding_lora(context, weight_);
     input_.dot(weight_, hidden_, false, false);
   } else {
-    if (!std::get<props::LoraRank>(fc_props).empty())
-      forwarding_lora(context, weight);
     input_.dot(weight, hidden_, false, false);
   }
 
