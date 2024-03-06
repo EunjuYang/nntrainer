@@ -752,6 +752,58 @@ public:
   TensorV2 &subtract(TensorV2 const &m, TensorV2 &output) const;
 
   /**
+   * @brief     sum all the Tensor elements according to the batch
+   * @retval    Calculated Tensor(batch, 1, 1, 1)
+   */
+  TensorV2 sum_by_batch() const;
+
+  /**
+   * @brief     sum all the Tensor elements according to the axis
+   *            0 : batch direction
+   *            1 : channel direction
+   *            2 : height direction
+   *            3 : width direction
+   * @param[in] axis Axis to calculate sum along
+   * @param[in] alpha Scale the sum by this value
+   * @retval    Calculated Tensor
+   */
+  TensorV2 sum(unsigned int axis, float alpha = 1.0) const;
+
+  /**
+   * @brief     sum all the Tensor elements according to the axis
+   *            0 : batch direction
+   *            1 : channel direction
+   *            2 : height direction
+   *            3 : width direction
+   * @param[in] axis Axis to calculate sum along
+   * @param[out] output output tensor
+   * @param[in] alpha Scale the sum by this value
+   * @retval    Calculated Tensor
+   */
+  TensorV2 &sum(unsigned int axis, TensorV2 &output, float alpha = 1.0,
+                float beta = 0.0) const;
+
+  /**
+   * @brief sum all the Tensor by multiple axes
+   *
+   * @param axes axes to sum along
+   * @param alpha Scale the sum by this value
+   * @return Tensor
+   */
+  TensorV2 sum(const std::vector<unsigned int> &axes, float alpha = 1.0) const;
+
+  /**
+   * @brief sum all the Tensor by multiple axes
+   *
+   * @param axes axes to sum along
+   * @param[out] output output tensor
+   * @param alpha Scale the sum by this value
+   * @return Tensor
+   */
+  TensorV2 &sum(const std::vector<unsigned int> &axes, TensorV2 &output,
+                float alpha = 1.0) const;
+
+  /**
    * @brief     Tensor power element without mem copy
    * @param[in] exponent exponent
    * @retval    #ML_ERROR_NONE  Successful
@@ -873,6 +925,46 @@ public:
                                     TensorV2 const &output_deriv,
                                     bool trans = false, bool trans_in = false,
                                     float beta = 0.0f) const;
+
+  /**
+   * @brief Calculate Drop Out Mask : x * 1.0/(1.0-rate)
+   * @param dropout drop out rate
+   * @retval Tensor& reference of drop out mask
+   */
+  TensorV2 dropout_mask(float dropout) const;
+
+  /**
+   * @brief Calculate Drop Out Mask : x * 1.0/(1.0-rate) inplace
+   * @param dropout drop out rate
+   */
+  void dropout_mask(float dropout);
+
+  /**
+   * @brief Calculate filter mask
+   * @param mask_len length of each mask along the last axis
+   * @param invert invert the mask
+   */
+  void filter_mask(const TensorV2 &mask_len, bool reverse = false);
+
+  /**
+   * @brief Calculate 2 Zone Out Mask
+   * @details Calculate zone out mask according to the bernoulli distribution.
+   * Zone out mask with rate @a zoneout for inplace and the other zone out mask
+   * with rate @a (1-zoneout).
+   * @param zoneout zone out rate
+   * @retval Tensor zone out mask for opposite tensor
+   */
+  TensorV2 zoneout_mask(float zoneout);
+
+  /**
+   * @brief Calculate 2 Zone Out Mask
+   * @details Calculate zone out mask according to the bernoulli distribution.
+   * Zone out mask with rate @a zoneout for inplace and the other zone out mask
+   * with rate @a (1-zoneout).
+   * @param opposite opposite zone out mask
+   * @param zoneout zone out rate
+   */
+  void zoneout_mask(TensorV2 &opposite, float zoneout);
 
   /**
    * @brief     Print element
@@ -1056,6 +1148,14 @@ public:
    * @retval    width size
    */
   size_t width() const;
+
+  /**
+   * @brief Merge the given two axis for tensor at second axis inplace
+   *
+   * @param axis1 first axis to merge
+   * @param axis2 second axis to merge
+   */
+  void mergeAxis(unsigned int axis1, unsigned int axis2);
 
   /**
    * @brief Update destination tensor to share memory with source tensor
