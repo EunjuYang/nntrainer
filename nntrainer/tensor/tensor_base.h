@@ -17,7 +17,37 @@
 #include <stdexcept>
 
 #include <memory_data.h>
+#include <nntrainer_error.h>
 #include <tensor_dim.h>
+#include <util_func.h>
+
+#define transposeloop(cl, ci, cj, ck, sl, si, sj, sk)                 \
+  do {                                                                \
+    unsigned int i, j, k, l;                                          \
+    int inidx = 0, outidx = 0;                                        \
+    for (cl = 0; cl < sl; cl++)                                       \
+      for (ci = 0; ci < si; ci++)                                     \
+        for (cj = 0; cj < sj; cj++)                                   \
+          for (ck = 0; ck < sk; ck++) {                               \
+            outidx = si * sj * sk * cl + sj * sk * ci + sk * cj + ck; \
+            inidx = l * SI * SJ * SK + i * SJ * SK + j * SK + k;      \
+            outptr[outidx] = inptr[inidx];                            \
+          }                                                           \
+  } while (0);
+
+#define transposeloop_nhwc(cl, ci, cj, ck, sl, si, sj, sk)            \
+  do {                                                                \
+    unsigned int i, j, k, l;                                          \
+    int inidx = 0, outidx = 0;                                        \
+    for (cl = 0; cl < sl; cl++)                                       \
+      for (ci = 0; ci < si; ci++)                                     \
+        for (cj = 0; cj < sj; cj++)                                   \
+          for (ck = 0; ck < sk; ck++) {                               \
+            outidx = si * sj * sk * cl + sj * sk * ci + sk * cj + ck; \
+            inidx = l * SJ * SK * SI + j * SK * SI + k * SI + i;      \
+            outptr[outidx] = inptr[inidx];                            \
+          }                                                           \
+  } while (0);
 
 namespace nntrainer {
 
@@ -41,6 +71,7 @@ enum class Initializer {
   NONE            /** No initialization */
 };
 
+class TensorV2;
 class SrcSharedTensorBase;
 
 /**
@@ -81,6 +112,20 @@ public:
    */
   TensorBase(const TensorDim &d, const void *buf = nullptr) :
     TensorBase(d, true) {}
+
+  /**
+   * @brief     Comparison operator overload
+   * @param[in] rhs Tensor to be compared with
+   * @note      Only compares Tensor information
+   */
+  bool operator==(const TensorBase &rhs) const;
+
+  /**
+   * @brief     Comparison operator overload
+   * @param[in] rhs Tensor to be compared with
+   * @note      Only compares Tensor information
+   */
+  bool operator!=(const TensorBase &rhs) const { return !(*this == rhs); }
 
   /**
    * @brief Basic Destructor
@@ -130,15 +175,36 @@ public:
   virtual void setValue(float value) = 0;
 
   /**
-   * @copydoc TensorV2::setValue(float value)
+   * @copydoc TensorV2::setValue(b, c, h, w, value)
    */
-  virtual void setValue(unsigned int batch, unsigned int c, unsigned int h,
+  virtual void setValue(unsigned int b, unsigned int c, unsigned int h,
                         unsigned int w, float value) = 0;
+
+  /**
+   * @copydoc TensorV2::addValue()
+   */
+  virtual void addValue(unsigned int b, unsigned int c, unsigned int h,
+                        unsigned int w, float value, float beta) = 0;
 
   /**
    * @copydoc TensorV2::setZero()
    */
   virtual void setZero() = 0;
+
+  /**
+   * @copydoc TensorV2::setRandNormal()
+   */
+  virtual void setRandNormal(float mean, float stddev) = 0;
+
+  /**
+   * @copydoc TensorV2::setRandBernoulli()
+   */
+  virtual void setRandUniform(float min, float max) = 0;
+
+  /**
+   * @copydoc TensorV2::setRandBernoulli()
+   */
+  virtual void setRandBernoulli(float probability) = 0;
 
   /**
    * @copydoc TensorV2::initialize()
@@ -151,15 +217,153 @@ public:
   virtual void initialize(Initializer init) = 0;
 
   /**
+   * @copydoc TensorV2::multiply_strided(TensorV2 const &m, TensorV2 &output,
+   * const float beta)
+   */
+  virtual TensorV2 multiply_strided(TensorV2 const &m, TensorV2 &output,
+                                    const float beta) const = 0;
+
+  /**
+   * @copydoc TensorV2::multiply_i(float const &value)
+   */
+  virtual int multiply_i(float const &value) = 0;
+
+  /**
+   * @copydoc TensorV2::multiply(float const &value, TensorV2 &out)
+   */
+  virtual TensorV2 &multiply(float const &value, TensorV2 &out) const = 0;
+
+  /**
+   * @copydoc TensorV2::multiply(TensorV2 const &m, TensorV2 &output, const
+   * float beta = 0.0)
+   */
+  virtual TensorV2 &multiply(TensorV2 const &m, TensorV2 &output,
+                             const float beta = 0.0) const = 0;
+
+  /**
+   * @copydoc TensorV2::divide(float const &value, TensorV2 &output)
+   */
+  virtual TensorV2 &divide(float const &value, TensorV2 &output) const = 0;
+
+  /**
+   * @copydoc TensorV2::divide(TensorV2 const &m, TensorV2 &output)
+   */
+  virtual TensorV2 &divide(TensorV2 const &m, TensorV2 &output) const = 0;
+
+  /**
+   * @copydoc TensorV2::add_strided(TensorV2 const &input, TensorV2 &output,
+   * const float beta)
+   */
+  virtual TensorV2 &add_strided(TensorV2 const &input, TensorV2 &output,
+                                const float beta) const = 0;
+
+  /**
+   * @copydoc TensorV2::add(float const &value, TensorV2 &output)
+   */
+  virtual TensorV2 &add(float const &value, TensorV2 &output) const = 0;
+
+  /**
+   * @copydoc TensorV2::add(TensorV2 const &m, TensorV2 &output, float const
+   * alpha)
+   */
+  virtual TensorV2 &add(TensorV2 const &m, TensorV2 &output,
+                        float const alpha) const = 0;
+
+  /**
+   * @copydoc TensorV2::subtract(float const &value, TensorV2 &output)
+   */
+  virtual TensorV2 &subtract(float const &value, TensorV2 &output) const = 0;
+
+  /**
+   * @copydoc TensorV2::pow(float exponent, TensorV2 &output)
+   */
+  virtual TensorV2 &pow(float exponent, TensorV2 &output) const = 0;
+
+  /**
+   * @copydoc TensorV2::erf(TensorV2 &output)
+   */
+  virtual TensorV2 &erf(TensorV2 &output) const = 0;
+
+  /**
+   * @brief     Dot Product of Tensor ( equal MxM )
+   * @details   This applies dot of the last dimension of this and
+   * second-last dimension of passed tensor m.
+   * @param[in] input Tensor
+   * @param[in] output output Tensor
+   * @param[in] trans Transpose
+   * @param[in] trans_in Transpose input
+   * @param[in] beta beta
+   * @retval    Calculated Tensor
+   */
+  virtual TensorV2 &dot(TensorV2 const &input, TensorV2 &output, bool trans,
+                        bool trans_in, float beta) const = 0;
+
+  /**
    * @copydoc TensorV2::print(std::ostream &out)
    */
   virtual void print(std::ostream &out) const = 0;
+
+  /**
+   * @copydoc TensorV2::apply(std::function<T(T)> f, TensorV2 &output)
+   */
+  virtual TensorV2 &apply(std::function<float(float)> f,
+                          TensorV2 &output) const {
+    return output;
+  }
+
+#ifdef ENABLE_FP16
+  /**
+   * @copydoc TensorV2::apply(std::function<T(T)> f, TensorV2 &output)
+   */
+  virtual TensorV2 &apply(std::function<_FP16(_FP16)> f,
+                          TensorV2 &output) const {
+    return output;
+  }
+#endif
+
+  /**
+   * @brief     Copy the Tensor
+   * @param[in] from Tensor to be copied
+   *
+   * @note copy can reshape the tensor to match the shape
+   */
+  virtual void copy(const TensorV2 &from) = 0;
+
+  /**
+   * @brief     Copy the Tensor
+   * @param[in] from Tensor to be copied
+   */
+  virtual void copyData(const TensorV2 &from) = 0;
+
+  /**
+   * @copydoc TensorV2::transpose(const std::string &direction, TensorV2 &out)
+   */
+  virtual TensorV2 &transpose(const std::string &direction,
+                              TensorV2 &out) const = 0;
 
   /**
    * @brief     put data of Tensor
    * @note      It is only effective when memory_swap is used
    */
   void putData() const;
+
+  /**
+   * @brief     set Tensor Dim
+   * @param[in] d TensorDim
+   * @note      Throws std::invalid_argument if size mismatch
+   */
+  void reshape(const TensorDim &d);
+
+  /**
+   * @brief     return a copy of the Tensor Dim
+   * @retval    TensorDim
+   */
+  TensorDim getDim() const { return TensorDim(dim); }
+
+  /**
+   * @brief     return Tensor Type
+   */
+  TensorDim::TensorType getTensorType() const { return dim.getTensorType(); }
 
   /**
    * @brief Get initializer for the tensor
@@ -178,6 +382,31 @@ public:
    * @retval data type of the tensor
    */
   Tdatatype getDataType() const { return dim.getDataType(); }
+
+  /**
+   * @brief     return whether tensor is contiguous or not.
+   * @retval    bool contiguous
+   */
+  const bool getContiguous() const noexcept { return contiguous; }
+
+  /**
+   * @brief     return current stride of tensor.
+   * @retval    int[MAXDIM] strides
+   */
+  const std::array<size_t, TensorDim::MAXDIM> getStrides() const noexcept {
+    return strides;
+  }
+
+  /**
+   * @brief     Set name of the tensor
+   */
+  void setName(const std::string &name_) { name = name_; }
+
+  /**
+   * @brief     Get name of the tensor
+   * @retval    string name
+   */
+  const std::string &getName() const { return name; }
 
   /**
    * @brief Get linear index given the n-d index
@@ -210,8 +439,8 @@ public:
   size_t batch() const { return dim.batch(); }
 
   /**
-   * @brief     return Tensor batch size
-   * @retval    batch size
+   * @brief     return Tensor channel size
+   * @retval    channel size
    */
   size_t channel() const { return dim.channel(); }
 
@@ -222,7 +451,7 @@ public:
   size_t height() const { return dim.height(); }
 
   /**
-   * @brief     return Tensor batch size
+   * @brief     return Tensor width size
    * @retval    width size
    */
   size_t width() const { return dim.width(); }
@@ -251,15 +480,21 @@ public:
    * @brief Get new tensor which shares memory with current tensor but different
    * shape
    *
-   * @param dim new dimension to be set for this tensor
-   * @param offset offset to be used from the start of the data in elements
+   * @param[in] dim new dimension to be set for this tensor
+   * @param[in] offset offset to be used from the start of the data in elements
+   * @param[in] reset_stride reset stride
+   * @param[in] name_ name of the Tensor
+   * @param[out] ret output TensorBase pointer
    * @note The new tensor will share the same data as the current tensor but
    * can have different size.
    * @note New size added with offset must be less than the size of the original
    * tensor.
    */
-  TensorBase *getSharedDataTensor(const TensorDim dim_, size_t offset,
-                                  bool reset_stride, const std::string &name_);
+  void getSharedDataTensor(const TensorDim dim_, size_t offset,
+                           bool reset_stride, const std::string &name_,
+                           TensorBase *ret);
+
+  static constexpr float epsilon = 1e-5;
 
 protected:
   TensorDim dim;
@@ -277,6 +512,68 @@ protected:
    * src_ptr is valid, this tensor will use the memory allocated by the src_ptr
    */
   std::shared_ptr<SrcSharedTensorBase> src_tensor;
+
+  /**
+   * @struct External Loop Info for broadcasted info
+   * @brief External Loop Info for broadcasted iteration. Please refer to
+   * DISABLED_private_external_loop_n in unittest_nntrainer_tensor.
+   * @note This should better be implemented in iterator fashion before used
+   * extensively.
+   */
+  struct BroadcastInfoV2 {
+
+    /**
+     * @brief Construct a new External Loop Info object
+     */
+    BroadcastInfoV2() :
+      buffer_size(0),
+      buffer_axis(-1),
+      strides{0, 0, 0, 0},
+      tensor_type({Tformat::NCHW, Tdatatype::FP32}) {}
+
+    unsigned int buffer_size; /**< virtual size of the buffer */
+    int buffer_axis;          /**< the smallest axis that should be looped.
+                                   -1 means no loop needed*/
+    std::array<unsigned int, TensorDim::MAXDIM>
+      strides; /**< modified strides for the loop */
+    nntrainer::TensorDim::TensorType tensor_type;
+  };
+
+  /**
+   * @brief compute Loop info for broadcasting and vectorization
+   *
+   * @param m target tensor to be calculated against.
+   * @return BroadcastInfo Loopinfo needed to run external loop
+   */
+  BroadcastInfoV2 computeBroadcastInfo(const TensorV2 &m) const;
+
+  /**
+   * @brief Calcuates variables needed to perform tensor flatten dot product
+   *
+   * @param[in]  input Tensor
+   * @param[in]  output output Tensor
+   * @param[in]  trans Transpose
+   * @param[in]  trans_in Transpose input
+   * @param[out] first_three_flat flattened the fist 3 axis
+   * @param[out] last_axis last axis
+   * @param[out] input_first_three_flat input's flattened the fist 3 axis
+   * @param[out] input_last_axis input's last axis
+   * @param[out] M number of op(this)'s and output's row
+   * @param[out] N number of op(inputs)'s and output's columns
+   * @param[out] K number of op(this)'s column and op(input)'s row
+   * @param[out] lda leading dimension of this
+   * @param[out] ldb leading dimension of input
+   * @param[out] ldc leading dimension of output
+   *
+   * @note op(X) is one of X or X**T
+   */
+  void calculateFlattenDot(TensorV2 const &input, TensorV2 &output, bool trans,
+                           bool trans_in, unsigned int &first_three_flat,
+                           unsigned int &last_axis,
+                           unsigned int &input_first_three_flat,
+                           unsigned int &input_last_axis, unsigned int &M,
+                           unsigned int &N, unsigned int &K, unsigned int &lda,
+                           unsigned int &ldb, unsigned int &ldc) const;
 };
 
 /**
