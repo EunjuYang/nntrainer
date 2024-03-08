@@ -616,8 +616,8 @@ const bool TensorV2::getContiguous() const noexcept {
   return itensor->getContiguous();
 }
 
-const std::array<size_t, TensorDim::MAXDIM> TensorV2::getStrides() const
-  noexcept {
+const std::array<size_t, TensorDim::MAXDIM>
+TensorV2::getStrides() const noexcept {
   return itensor->getStrides();
 }
 
