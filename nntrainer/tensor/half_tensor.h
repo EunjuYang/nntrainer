@@ -258,6 +258,18 @@ public:
   TensorV2 &subtract(float const &value, TensorV2 &output) const override;
 
   /**
+   *  @copydoc TensorBase::sum_by_batch(TensorV2 &output)
+   */
+  void sum_by_batch(TensorV2 &output) const override;
+
+  /**
+   * @copydoc TensorV2::sum(unsigned int axis, TensorV2 &output, float alpha,
+   * float beta) const
+   */
+  TensorV2 &sum(unsigned int axis, TensorV2 &output, float alpha,
+                float beta) const override;
+
+  /**
    * @copydoc TensorV2::pow(float exponent, TensorV2 &output)
    */
   TensorV2 &pow(float exponent, TensorV2 &output) const override;
@@ -273,6 +285,21 @@ public:
    */
   TensorV2 &dot(TensorV2 const &input, TensorV2 &output, bool trans,
                 bool trans_in, float beta) const override;
+
+  /**
+   * @copydoc TensorV2::dropout_mask(float dropout)
+   */
+  void dropout_mask(float dropout) override;
+
+  /**
+   * @copydoc TensorV2::filter_mask(const TensorV2 &mask_len, bool reverse)
+   */
+  void filter_mask(const TensorV2 &mask_len, bool reverse) override;
+
+  /**
+   * @copydoc TensorV2::zoneout_mask(TensorV2 &opposite, float zoneout)
+   */
+  void zoneout_mask(TensorV2 &opposite, float zoneout) override;
 
   /**
    * @copydoc TensorV2::copy(const TensorV2 &from)

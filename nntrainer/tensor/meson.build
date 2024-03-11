@@ -34,6 +34,14 @@ tensor_headers = [
   'blas_interface.h'
 ]
 
+cl_sources = [
+  'cl_operations/cl_sgemv.cpp'
+]
+
+cl_headers = [
+  'cl_operations/cl_interface.h'
+]
+
 arch = host_machine.cpu_family()
 if get_option('enable-fp16') 
   if arch == 'arm'
@@ -43,12 +51,20 @@ if get_option('enable-fp16')
       tensor_sources += 'blas_neon.cpp'
       tensor_headers += 'blas_neon.h'
     endif
+  elif get_option('enable-avx')
+    tensor_sources += 'blas_avx.cpp'
+    tensor_headers += 'blas_avx.h'
   endif
 endif
 
 if get_option('enable-fp16')
   tensor_headers += 'half_tensor.h'
   tensor_sources += 'half_tensor.cpp'
+endif
+
+if get_option('enable-opencl')
+  tensor_sources += cl_sources
+  tensor_headers += cl_headers
 endif
 
 foreach s : tensor_sources

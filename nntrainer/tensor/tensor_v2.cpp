@@ -368,6 +368,131 @@ TensorV2 &TensorV2::subtract(TensorV2 const &m, TensorV2 &output) const {
   return add(m, output, -1);
 }
 
+/**
+ * This is to sum the Tensor data according to the dim.batch().
+ * Therefore the result has M(dim.batch(), 1, 1, 1) dimension.
+ */
+TensorV2 TensorV2::sum_by_batch() const {
+  NNTR_THROW_IF(!getContiguous(), std::invalid_argument)
+    << getName() << " is not contiguous, cannot sum";
+
+  TensorV2 output(batch(), 1, 1, 1, this->getFormat(), getDataType());
+  itensor->sum_by_batch(output);
+  return output;
+}
+
+TensorV2 TensorV2::sum(unsigned int axis, float alpha) const {
+  TensorV2 output("", this->getFormat(), this->getDataType());
+  return sum(axis, output, alpha, 0);
+}
+
+TensorV2 &TensorV2::sum(unsigned int axis, TensorV2 &output, float alpha,
+                        float beta) const {
+  NNTR_THROW_IF(!getContiguous(), std::invalid_argument)
+    << getName() << " is not contiguous, cannot sum";
+
+  itensor->sum(axis, output, alpha, beta);
+  return output;
+}
+
+TensorV2 TensorV2::sum(const std::vector<unsigned int> &axes,
+                       float alpha) const {
+  TensorV2 output("", this->getFormat());
+  return sum(axes, output, alpha);
+}
+
+TensorV2 &TensorV2::sum(const std::vector<unsigned int> &axes, TensorV2 &output,
+                        float alpha) const {
+  if (axes.empty())
+    throw std::invalid_argument("empty axes given");
+
+  if (axes.size() == 1) {
+    this->sum(axes[0], output, alpha);
+  } else {
+
+    /** club axes together */
+    TensorV2 new_reshaped = TensorV2(getDim());
+    new_reshaped.copy(*this);
+    std::vector<unsigned int> continuous_order = {0, 3, 1, 2};
+    std::vector<unsigned int> new_axes = {axes[0]};
+
+    for (unsigned int i = 1; i < axes.size(); ++i) {
+      if (checkContinuous(axes[i - 1], axes[i])) {
+        new_reshaped.mergeAxis(axes[i - 1], axes[i]);
+        new_axes.back() = axes[i];
+      } else {
+        new_axes.push_back(axes[i]);
+      }
+    }
+
+    TensorV2 ret = new_reshaped.sum(new_axes[0]);
+    for (unsigned int i = 1; i < new_axes.size() - 1; ++i)
+      ret = ret.sum(axes[i]);
+    ret.sum(new_axes.back(), output, alpha);
+  }
+  return output;
+}
+
+TensorV2 TensorV2::average(unsigned int axis) const {
+  TensorV2 output("", this->getFormat(), this->getDataType());
+  return average(axis, output);
+}
+
+TensorV2 &TensorV2::average(unsigned int axis, TensorV2 &output) const {
+  if (axis >= TensorDim::MAXDIM)
+    throw std::out_of_range(
+      "negative axis or axis more then MAXDIM is invalid");
+
+  unsigned int axis_size = getDim()[axis];
+  if (axis_size == 1)
+    output.copy(*this);
+  else
+    this->sum(axis, output, 1.0 / ((float)axis_size));
+
+  return output;
+}
+
+TensorV2 TensorV2::average(const std::vector<unsigned int> &axes) const {
+  TensorV2 output("", this->getFormat(), this->getDataType());
+  return average(axes, output);
+}
+
+TensorV2 &TensorV2::average(const std::vector<unsigned int> &axes,
+                            TensorV2 &output) const {
+  if (axes.empty())
+    return this->average(output);
+
+  TensorDim ret_shape(getTensorType());
+
+  for (const auto &idx : axes) {
+    if (idx >= TensorDim::MAXDIM) {
+      throw std::out_of_range("axis more then MAXDIM is invalid");
+    }
+    ret_shape.setTensorDim(idx, getDim().getTensorDim(idx));
+  }
+
+  return this->sum(axes, output, 1.0 / (float)ret_shape.getDataLen());
+}
+
+TensorV2 TensorV2::average() const {
+  TensorV2 output = *this;
+  unsigned int axis = 0;
+  if (this->getFormat() == Tformat::NHWC) {
+    output.reshape({1, getDim().getDataLen(), 1, 1, this->getTensorType()});
+    axis = 1;
+  } else {
+    output.reshape({1, 1, 1, getDim().getDataLen(), this->getTensorType()});
+    axis = 3;
+  }
+  return output.average(axis);
+}
+
+TensorV2 &TensorV2::average(TensorV2 &output) const {
+  TensorV2 result = *this;
+  result.reshape({1, 1, 1, getDim().getDataLen()});
+  return result.average(3, output);
+}
+
 int TensorV2::pow_i(float exponent) {
   pow(exponent, *this);
   return ML_ERROR_NONE;
@@ -498,6 +623,50 @@ TensorV2 &TensorV2::dot_batched_deriv_wrt_2(TensorV2 &m_deriv,
   } else {
     return dotBatched(output_deriv, m_deriv, deriv_trans, deriv_trans_m, beta);
   }
+}
+
+TensorV2 TensorV2::dropout_mask(float dropout) const {
+  TensorV2 output(getDim());
+  output.dropout_mask(dropout);
+  return output;
+}
+
+void TensorV2::dropout_mask(float dropout) {
+  /// @todo add unittest
+  NNTR_THROW_IF(dropout < 0 || dropout > 1, std::invalid_argument)
+    << "[Tensor::dropout_mask] Dropout rate should be between 0 and 1";
+
+  // if the rate is zero, no change is needed
+  if (std::fpclassify(dropout) == FP_ZERO)
+    return;
+
+  setRandUniform(0.0, 1.0);
+  itensor->dropout_mask(dropout);
+}
+
+void TensorV2::filter_mask(const TensorV2 &mask_len, bool reverse) {
+  /// @todo add unittest
+  itensor->filter_mask(mask_len, reverse);
+}
+
+TensorV2 TensorV2::zoneout_mask(float zoneout) {
+  TensorV2 output(getDim());
+  zoneout_mask(output, zoneout);
+  return output;
+}
+
+void TensorV2::zoneout_mask(TensorV2 &opposite, float zoneout) {
+  NNTR_THROW_IF(getDim() != opposite.getDim(), std::invalid_argument)
+    << "[Tensor::zoneout_mask] opposite dimension does not match";
+
+  NNTR_THROW_IF(zoneout < 0 || zoneout > 1, std::invalid_argument)
+    << "[Tensor::zoneout_mask] Zoneout rate should be between 0 and 1";
+
+  // if the rate is zero, no change is needed
+  if (std::fpclassify(zoneout) == FP_ZERO)
+    return;
+
+  itensor->zoneout_mask(opposite, zoneout);
 }
 
 void TensorV2::print(std::ostream &out) const { itensor->print(out); }
@@ -661,6 +830,17 @@ size_t TensorV2::channel() const { return itensor->channel(); }
 size_t TensorV2::height() const { return itensor->height(); }
 
 size_t TensorV2::width() const { return itensor->width(); }
+
+void TensorV2::mergeAxis(unsigned int axis1, unsigned int axis2) {
+  NNTR_THROW_IF(!getContiguous(), std::invalid_argument)
+    << getName() << " is not contiguous, cannot merge axis";
+
+  if (axis2 != axis1 + 1)
+    if (!checkContinuous(axis1, axis2))
+      throw std::invalid_argument("axis2 must be axis1 + 1 for merging.");
+
+  itensor->mergeAxis(axis1, axis2);
+}
 
 void TensorV2::createSharedDataTensor(const TensorV2 &src, TensorV2 &dest,
                                       size_t offset) const {
