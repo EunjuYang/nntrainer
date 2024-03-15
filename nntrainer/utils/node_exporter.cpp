@@ -57,9 +57,7 @@ Exporter::Exporter() : stored_result(nullptr), is_exported(false) {
  *
  */
 Exporter::Exporter(flatbuffers::FlatBufferBuilder *fbb) :
-  fbb(fbb),
-  stored_result(nullptr),
-  is_exported(false) {}
+  fbb(fbb), stored_result(nullptr), is_exported(false) {}
 #endif
 
 /**
@@ -109,8 +107,9 @@ void Exporter::saveTflResult(
 }
 
 template <>
-void Exporter::saveTflResult(const std::tuple<props::Unit, props::LoraRank> &props,
-                             const FullyConnectedLayer *self) {
+void Exporter::saveTflResult(
+  const std::tuple<props::Unit, props::LoraRank> &props,
+  const FullyConnectedLayer *self) {
   createIfNull(tf_node);
   tf_node->setOpType(tflite::BuiltinOperator_FULLY_CONNECTED);
   auto options = tflite::CreateFullyConnectedOptions(*fbb).Union();
