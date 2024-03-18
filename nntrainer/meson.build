@@ -45,6 +45,10 @@ nntrainer_elements = [
   'graph'
 ]
 
+if get_option('enable-opencl')
+  nntrainer_elements += 'opencl'
+endif
+
 foreach elem : nntrainer_elements
   subdir(elem)
   nntrainer_inc += include_directories(elem)
@@ -56,6 +60,11 @@ nntrainer_common_sources = [
   'nntrainer_logger.cpp',
   'app_context.cpp'
 ]
+
+if get_option('enable-opencl')
+  nntrainer_headers += meson.current_source_dir() / 'cl_context.h'
+  nntrainer_common_sources += 'cl_context.cpp'
+endif
 
 foreach s : nntrainer_common_sources
   nntrainer_sources += meson.current_source_dir() / s

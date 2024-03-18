@@ -19,6 +19,10 @@
 #include <blas_neon.h>
 #endif
 
+#if USE_AVX
+#include <blas_avx.h>
+#endif
+
 #include <cmath>
 
 #define sgemv_loop(ci, cj, cM, cN)           \
@@ -33,7 +37,7 @@
     }                                        \
   } while (0);
 
-#define sgemv_loop_fp16(ci, cj, cM, cN)                                 \
+#define hgemv_loop(ci, cj, cM, cN)                                      \
   do {                                                                  \
     float y0;                                                           \
     unsigned int i, j;                                                  \
@@ -45,14 +49,14 @@
     }                                                                   \
   } while (0);
 
-#define saxpy_loop_fp16()                                                  \
+#define haxpy_loop()                                                       \
   do {                                                                     \
     unsigned int i;                                                        \
     for (i = 0; i < N; ++i)                                                \
       Y[i * incY] = Y[i * incY] + static_cast<_FP16>(alpha) * X[i * incX]; \
   } while (0);
 
-#define sgemm_loop_fp16()                                                 \
+#define hgemm_loop()                                                      \
   do {                                                                    \
     for (unsigned int m = 0; m < M; ++m) {                                \
       for (unsigned int n = 0; n < N; ++n) {                              \
@@ -83,12 +87,12 @@ static void saxpy_FP16(const unsigned int N, const float alpha, const _FP16 *X,
 #if (defined USE__FP16 && USE_NEON)
   // USE__FP16 is defined when platform is android
   if (incX == 1 && incY == 1) {
-    nntrainer::neon::saxpy_neon_fp16(N, alpha, X, Y);
+    nntrainer::neon::haxpy(N, alpha, X, Y);
   } else {
-    saxpy_loop_fp16();
+    haxpy_loop();
   }
 #else
-  saxpy_loop_fp16();
+  haxpy_loop();
 #endif
 }
 
@@ -97,23 +101,34 @@ static void sgemv_FP16(CBLAS_ORDER order, CBLAS_TRANSPOSE TransA,
                        const float alpha, const _FP16 *A,
                        const unsigned int lda, const _FP16 *X, const int incX,
                        const float beta, _FP16 *Y, const int incY) {
-
-  unsigned int incy = abs(incY);
-  unsigned int incx = abs(incX);
-
+#if (defined USE__FP16 && USE_NEON)
   if (TransA == CblasTrans) {
-#if (defined USE__FP16 && USE_NEON)
-    nntrainer::neon::sgemv_transpose_neon_fp16(A, X, Y, M, N, alpha, beta);
-#else
-    sgemv_loop_fp16(i, j, N, M);
-#endif
+    nntrainer::neon::hgemv_transpose(A, X, Y, M, N, alpha, beta);
   } else {
-#if (defined USE__FP16 && USE_NEON)
-    nntrainer::neon::sgemv_neon_fp16(A, X, Y, M, N, alpha, beta);
-#else
-    sgemv_loop_fp16(j, i, M, N);
-#endif
+    nntrainer::neon::hgemv(A, X, Y, M, N, alpha, beta);
   }
+#else
+  unsigned int lenX =
+    (TransA == CblasTrans) ? 1 + (M - 1) * abs(incX) : 1 + (N - 1) * abs(incX);
+  unsigned int lenY =
+    (TransA == CblasTrans) ? 1 + (N - 1) * abs(incY) : 1 + (M - 1) * abs(incY);
+
+  float *A_ = new float[M * N];
+  float *X_ = new float[lenX];
+  float *Y_ = new float[lenY];
+
+  scopy(M * N, A, 1, A_, 1);
+  scopy(lenX, X, 1, X_, 1);
+  scopy(lenY, Y, 1, Y_, 1);
+
+  sgemv(order, TransA, M, N, alpha, A_, lda, X_, incX, beta, Y_, incY);
+
+  scopy(lenY, Y_, 1, Y, 1);
+
+  delete[] A_;
+  delete[] X_;
+  delete[] Y_;
+#endif
 }
 
 static _FP16 sdot_FP16(const unsigned int N, const _FP16 *X,
@@ -127,7 +142,7 @@ static _FP16 sdot_FP16(const unsigned int N, const _FP16 *X,
 
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1 && incY == 1) {
-    ret = nntrainer::neon::sdot_neon_fp16(N, X, Y);
+    ret = nntrainer::neon::hdot(N, X, Y);
   } else {
     for (unsigned int i = 0; i < N; ++i) {
       ret += X[i * incX] * Y[i * incY];
@@ -148,7 +163,7 @@ static void scopy_FP16(const unsigned int N, const _FP16 *X, const int incX,
 
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1 && incY == 1) {
-    nntrainer::neon::scopy_neon_fp16(N, X, Y);
+    nntrainer::neon::hcopy(N, X, Y);
   } else {
     for (unsigned int i = 0; i < N; ++i)
       Y[i * incy] = X[i * incx];
@@ -159,17 +174,24 @@ static void scopy_FP16(const unsigned int N, const _FP16 *X, const int incX,
 #endif
 }
 
-static void scopy_float32_to_float16(const unsigned int N, const float *X,
-                                     const int incX, _FP16 *Y, const int incY) {
+static void copy_float32_to_float16(const unsigned int N, const float *X,
+                                    const int incX, _FP16 *Y, const int incY) {
   unsigned int incy = abs(incY);
   unsigned int incx = abs(incX);
 
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1 && incY == 1) {
-    nntrainer::neon::scopy_neon_fp32_to_fp16(N, X, Y);
+    nntrainer::neon::copy_fp32_to_fp16(N, X, Y);
   } else {
     for (unsigned int i = 0; i < N; ++i)
       Y[i * incy] = X[i * incx];
+  }
+#elif USE_AVX
+  if (incX == 1 && incY == 1) {
+    nntrainer::avx::vcvt_f32_f16(N, X, Y);
+  } else {
+    for (unsigned int i = 0; i < N; ++i)
+      Y[i * incy] = static_cast<_FP16>(X[i * incx]);
   }
 #else
   for (unsigned int i = 0; i < N; ++i)
@@ -177,17 +199,24 @@ static void scopy_float32_to_float16(const unsigned int N, const float *X,
 #endif
 }
 
-static void scopy_float16_to_float32(const unsigned int N, const _FP16 *X,
-                                     const int incX, float *Y, const int incY) {
+static void copy_float16_to_float32(const unsigned int N, const _FP16 *X,
+                                    const int incX, float *Y, const int incY) {
   unsigned int incy = abs(incY);
   unsigned int incx = abs(incX);
 
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1 && incY == 1) {
-    nntrainer::neon::scopy_neon_fp16_to_fp32(N, X, Y);
+    nntrainer::neon::copy_fp16_to_fp32(N, X, Y);
   } else {
     for (unsigned int i = 0; i < N; ++i)
       Y[i * incy] = X[i * incx];
+  }
+#elif USE_AVX
+  if (incX == 1 && incY == 1) {
+    nntrainer::avx::vcvt_f16_f32(N, X, Y);
+  } else {
+    for (unsigned int i = 0; i < N; ++i)
+      Y[i * incy] = static_cast<float>(X[i * incx]);
   }
 #else
   for (unsigned int i = 0; i < N; ++i)
@@ -195,14 +224,14 @@ static void scopy_float16_to_float32(const unsigned int N, const _FP16 *X,
 #endif
 }
 
-static void scopy_int4_to_fp16(const unsigned int N, const uint8_t *X,
-                               const int incX, _FP16 *Y, const int incY) {
+static void copy_int4_to_fp16(const unsigned int N, const uint8_t *X,
+                              const int incX, _FP16 *Y, const int incY) {
   unsigned int incy = abs(incY);
   unsigned int incx = abs(incX);
 
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1 && incY == 1) {
-    nntrainer::neon::scopy_neon_int4_to_fp16(N, X, Y);
+    nntrainer::neon::copy_int4_to_fp16(N, X, Y);
   } else {
     throw std::invalid_argument(
       "Error: incX == 1 && incY == 1 is supported only");
@@ -215,14 +244,14 @@ static void scopy_int4_to_fp16(const unsigned int N, const uint8_t *X,
 #endif
 }
 
-static void scopy_int8_to_fp16(const unsigned int N, const uint8_t *X,
-                               const int incX, _FP16 *Y, const int incY) {
+static void copy_int8_to_fp16(const unsigned int N, const uint8_t *X,
+                              const int incX, _FP16 *Y, const int incY) {
   unsigned int incy = abs(incY);
   unsigned int incx = abs(incX);
 
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1 && incY == 1) {
-    nntrainer::neon::scopy_neon_int8_to_fp16(N, X, Y);
+    nntrainer::neon::copy_int8_to_fp16(N, X, Y);
   } else {
     throw std::invalid_argument(
       "Error: incX == 1 && incY == 1 is supported only");
@@ -234,31 +263,12 @@ static void scopy_int8_to_fp16(const unsigned int N, const uint8_t *X,
 #endif
 }
 
-static void ewvm_FP16(const unsigned int N, const _FP16 *X, const _FP16 *Y,
-                      _FP16 *Z) {
-#if (defined USE__FP16 && USE_NEON)
-  nntrainer::neon::elementwise_vector_multiplication_neon_fp16(N, X, Y, Z);
-#else
-  for (unsigned int i = 0; i < N; ++i)
-    Z[i] = X[i] * Y[i];
-#endif
-}
-
-static void ewva_FP16(const unsigned int N, const _FP16 *X, const _FP16 *Y,
-                      _FP16 *Z) {
-#if (defined USE__FP16 && USE_NEON)
-  nntrainer::neon::elementwise_vector_addition_neon_fp16(N, X, Y, Z);
-#else
-  for (unsigned int i = 0; i < N; ++i)
-    Z[i] = X[i] + Y[i];
-#endif
-}
 void sscal(const unsigned int N, const float alpha, _FP16 *X, const int incX) {
   unsigned int incx = abs(incX);
 
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1) {
-    nntrainer::neon::sscal_neon_fp16(N, X, alpha);
+    nntrainer::neon::hscal(N, X, alpha);
   } else {
     for (unsigned int i = 0; i < N; ++i)
       X[i * incx] = static_cast<_FP16>(alpha) * X[i * incx];
@@ -275,7 +285,7 @@ static _FP16 snrm2_FP16(const unsigned int N, const _FP16 *X, const int incX) {
   _FP16 tmp;
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1) {
-    sum = nntrainer::neon::snrm2_neon_fp16(N, X);
+    sum = nntrainer::neon::hnrm2(N, X);
   } else {
     for (unsigned int i = 0; i < N; i++) {
       tmp = X[i * incx];
@@ -300,10 +310,22 @@ static void sgemm_FP16(CBLAS_ORDER order, CBLAS_TRANSPOSE TransA,
                        const unsigned int ldc) {
 
 #if (defined USE__FP16 && USE_NEON)
-  nntrainer::neon::sgemm_neon_fp16(A, B, C, M, N, K, alpha, beta,
-                                   TransA == CblasTrans, TransB == CblasTrans);
+  nntrainer::neon::hgemm(A, B, C, M, N, K, alpha, beta, TransA == CblasTrans,
+                         TransB == CblasTrans);
 #else
-  sgemm_loop_fp16();
+  float *A_ = new float[M * K];
+  float *B_ = new float[N * K];
+  float *C_ = new float[M * N];
+
+  scopy(M * K, A, 1, A_, 1);
+  scopy(N * K, B, 1, B_, 1);
+  scopy(M * N, C, 1, C_, 1);
+  sgemm(order, TransA, TransB, M, N, K, alpha, A_, lda, B_, ldb, beta, C_, ldc);
+  scopy(M * N, C_, 1, C, 1);
+
+  delete[] A_;
+  delete[] B_;
+  delete[] C_;
 #endif
 }
 
@@ -313,7 +335,7 @@ static unsigned int isamax_FP16(const unsigned int N, const _FP16 *X,
 
 #if (defined USE__FP16 && USE_NEON)
   if (incX == 1 && N >= 8) {
-    max_idx = nntrainer::neon::isamax_neon_fp16(N, X);
+    max_idx = nntrainer::neon::isamax(N, X);
   } else {
     _FP16 max_val = X[0];
     for (unsigned int n = 1; n < N; n += incX) {
@@ -359,30 +381,118 @@ void scopy(const unsigned int N, const _FP16 *X, const int incX, _FP16 *Y,
 
 void scopy(const unsigned int N, const float *X, const int incX, _FP16 *Y,
            const int incY) {
-  scopy_float32_to_float16(N, X, incX, Y, incY);
+  copy_float32_to_float16(N, X, incX, Y, incY);
 }
 
 void scopy(const unsigned int N, const _FP16 *X, const int incX, float *Y,
            const int incY) {
-  scopy_float16_to_float32(N, X, incX, Y, incY);
+  copy_float16_to_float32(N, X, incX, Y, incY);
 }
 
 void scopy_int4_to_float16(const unsigned int N, const uint8_t *X,
                            const int incX, _FP16 *Y, const int incY) {
-  scopy_int4_to_fp16(N, X, incX, Y, incY);
+  copy_int4_to_fp16(N, X, incX, Y, incY);
 }
 
 void scopy_int8_to_float16(const unsigned int N, const uint8_t *X,
                            const int incX, _FP16 *Y, const int incY) {
-  scopy_int8_to_fp16(N, X, incX, Y, incY);
+  copy_int8_to_fp16(N, X, incX, Y, incY);
 }
 
-void ewvm(const unsigned int N, const _FP16 *X, const _FP16 *Y, _FP16 *Z) {
-  ewvm_FP16(N, X, Y, Z);
+static void ele_mul_fallback(const unsigned int N, const _FP16 *X,
+                             const _FP16 *Y, _FP16 *Z, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  for (unsigned int i = 0; i < N; ++i) {
+    *Z = *X * static_cast<_FP16>(alpha) * *Y + static_cast<_FP16>(beta) * *Z;
+    X += o_stride;
+    Y += i_stride;
+    Z += o_stride;
+  }
 }
 
-void ewva(const unsigned int N, const _FP16 *X, const _FP16 *Y, _FP16 *Z) {
-  ewva_FP16(N, X, Y, Z);
+static void ele_add_fallback(const unsigned int N, const _FP16 *X,
+                             const _FP16 *Y, _FP16 *Z, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  for (unsigned int i = 0; i < N; ++i) {
+    *Z = *X + static_cast<_FP16>(alpha) * *Y + static_cast<_FP16>(beta) * *Z;
+    X += o_stride;
+    Y += i_stride;
+    Z += o_stride;
+  }
+}
+
+static void ele_sub_fallback(const unsigned int N, const _FP16 *X,
+                             const _FP16 *Y, _FP16 *Z, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  for (unsigned int i = 0; i < N; ++i) {
+    *Z = *X - static_cast<_FP16>(alpha) * *Y + static_cast<_FP16>(beta) * *Z;
+    X += o_stride;
+    Y += i_stride;
+    Z += o_stride;
+  }
+}
+
+static void ele_div_fallback(const unsigned int N, const _FP16 *X,
+                             const _FP16 *Y, _FP16 *Z, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  for (unsigned int i = 0; i < N; ++i) {
+    *Z = *X / (static_cast<_FP16>(alpha) * *Y) + static_cast<_FP16>(beta) * *Z;
+    X += o_stride;
+    Y += i_stride;
+    Z += o_stride;
+  }
+}
+
+void ele_mul(const unsigned int N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (i_stride == 1 && o_stride == 1) {
+#if (defined USE__FP16 && USE_NEON)
+    nntrainer::neon::ele_mul(N, X, Y, Z, alpha, beta);
+#else
+    ele_mul_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+#endif
+  } else
+    ele_mul_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+}
+
+void ele_add(const unsigned int N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (i_stride == 1 && o_stride == 1) {
+#if (defined USE__FP16 && USE_NEON)
+    nntrainer::neon::ele_add(N, X, Y, Z, alpha, beta);
+#else
+    ele_add_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+#endif
+  } else
+    ele_add_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+}
+
+void ele_sub(const unsigned int N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (i_stride == 1 && o_stride == 1) {
+#if (defined USE__FP16 && USE_NEON)
+    nntrainer::neon::ele_sub(N, X, Y, Z, alpha, beta);
+#else
+    ele_sub_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+#endif
+  } else
+    ele_sub_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+}
+
+void ele_div(const unsigned int N, const _FP16 *X, const _FP16 *Y, _FP16 *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (i_stride == 1 && o_stride == 1) {
+#if (defined USE__FP16 && USE_NEON)
+    nntrainer::neon::ele_div(N, X, Y, Z, alpha, beta);
+#else
+    ele_div_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+#endif
+  } else
+    ele_div_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
 }
 
 _FP16 snrm2(const int N, const _FP16 *X, const int incX) {
@@ -406,6 +516,15 @@ unsigned int isamax(const unsigned int N, const _FP16 *X, const int incX) {
   return isamax_FP16(N, X, incX);
 }
 
+void inv_sqrt_inplace(const unsigned int N, _FP16 *X) {
+#ifdef USE_NEON
+  nntrainer::neon::inv_sqrt_inplace(N, X);
+#else
+  for (unsigned int i = 0; i < N; ++i) {
+    X[i] = static_cast<_FP16>(1 / std::sqrt(static_cast<float>(X[i])));
+  }
+#endif
+}
 #endif
 
 #ifndef USE_BLAS
@@ -728,7 +847,7 @@ void scopy(const unsigned int N, const float *X, const int incX, float *Y,
 void scopy(const unsigned int N, const uint8_t *X, const int incX, uint8_t *Y,
            const int intY) {
 #ifdef USE_NEON
-  nntrainer::neon::scopy_neon_int8_or_int4(N, X, Y);
+  nntrainer::neon::copy_int8_or_int4(N, X, Y);
 #else
   for (unsigned int idx = 0; idx < N; idx++) {
     Y[idx] = X[idx];
@@ -739,7 +858,7 @@ void scopy(const unsigned int N, const uint8_t *X, const int incX, uint8_t *Y,
 void scopy_int4_to_float32(const unsigned int N, const uint8_t *X,
                            const int incX, float *Y, const int incY) {
 #ifdef USE_NEON
-  nntrainer::neon::scopy_neon_int4_to_fp32(N, X, Y);
+  nntrainer::neon::copy_int4_to_fp32(N, X, Y);
 #else
   for (unsigned int idx = 0; idx < N; idx++) {
     Y[2 * idx] = X[idx] >> 4;
@@ -751,7 +870,7 @@ void scopy_int4_to_float32(const unsigned int N, const uint8_t *X,
 void scopy_int8_to_float32(const unsigned int N, const uint8_t *X,
                            const int incX, float *Y, const int incY) {
 #ifdef USE_NEON
-  nntrainer::neon::scopy_neon_int8_to_fp32(N, X, Y);
+  nntrainer::neon::copy_int8_to_fp32(N, X, Y);
 #else
   for (unsigned int idx = 0; idx < N; idx++) {
     Y[idx] = X[idx];
@@ -836,6 +955,135 @@ unsigned int isamax(const unsigned int N, const float *X, const int incX) {
 #else
   return isamax_raw(N, X, incX);
 #endif
+}
+
+void sine(const unsigned int N, float *X, float *Y, float alpha) {
+#ifdef USE_NEON
+  nntrainer::neon::sine(N, X, Y, alpha);
+#else
+  unsigned int i = 0;
+  while (i < N) {
+    Y[i] = std::sin(alpha * X[i]);
+    ++i;
+  }
+#endif
+}
+
+void cosine(const unsigned int N, float *X, float *Y, float alpha) {
+#ifdef USE_NEON
+  nntrainer::neon::cosine(N, X, Y, alpha);
+#else
+  unsigned int i = 0;
+  while (i < N) {
+    Y[i] = std::cos(alpha * X[i]);
+    ++i;
+  }
+#endif
+}
+
+void inv_sqrt_inplace(const unsigned int N, float *X) {
+#ifdef USE_NEON
+  nntrainer::neon::inv_sqrt_inplace(N, X);
+#else
+  for (unsigned int i = 0; i < N; ++i) {
+    X[i] = 1 / std::sqrt(static_cast<float>(X[i]));
+  }
+#endif
+}
+static void ele_mul_fallback(const unsigned int N, const float *X,
+                             const float *Y, float *Z, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  for (unsigned int i = 0; i < N; ++i) {
+    *Z = *X * alpha * *Y + beta * *Z;
+    X += o_stride;
+    Y += i_stride;
+    Z += o_stride;
+  }
+}
+
+static void ele_add_fallback(const unsigned int N, const float *X,
+                             const float *Y, float *Z, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  for (unsigned int i = 0; i < N; ++i) {
+    *Z = *X + alpha * *Y + beta * *Z;
+    X += o_stride;
+    Y += i_stride;
+    Z += o_stride;
+  }
+}
+
+static void ele_sub_fallback(const unsigned int N, const float *X,
+                             const float *Y, float *Z, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  for (unsigned int i = 0; i < N; ++i) {
+    *Z = *X - alpha * *Y + beta * *Z;
+    X += o_stride;
+    Y += i_stride;
+    Z += o_stride;
+  }
+}
+
+static void ele_div_fallback(const unsigned int N, const float *X,
+                             const float *Y, float *Z, float alpha, float beta,
+                             unsigned int i_stride, unsigned int o_stride) {
+  for (unsigned int i = 0; i < N; ++i) {
+    *Z = *X / (alpha * *Y) + beta * *Z;
+    X += o_stride;
+    Y += i_stride;
+    Z += o_stride;
+  }
+}
+
+void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (i_stride == 1 && o_stride == 1) {
+#ifdef USE_NEON
+    nntrainer::neon::ele_mul(N, X, Y, Z, alpha, beta);
+#else
+    ele_mul_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+#endif
+  } else
+    ele_mul_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+}
+
+void ele_add(const unsigned int N, const float *X, const float *Y, float *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (i_stride == 1 && o_stride == 1) {
+#ifdef USE_NEON
+    nntrainer::neon::ele_add(N, X, Y, Z, alpha, beta);
+#else
+    ele_add_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+#endif
+  } else
+    ele_add_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+}
+
+void ele_sub(const unsigned int N, const float *X, const float *Y, float *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (i_stride == 1 && o_stride == 1) {
+#ifdef USE_NEON
+    nntrainer::neon::ele_sub(N, X, Y, Z, alpha, beta);
+#else
+    ele_sub_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+#endif
+  } else
+    ele_sub_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+}
+
+void ele_div(const unsigned int N, const float *X, const float *Y, float *Z,
+             float alpha, float beta, unsigned int i_stride,
+             unsigned int o_stride) {
+  if (i_stride == 1 && o_stride == 1) {
+#ifdef USE_NEON
+    nntrainer::neon::ele_div(N, X, Y, Z, alpha, beta);
+#else
+    ele_div_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
+#endif
+  } else
+    ele_div_fallback(N, X, Y, Z, alpha, beta, i_stride, o_stride);
 }
 
 } // namespace nntrainer

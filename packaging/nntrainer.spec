@@ -47,17 +47,23 @@
 %endif # 0%{tizen_version_major}%{tizen_version_minor} >= 65
 
 %define enable_fp16 0
-%ifarch aarch64
-%define enable_fp16 1
-# x64/x86 requires GCC >= 12 for fp16 support.
-%endif
+### nntrainer fp16 implementation relies on NEON, which requires armv8.2-a
+### armv7l Tizen: do not support fp16 neon.
+### aarch64 Tizen: uses armv8.0a. no fp16 neon.
+### x86/x64 Tizen: it has gcc9. x86 requires gcc >= 12 for fp16
 
 ## Float16 support
 %if 0%{?enable_fp16}
 %define fp16_support -Denable-fp16=true
 %else
 %define fp16_support -Denable-fp16=false
-%endif
+%endif # enalbe_fp16
+
+%ifarch aarch64
+%define neon_support -Denable-neon=true
+%else
+%define neon_support -Denable-neon=false
+%endif # arch aarch64
 
 
 Name:		nntrainer
@@ -414,7 +420,7 @@ meson --buildtype=plain --prefix=%{_prefix} --sysconfdir=%{_sysconfdir} \
       %{enable_reduce_tolerance} %{configure_subplugin_install_path} %{enable_debug} \
       -Dml-api-support=enabled -Denable-nnstreamer-tensor-filter=enabled \
       -Denable-nnstreamer-tensor-trainer=enabled -Denable-capi=enabled \
-      %{fp16_support} build
+      %{fp16_support} %{neon_support} build
 
 ninja -C build %{?_smp_mflags}
 
@@ -562,6 +568,10 @@ cp -r result %{buildroot}%{_datadir}/nntrainer/unittest/
 # @todo filter out headers that should be hidden, and classifiy in the appropriate place if not
 %{_includedir}/nntrainer/util_func.h
 %{_includedir}/nntrainer/fp16.h
+%{_includedir}/nntrainer/util_simd.h
+%if 0%{?enable_fp16}
+%{_includedir}/nntrainer/util_simd_neon.h
+%endif
 
 %files devel-static
 %{_libdir}/libnntrainer*.a

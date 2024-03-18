@@ -10,6 +10,16 @@ project('nntrainer', 'c', 'cpp',
     'buildtype=release'
   ]
 )
+
+# Set version info
+nntrainer_version = meson.project_version()
+nntrainer_version_split = nntrainer_version.split('.')
+
+add_project_arguments('-DVERSION="' + nntrainer_version + '"', language: ['c', 'cpp'])
+add_project_arguments('-DVERSION_MAJOR=' + nntrainer_version_split[0], language: ['c', 'cpp'])
+add_project_arguments('-DVERSION_MINOR=' + nntrainer_version_split[1], language: ['c', 'cpp'])
+add_project_arguments('-DVERSION_MICRO=' + nntrainer_version_split[2], language: ['c', 'cpp'])
+
 extra_defines = ['-DMIN_CPP_VERSION=201703L']
 
 cc = meson.get_compiler('c')
@@ -56,7 +66,7 @@ warning_c_flags = [
 
 
 if get_option('enable-fp16')
-   arch = target_machine.cpu_family()
+   arch = host_machine.cpu_family()
    if get_option('platform') == 'android'
      add_project_arguments('-mfp16-format=ieee', language: ['c', 'cpp'])
      extra_defines += '-DENABLE_FP16=1'
@@ -67,16 +77,26 @@ if get_option('enable-fp16')
      extra_defines += '-DENABLE_FP16=1'
      extra_defines += '-DUSE__FP16=1'
      extra_defines += '-DUSE_NEON=1'
+   elif arch == 'arm'
+     error ('FP16/ARM code (blas_neon.cpp) uses armv8.2 instructions. armv7 is not supported.')
    else
-     has_avx512fp16 = cc.has_argument('-mavx512fp16')
-     if (has_avx512fp16)
-       # add_project_arguments(['-mavx512fp16'], language: ['c','cpp'])
-       message ('Float16 for x86_64 enabled. Modern gcc-x64 genrally supports float16 with _Float16. -mavx512fp16 added for hardware acceleration')
+     if cc.version().version_compare('>=12.1.0')
+       message ('Float16 for x86_64 enabled. Modern gcc-x64 generally supports float16 with _Float16.')
        extra_defines += '-DENABLE_FP16=1'
+       if get_option('enable-avx')
+        extra_defines += '-DUSE_AVX=1'
+        add_project_arguments(['-march=native'], language: ['c','cpp'])
+        message('-march=native added for AVX hardware acceleration.')
+       endif
      else
-       warning ('Float16 for x86_64 enabled. However, software emulation is applied for fp16, making it slower and inconsistent. Use GCC 12+ for AVX512 FP16 support. This build will probably fail unless you bring a compiler that supports fp16 for x64.')
+       warning ('Float16 for x86_64 enabled. However, software emulation is applied for fp16, making it slower and inconsistent. Use GCC 12+ for FP16 support. This build will probably fail unless you bring a compiler that supports fp16 for x64.')
      endif
    endif  
+endif
+
+if get_option('enable-opencl')
+  message ('OpenCL build is enabled. Will work only if OpenCL supported GPU is available.')
+  extra_defines += '-DENABLE_OPENCL=1'
 endif
     
 foreach extra_arg : warning_flags
@@ -154,16 +174,22 @@ found_dummy_dep = declare_dependency() # dummy dep to use if found
 ml_api_common_dep = dependency(get_option('capi-ml-common-actual'), required : get_option('ml-api-support').enabled())
 nnstreamer_capi_dep = dummy_dep
 if (ml_api_common_dep.found())
-  nntrainer_conf.set('CAPI_ML_COMMON_DEP', get_option('capi-ml-common-actual'))
-  extra_defines += '-DML_API_COMMON=1'
-
-  nnstreamer_capi_dep = dependency(get_option('capi-ml-inference-actual'), required : true)
-  extra_defines += '-DNNSTREAMER_AVAILABLE=1'
-  # accessing this variable when dep_.not_found() remains hard error on purpose
-  supported_nnstreamer_capi = nnstreamer_capi_dep.version().version_compare('>=1.7.0')
-  if not supported_nnstreamer_capi
-    extra_defines += '-DUNSUPPORTED_NNSTREAMER=1'
-    warning('capi-nnstreamer version is too old, we do not know if it works with older nnstreamer version')
+  nnstreamer_capi_dep = dependency(get_option('capi-ml-inference-actual'), required : get_option('ml-api-support').enabled())
+  if (nnstreamer_capi_dep.found())
+    nntrainer_conf.set('CAPI_ML_COMMON_DEP', get_option('capi-ml-common-actual'))
+    extra_defines += '-DML_API_COMMON=1'
+    extra_defines += '-DNNSTREAMER_AVAILABLE=1'
+    # accessing this variable when dep_.not_found() remains hard error on purpose
+    supported_nnstreamer_capi = nnstreamer_capi_dep.version().version_compare('>=1.7.0')
+    if not supported_nnstreamer_capi
+      extra_defines += '-DUNSUPPORTED_NNSTREAMER=1'
+      warning('capi-nnstreamer version is too old, we do not know if it works with older nnstreamer version')
+    endif
+  else
+    # if nnstreamer_capi is not there and ml-api-support is "auto", disable it.
+    message ('ml-api-support is disabled although capi-ml-api-common is found: capi-ml-api-inference is not available and ml-api-support is configured to be auto')
+    nntrainer_conf.set('CAPI_ML_COMMON_DEP', '')
+    extra_defines += '-DML_API_COMMON=0'
   endif
 else
   nntrainer_conf.set('CAPI_ML_COMMON_DEP', '')
@@ -201,6 +227,10 @@ message('set nntrainer num threads=@0@'.format(get_option('nntr-num-threads')))
 openmp_dep = dummy_dep
 if get_option('enable-openmp')
   openmp_dep = dependency('openmp')
+  if get_option('omp-num-threads') > 0
+    extra_defines += '-DOMP_NUM_THREADS=@0@'.format(get_option('omp-num-threads'))
+    message('set nntrainer omp threads=@0@'.format(get_option('omp-num-threads')))
+  endif
 endif
 
 if get_option('enable-profile')

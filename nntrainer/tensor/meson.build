@@ -34,15 +34,37 @@ tensor_headers = [
   'blas_interface.h'
 ]
 
-arch = target_machine.cpu_family()
+cl_sources = [
+  'cl_operations/cl_sgemv.cpp'
+]
 
-if get_option('platform') == 'android' or arch == 'aarch64'
-  tensor_sources += 'blas_neon.cpp'
+cl_headers = [
+  'cl_operations/cl_interface.h'
+]
+
+arch = host_machine.cpu_family()
+if get_option('enable-fp16') 
+  if arch == 'arm'
+    error ('FP16/ARM code (blas_neon.cpp) uses armv8.2 instructions. armv7 is not supported.')
+  elif arch == 'aarch64' or get_option('platform') == 'android'
+    if get_option('enable-neon')
+      tensor_sources += 'blas_neon.cpp'
+      tensor_headers += 'blas_neon.h'
+    endif
+  elif get_option('enable-avx')
+    tensor_sources += 'blas_avx.cpp'
+    tensor_headers += 'blas_avx.h'
+  endif
 endif
 
 if get_option('enable-fp16')
   tensor_headers += 'half_tensor.h'
   tensor_sources += 'half_tensor.cpp'
+endif
+
+if get_option('enable-opencl')
+  tensor_sources += cl_sources
+  tensor_headers += cl_headers
 endif
 
 foreach s : tensor_sources

@@ -15,10 +15,15 @@ message('compile flags are:' + ' '.join(flags))
 flags = extra_defines + flags
 
 and_conf.set('MESON_CFLAGS', ' '.join(flags))
+and_conf.set('MESON_CXXFLAGS', ' '.join(flags))
 and_conf.set('MESON_NNTRAINER_SRCS', ' '.join(nntrainer_sources))
 and_conf.set('MESON_NNTRAINER_INCS', ' '.join(nntrainer_inc_abs))
 and_conf.set('MESON_CCAPI_NNTRAINER_SRCS', ' '.join(ccapi_src))
 and_conf.set('MESON_CCAPI_NNTRAINER_INCS', ' '.join(ccapi_inc_abs))
+
+and_conf.set('VERSION_MAJOR', nntrainer_version_split[0])
+and_conf.set('VERSION_MINOR', nntrainer_version_split[1])
+and_conf.set('VERSION_MICRO', nntrainer_version_split[2])
 
 if get_option('enable-capi').enabled()
    and_conf.set('MESON_CAPI_NNTRAINER_SRCS', ' '.join(capi_src))

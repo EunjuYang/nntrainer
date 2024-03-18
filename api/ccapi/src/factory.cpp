@@ -6,6 +6,7 @@
  * @date   14 October 2020
  * @see    https://github.com/nnstreamer/nntrainer
  * @author Parichay Kapoor <pk.kapoor@samsung.com>
+ * @author Debadri Samaddar <s.debadri@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  This is implementaion for factory builder interface for c++ API
  */
@@ -24,12 +25,15 @@
 #include <optimizer.h>
 #include <optimizer_wrapped.h>
 
+#include <cstdlib>
+
 namespace ml {
 namespace train {
 
 std::unique_ptr<Layer> createLayer(const LayerType &type,
-                                   const std::vector<std::string> &properties) {
-  return nntrainer::createLayerNode(type, properties);
+                                   const std::vector<std::string> &properties,
+                                   const LayerComputeEngine &compute_engine) {
+  return nntrainer::createLayerNode(type, properties, compute_engine);
 }
 
 /**
@@ -136,6 +140,16 @@ createLearningRateScheduler(const std::string &type,
                             const std::vector<std::string> &properties) {
   auto &ac = nntrainer::AppContext::Global();
   return ac.createObject<ml::train::LearningRateScheduler>(type, properties);
+}
+
+std::string getVersion() {
+  std::string version = std::to_string(VERSION_MAJOR);
+  version += ".";
+  version += std::to_string(VERSION_MINOR);
+  version += ".";
+  version += std::to_string(VERSION_MICRO);
+
+  return version;
 }
 
 } // namespace train

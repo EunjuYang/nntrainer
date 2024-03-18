@@ -127,8 +127,7 @@ public:
   SrcSharedTensor() : src(nullptr), off(0) {}
 
   SrcSharedTensor(const Tensor *tensor, size_t offset) :
-    src(tensor),
-    off(offset) {}
+    src(tensor), off(offset) {}
 
   /**
    * @brief   Get the allocated src tensor
@@ -228,8 +227,7 @@ bool Tensor::operator==(const Tensor &rhs) const {
     for (size_t i = 0; i < len; ++i) {
       /** not checking sign change is intentional to avoid float calculation
        * errors around 0 */
-      if ((std::isnan(_data[i]) && !std::isnan(_rdata[i])) ||
-          (!std::isnan(_data[i]) && std::isnan(_rdata[i])) ||
+      if (std::isnan(_data[i]) || std::isnan(_rdata[i]) ||
           std::fabs(_data[i] - _rdata[i]) > epsilon)
         return false;
     }
@@ -814,67 +812,35 @@ Tensor &Tensor::multiply(Tensor const &m, Tensor &output,
    * @note this does not work correctly with differently strided inputs.
    * Use multiply_strided alternatively
    */
+  NNTR_THROW_IF(m.getFormat() != this->getFormat(), std::invalid_argument)
+    << "Tensor Format of " << getName() << ":"
+    << ((bool)(this->getFormat()) ? "NHWC" : "NCHW") << " is not match. ("
+    << ((bool)(m.getFormat()) ? "NHWC" : "NCHW") << ")";
+
+  NNTR_THROW_IF(!contiguous || !m.contiguous || !output.contiguous,
+                std::invalid_argument)
+    << getName() << " is not contiguous, cannot multiply";
+
+  NNTR_THROW_IF(!contiguous || !m.contiguous || !output.contiguous,
+                std::invalid_argument)
+    << getName() << " is not contiguous, cannot multiply";
   if (dim.getDataType() == ml::train::TensorDim::DataType::FP32) {
     auto f = [&](const BroadcastInfo &e, const float *buf, const float *m_buf,
                  float *out_buf) {
-      if (e.strides[3] == 1 && output.strides[3] == 1 && strides[3] == 1 &&
-          beta == 0.0) {
-        std::transform(buf, buf + e.buffer_size, m_buf, out_buf,
-                       std::multiplies<float>());
-      } else {
-        for (unsigned int i = 0; i < e.buffer_size; ++i) {
-          *out_buf = *buf * *m_buf + beta * *out_buf;
-          buf += strides[3];
-          m_buf += e.strides[3];
-          out_buf += output.strides[3];
-        }
-      }
+      ele_mul(e.buffer_size, buf, m_buf, out_buf, 1, beta, e.strides[3],
+              strides[3]);
     };
-
-    NNTR_THROW_IF(m.getFormat() != this->getFormat(), std::invalid_argument)
-      << "Tensor Format of " << getName() << ":"
-      << ((bool)(this->getFormat()) ? "NHWC" : "NCHW") << " is not match. ("
-      << ((bool)(m.getFormat()) ? "NHWC" : "NCHW") << ")";
-
-    NNTR_THROW_IF(!contiguous || !m.contiguous || !output.contiguous,
-                  std::invalid_argument)
-      << getName() << " is not contiguous, cannot multiply";
-
-    NNTR_THROW_IF(!contiguous || !m.contiguous || !output.contiguous,
-                  std::invalid_argument)
-      << getName() << " is not contiguous, cannot multiply";
-
     apply_broadcast(m, f, output);
-    return output;
 
   } else if (dim.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
     auto f = [&](const BroadcastInfo &e, const _FP16 *buf, const _FP16 *m_buf,
                  _FP16 *out_buf) {
-      if (e.strides[3] == 1 && output.strides[3] == 1 && strides[3] == 1 &&
-          beta == 0.0) {
-        ewvm(e.buffer_size, buf, m_buf, out_buf);
-      } else {
-        for (unsigned int i = 0; i < e.buffer_size; ++i) {
-          *out_buf = *buf * *m_buf + static_cast<_FP16>(beta) * *out_buf;
-          buf += strides[3];
-          m_buf += e.strides[3];
-          out_buf += output.strides[3];
-        }
-      }
+      ele_mul(e.buffer_size, buf, m_buf, out_buf, 1, beta, e.strides[3],
+              strides[3]);
     };
-
-    NNTR_THROW_IF(m.getFormat() != this->getFormat(), std::invalid_argument)
-      << "Tensor Format of " << getName() << ":"
-      << ((bool)(this->getFormat()) ? "NHWC" : "NCHW") << " is not match. ("
-      << ((bool)(m.getFormat()) ? "NHWC" : "NCHW") << ")";
-
-    NNTR_THROW_IF(!contiguous || !m.contiguous || !output.contiguous,
-                  std::invalid_argument)
-      << getName() << " is not contiguous, cannot multiply";
-
     apply_broadcast(m, f, output);
-    return output;
+
 #else
     throw std::invalid_argument("Error: enable-fp16 is not enabled");
 #endif
@@ -937,48 +903,24 @@ Tensor Tensor::divide(Tensor const &m) const {
 }
 
 Tensor &Tensor::divide(Tensor const &m, Tensor &output) const {
+
+  NNTR_THROW_IF(!contiguous || !m.contiguous || !output.contiguous,
+                std::invalid_argument)
+    << getName() << " is not contiguous, cannot divide";
   if (getDataType() == ml::train::TensorDim::DataType::FP32) {
     auto f = [&](const BroadcastInfo &e, const float *buf, const float *m_buf,
                  float *out_buf) {
-      if (e.strides[3] == 1 && output.strides[3] == 1 && strides[3] == 1) {
-        std::transform(buf, buf + e.buffer_size, m_buf, out_buf,
-                       std::divides<float>());
-      } else {
-        for (unsigned int i = 0; i < e.buffer_size; ++i) {
-          *out_buf = *buf / *m_buf;
-          buf += strides[3];
-          m_buf += e.strides[3];
-          out_buf += output.strides[3];
-        }
-      }
+      ele_div(e.buffer_size, buf, m_buf, out_buf, 1, 0, e.strides[3],
+              strides[3]);
     };
-
-    NNTR_THROW_IF(!contiguous || !m.contiguous || !output.contiguous,
-                  std::invalid_argument)
-      << getName() << " is not contiguous, cannot divide";
-
     apply_broadcast(m, f, output);
   } else if (getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
     auto f = [&](const BroadcastInfo &e, const _FP16 *buf, const _FP16 *m_buf,
                  _FP16 *out_buf) {
-      if (e.strides[3] == 1 && output.strides[3] == 1 && strides[3] == 1) {
-        std::transform(buf, buf + e.buffer_size, m_buf, out_buf,
-                       std::divides<_FP16>());
-      } else {
-        for (unsigned int i = 0; i < e.buffer_size; ++i) {
-          *out_buf = *buf / *m_buf;
-          buf += strides[3];
-          m_buf += e.strides[3];
-          out_buf += output.strides[3];
-        }
-      }
+      ele_div(e.buffer_size, buf, m_buf, out_buf, 1, 0, e.strides[3],
+              strides[3]);
     };
-
-    NNTR_THROW_IF(!contiguous || !m.contiguous || !output.contiguous,
-                  std::invalid_argument)
-      << getName() << " is not contiguous, cannot divide";
-
     apply_broadcast(m, f, output);
 #else
     throw std::invalid_argument("Error: enable-fp16 is not enabled");
@@ -1076,35 +1018,16 @@ Tensor &Tensor::add(Tensor const &m, Tensor &output, float const alpha) const {
   if (dim.getDataType() == ml::train::TensorDim::DataType::FP32) {
     auto f = [&](const BroadcastInfo &e, const float *buf, const float *m_buf,
                  float *out_buf) {
-      if (e.strides[3] == 1 && strides[3] == 1 && strides[3] == 1 &&
-          alpha == 0) {
-        std::transform(buf, buf + e.buffer_size, m_buf, out_buf,
-                       std::plus<float>());
-      } else {
-        for (unsigned int i = 0; i < e.buffer_size; ++i) {
-          *out_buf = *buf + *m_buf * alpha;
-          buf += strides[3];
-          m_buf += e.strides[3];
-          out_buf += strides[3];
-        }
-      }
+      ele_add(e.buffer_size, buf, m_buf, out_buf, alpha, 0, e.strides[3],
+              strides[3]);
     };
     apply_broadcast(m, f, output);
   } else if (dim.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
     auto f = [&](const BroadcastInfo &e, const _FP16 *buf, const _FP16 *m_buf,
                  _FP16 *out_buf) {
-      if (e.strides[3] == 1 && strides[3] == 1 && strides[3] == 1 &&
-          alpha == 0) {
-        ewva(e.buffer_size, buf, m_buf, out_buf);
-      } else {
-        for (unsigned int i = 0; i < e.buffer_size; ++i) {
-          *out_buf = *buf + *m_buf * static_cast<_FP16>(alpha);
-          buf += strides[3];
-          m_buf += e.strides[3];
-          out_buf += strides[3];
-        }
-      }
+      ele_add(e.buffer_size, buf, m_buf, out_buf, alpha, 0, e.strides[3],
+              strides[3]);
     };
     apply_broadcast(m, f, output);
 #else
@@ -1145,10 +1068,36 @@ Tensor &Tensor::subtract(float const &value, Tensor &out) const {
 
 int Tensor::subtract_i(Tensor const &m) { return add_i(m, -1); }
 
-Tensor Tensor::subtract(Tensor const &m) const { return add(m, -1); }
+Tensor Tensor::subtract(Tensor const &m) const {
+  Tensor t;
+  return this->subtract(m, t);
+}
 
 Tensor &Tensor::subtract(Tensor const &m, Tensor &out) const {
-  return add(m, out, -1);
+  NNTR_THROW_IF(!contiguous || !m.contiguous || !out.contiguous,
+                std::invalid_argument)
+    << getName() << " is not contiguous, cannot add";
+
+  if (dim.getDataType() == ml::train::TensorDim::DataType::FP32) {
+    auto f = [&](const BroadcastInfo &e, const float *buf, const float *m_buf,
+                 float *out_buf) {
+      ele_sub(e.buffer_size, buf, m_buf, out_buf, 1, 0, e.strides[3],
+              strides[3]);
+    };
+    apply_broadcast(m, f, out);
+  } else if (dim.getDataType() == ml::train::TensorDim::DataType::FP16) {
+#ifdef ENABLE_FP16
+    auto f = [&](const BroadcastInfo &e, const _FP16 *buf, const _FP16 *m_buf,
+                 _FP16 *out_buf) {
+      ele_sub(e.buffer_size, buf, m_buf, out_buf, 1, 0, e.strides[3],
+              strides[3]);
+    };
+    apply_broadcast(m, f, out);
+#else
+    throw std::invalid_argument("Error: enable-fp16 is not enabled");
+#endif
+  }
+  return out;
 }
 
 int Tensor::pow_i(float exponent) {
@@ -1874,14 +1823,22 @@ Tensor &Tensor::sum(unsigned int axis, Tensor &ret, float alpha,
         unsigned int t_axis = dim[2];
         Tensor ones(1, 1, 1, t_axis, this->getTensorType());
         ones.setValue(alpha);
-        float *rdata = ret.getData<float>();
-        for (unsigned int k = 0; k < dim[0]; ++k) {
-          for (unsigned int c = 0; c < dim[1]; ++c) {
-            unsigned int idx = k * dim.getFeatureLen() + c * dim[3] * dim[2];
-            unsigned int ridx = k * ret.dim.getFeatureLen() + c * dim[3];
-            sgemv(CblasRowMajor, CblasTrans, t_axis, t_3, 1, &data[idx], t_3,
-                  ones.getData<float>(), 1, beta, &rdata[ridx], 1);
+
+        if (dim.getStorageOrder() == TStorageOrder::ROW_MAJOR) {
+          float *rdata = ret.getData<float>();
+          for (unsigned int k = 0; k < dim[0]; ++k) {
+            for (unsigned int c = 0; c < dim[1]; ++c) {
+              unsigned int idx = k * dim.getFeatureLen() + c * dim[3] * dim[2];
+              unsigned int ridx = k * ret.dim.getFeatureLen() + c * dim[3];
+
+              sgemv(CblasRowMajor, CblasTrans, t_axis, t_3, 1, &data[idx], t_3,
+                    ones.getData<float>(), 1, beta, &rdata[ridx], 1);
+            }
           }
+        } else {
+          sgemv(CblasColMajor, CblasTrans, t_axis, ret.dim.getDataLen(), 1,
+                data, t_axis, ones.getData<float>(), 1, beta,
+                ret.getData<float>(), 1);
         }
       }
     } break;
@@ -1907,8 +1864,23 @@ Tensor &Tensor::sum(unsigned int axis, Tensor &ret, float alpha,
         unsigned int n = dim[3];
         Tensor ones(1, 1, 1, n);
         ones.setValue(alpha);
-        sgemv(CblasRowMajor, CblasNoTrans, m, n, 1, data, n,
-              ones.getData<float>(), 1, beta, ret.getData<float>(), 1);
+
+        if (dim.getStorageOrder() == TStorageOrder::ROW_MAJOR) {
+          sgemv(CblasRowMajor, CblasNoTrans, m, n, 1, data, n,
+                ones.getData<float>(), 1, beta, ret.getData<float>(), 1);
+        } else {
+          float *rdata = ret.getData<float>();
+
+          for (unsigned int k = 0; k < dim[0]; ++k) {
+            for (unsigned int c = 0; c < dim[1]; ++c) {
+              unsigned int idx = k * dim.getFeatureLen() + c * dim[3] * dim[2];
+              unsigned int ridx = k * dim[1] * dim[2] + c * dim[2];
+
+              sgemv(CblasColMajor, CblasNoTrans, dim[2], n, 1, &data[idx],
+                    dim[2], ones.getData<float>(), 1, beta, &rdata[ridx], 1);
+            }
+          }
+        }
       }
     } break;
     default:
@@ -3070,7 +3042,9 @@ void Tensor::copyData(const Tensor &from) {
       }
     } else if (getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
-      if (from.getDataType() == ml::train::TensorDim::DataType::QINT8) {
+      if (from.getDataType() == ml::train::TensorDim::DataType::FP32) {
+        scopy(size(), from.getData<float>(), 1, getData<_FP16>(), 1);
+      } else if (from.getDataType() == ml::train::TensorDim::DataType::QINT8) {
         scopy_int8_to_float16(from.size(), from.getData<uint8_t>(), 1,
                               getData<_FP16>(), 1);
       } else if (from.getDataType() == ml::train::TensorDim::DataType::QINT4) {
@@ -3416,6 +3390,58 @@ Tensor &Tensor::erf(Tensor &out) const {
 #endif
   }
   return out;
+}
+
+void Tensor::sin(Tensor &out, float alpha) {
+  if (size() != out.size())
+    throw std::invalid_argument("Error: Size of out of Tensor::sin must match");
+  if (getDataType() == ml::train::TensorDim::DataType::FP32) {
+    if (!contiguous) {
+      auto f = [alpha](float val) -> float { return std::sin(alpha * val); };
+      apply<float>(f, out);
+    } else {
+      sine(size(), getData<float>(), out.getData<float>(), alpha);
+    }
+  } else
+    throw std::invalid_argument("Error: Tensor::sin supports fp32 case only.");
+}
+
+void Tensor::cos(Tensor &out, float alpha) {
+  if (size() != out.size())
+    throw std::invalid_argument("Error: Size of out of Tensor::sin must match");
+  if (getDataType() == ml::train::TensorDim::DataType::FP32) {
+    if (!contiguous) {
+      auto f = [alpha](float val) -> float { return std::cos(alpha * val); };
+      apply<float>(f, out);
+    } else {
+      cosine(size(), getData<float>(), out.getData<float>(), alpha);
+    }
+  } else
+    throw std::invalid_argument("Error: Tensor::cos supports fp32 case only.");
+}
+
+void Tensor::inv_sqrt_i() {
+  if (getDataType() == ml::train::TensorDim::DataType::FP32) {
+    if (!contiguous) {
+      apply_i<float>([](float val) -> float { return 1 / std::sqrt(val); });
+    } else {
+      inv_sqrt_inplace(this->size(), getData<float>());
+    }
+  } else if (getDataType() == ml::train::TensorDim::DataType::FP16) {
+#ifdef ENABLE_FP16
+    if (!contiguous) {
+      apply_i<_FP16>([](_FP16 val) -> _FP16 {
+        return static_cast<_FP16>(1 / std::sqrt(static_cast<float>(val)));
+      });
+    } else {
+      inv_sqrt_inplace(this->size(), getData<_FP16>());
+    }
+#else
+    throw std::invalid_argument("Error: enable-fp16 is not enabled");
+#endif
+  } else
+    throw std::invalid_argument(
+      "Error: Tensor::inv_sqrt_i only supports fp32, fp16");
 }
 
 float Tensor::l2norm() const {

@@ -27,6 +27,7 @@ option('tizen-version-minor', type: 'integer', min : 0, max : 9999, value: 0)
 option('openblas-num-threads', type: 'integer', min : 0, max : 9999, value: 0)
 #This is for the multi-threading in nntrainer
 option('nntr-num-threads', type: 'integer', min : 0, max : 9999, value: 1)
+option('omp-num-threads', type: 'integer', min : 0, max : 9999, value: 1)
 
 # test related option
 option('reduce-tolerance', type: 'boolean', value: true)
@@ -37,6 +38,9 @@ option('enable-blas', type: 'boolean', value: true)
 option('enable-fp16', type: 'boolean', value: false)
 option('enable-cublas', type: 'boolean', value: false)
 option('enable-openmp', type: 'boolean', value: true)
+option('enable-neon', type: 'boolean', value: false)
+option('enable-avx', type: 'boolean', value: false)
+option('enable-opencl', type: 'boolean', value: false)
 
 # ml-api dependency (to enable, install capi-inference from github.com/nnstreamer/api )
 # To inter-operate with nnstreamer and ML-API packages, you need to enable this.

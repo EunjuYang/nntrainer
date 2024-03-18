@@ -13,11 +13,14 @@
  */
 
 #include <blas_neon.h>
+#include <blas_neon_setting.h>
+#include <memory>
 #include <nntrainer_error.h>
+
 namespace nntrainer::neon {
 
-void sgemv_neon(const float *A, const float *X, float *Y, uint32_t rows,
-                uint32_t cols, float alpha, float beta) {
+void sgemv(const float *A, const float *X, float *Y, uint32_t rows,
+           uint32_t cols, float alpha, float beta) {
   const float *__restrict x;
 
   for (unsigned int i = 0; i < rows; ++i) {
@@ -133,9 +136,8 @@ void sgemv_neon(const float *A, const float *X, float *Y, uint32_t rows,
   }
 }
 
-void sgemv_transpose_neon(const float *A, const float *X, float *Y,
-                          uint32_t rows, uint32_t cols, float alpha,
-                          float beta) {
+void sgemv_transpose(const float *A, const float *X, float *Y, uint32_t rows,
+                     uint32_t cols, float alpha, float beta) {
   const float *__restrict x;
 
   const float32x4_t v_beta = vdupq_n_f32(beta);
@@ -272,7 +274,7 @@ void sgemv_transpose_neon(const float *A, const float *X, float *Y,
   return;
 }
 
-void scopy_neon_int4_to_fp32(const unsigned int N, const uint8_t *X, float *Y) {
+void copy_int4_to_fp32(const unsigned int N, const uint8_t *X, float *Y) {
 
   unsigned int idx = 0;
 
@@ -339,7 +341,7 @@ void scopy_neon_int4_to_fp32(const unsigned int N, const uint8_t *X, float *Y) {
 
   // processing remaining batch of 8
   for (; (N - idx) >= 8; idx += 8) {
-    int8x8_t batch = vld1_u8(&X[idx]);
+    uint8x8_t batch = vld1_u8(&X[idx]);
 
     unsigned int i = 0;
     for (; i < 8; ++i) {
@@ -374,8 +376,7 @@ void scopy_neon_int4_to_fp32(const unsigned int N, const uint8_t *X, float *Y) {
   }
 }
 
-void scopy_neon_int8_or_int4(const unsigned int N, const uint8_t *X,
-                             uint8_t *Y) {
+void copy_int8_or_int4(const unsigned int N, const uint8_t *X, uint8_t *Y) {
   ///@note int8 Tensor and int4 Tensor share the same memory offset
   unsigned int idx = 0;
   for (; N - idx >= 16; idx += 16) {
@@ -391,17 +392,170 @@ void scopy_neon_int8_or_int4(const unsigned int N, const uint8_t *X,
   }
 }
 
+void sine(const unsigned int N, float *X, float *Y, float alpha) {
+  unsigned int i = 0;
+  for (; N - i >= 4; i += 4) {
+    float32x4_t x0_3 = vld1q_f32(&X[i]);
+    if (alpha != 1.0)
+      x0_3 = vmulq_n_f32(x0_3, alpha);
+    float32x4_t sinx0_3 = sin_ps(x0_3);
+    vst1q_f32(&Y[i], sinx0_3);
+  }
+  while (i < N) {
+    Y[i] = std::sin(alpha * X[i]);
+    ++i;
+  }
+}
+
+void cosine(const unsigned int N, float *X, float *Y, float alpha) {
+  unsigned int i = 0;
+  for (; N - i >= 4; i += 4) {
+    float32x4_t x0_3 = vld1q_f32(&X[i]);
+    if (alpha != 1.0)
+      x0_3 = vmulq_n_f32(x0_3, alpha);
+    float32x4_t cosx0_3 = cos_ps(x0_3);
+    vst1q_f32(&Y[i], cosx0_3);
+  }
+  while (i < N) {
+    Y[i] = std::cos(alpha * X[i]);
+    ++i;
+  }
+}
+
+void inv_sqrt_inplace(const unsigned int N, float *X) {
+  unsigned int i = 0;
+  for (; N - i >= 4; i += 4) {
+    float32x4_t x0_7 = vld1q_f32(&X[i]);
+    float32x4_t x0_7_sqrt = vsqrtq_f32(x0_7);
+    float32x4_t ones = vmovq_n_f32(1);
+    float32x4_t x0_7_sqrt_div = vdivq_f32(ones, x0_7_sqrt);
+    vst1q_f32(&X[i], x0_7_sqrt_div);
+  }
+  while (i < N) {
+    X[i] = (1 / std::sqrt(static_cast<float>(X[i])));
+    ++i;
+  }
+}
+
+void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
+             float alpha, float beta) {
+  unsigned int i = 0;
+  float32x4_t alpha_vec = vdupq_n_f32(alpha);
+  float32x4_t beta_vec = vdupq_n_f32(beta);
+  for (; N - i >= 4; i += 4) {
+    float32x4_t x0_3 = vld1q_f32(&X[i]);
+    float32x4_t y0_3 = vld1q_f32(&Y[i]);
+    if (alpha != 1.f) {
+      y0_3 = vmulq_f32(y0_3, alpha_vec);
+    }
+    float32x4_t xy0_3 = vmulq_f32(x0_3, y0_3);
+    if (std::abs(beta) > __FLT_MIN__) {
+      float32x4_t z0_3 = vmulq_f32(vld1q_f32(&Z[i]), beta_vec);
+      vst1q_f32(&Z[i], vaddq_f32(z0_3, xy0_3));
+    } else
+      vst1q_f32(&Z[i], xy0_3);
+  }
+  while (i < N) {
+    if (std::abs(beta) > __FLT_MIN__)
+      Z[i] = alpha * X[i] * Y[i] + beta * Z[i];
+    else
+      Z[i] = alpha * X[i] * Y[i];
+    ++i;
+  }
+}
+
+void ele_add(const unsigned int N, const float *X, const float *Y, float *Z,
+             float alpha, float beta) {
+  unsigned int i = 0;
+  float32x4_t alpha_vec = vdupq_n_f32(alpha);
+  float32x4_t beta_vec = vdupq_n_f32(beta);
+  for (; N - i >= 4; i += 4) {
+    float32x4_t x0_3 = vld1q_f32(&X[i]);
+    float32x4_t y0_3 = vld1q_f32(&Y[i]);
+    if (alpha != 1.f) {
+      y0_3 = vmulq_f32(y0_3, alpha_vec);
+    }
+    float32x4_t xy0_3 = vaddq_f32(x0_3, y0_3);
+    if (std::abs(beta) > __FLT_MIN__) {
+      float32x4_t z0_3 = vmulq_f32(vld1q_f32(&Z[i]), beta_vec);
+      vst1q_f32(&Z[i], vaddq_f32(z0_3, xy0_3));
+    } else
+      vst1q_f32(&Z[i], xy0_3);
+  }
+  while (i < N) {
+    if (std::abs(beta) > __FLT_MIN__)
+      Z[i] = X[i] + alpha * Y[i] + beta * Z[i];
+    else
+      Z[i] = X[i] + alpha * Y[i];
+    ++i;
+  }
+}
+
+void ele_sub(const unsigned N, const float *X, const float *Y, float *Z,
+             float alpha, float beta) {
+  unsigned int i = 0;
+  float32x4_t alpha_vec = vdupq_n_f32(alpha);
+  float32x4_t beta_vec = vdupq_n_f32(beta);
+  for (; N - i >= 4; i += 4) {
+    float32x4_t x0_3 = vld1q_f32(&X[i]);
+    float32x4_t y0_3 = vld1q_f32(&Y[i]);
+    if (alpha != 1.f) {
+      y0_3 = vmulq_f32(y0_3, alpha_vec);
+    }
+    float32x4_t xy0_3 = vsubq_f32(x0_3, y0_3);
+    if (std::abs(beta) > __FLT_MIN__) {
+      float32x4_t z0_3 = vmulq_f32(vld1q_f32(&Z[i]), beta_vec);
+      vst1q_f32(&Z[i], vaddq_f32(z0_3, xy0_3));
+    } else
+      vst1q_f32(&Z[i], xy0_3);
+  }
+  while (i < N) {
+    if (std::abs(beta) > __FLT_MIN__)
+      Z[i] = X[i] - alpha * Y[i] + beta * Z[i];
+    else
+      Z[i] = X[i] - alpha * Y[i];
+    ++i;
+  }
+}
+
+void ele_div(const unsigned N, const float *X, const float *Y, float *Z,
+             float alpha, float beta) {
+  unsigned int i = 0;
+  float32x4_t alpha_vec = vdupq_n_f32(alpha);
+  float32x4_t beta_vec = vdupq_n_f32(beta);
+  for (; N - i >= 4; i += 4) {
+    float32x4_t x0_3 = vld1q_f32(&X[i]);
+    float32x4_t y0_3 = vld1q_f32(&Y[i]);
+    if (alpha != 1.f) {
+      y0_3 = vmulq_f32(y0_3, alpha_vec);
+    }
+    float32x4_t xy0_3 = vdivq_f32(x0_3, y0_3);
+    if (std::abs(beta) > __FLT_MIN__) {
+      float32x4_t z0_3 = vmulq_f32(vld1q_f32(&Z[i]), beta_vec);
+      vst1q_f32(&Z[i], vaddq_f32(z0_3, xy0_3));
+    } else
+      vst1q_f32(&Z[i], xy0_3);
+  }
+  while (i < N) {
+    if (std::abs(beta) > __FLT_MIN__)
+      Z[i] = X[i] / (alpha * Y[i]) + beta * Z[i];
+    else
+      Z[i] = X[i] / (alpha * Y[i]);
+    ++i;
+  }
+}
+
 #ifdef ENABLE_FP16
 
-void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
-                     uint32_t cols, float alpha, float beta) {
-  const int batch = 0;
+void hgemv(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M, uint32_t N,
+           float alpha, float beta) {
+  const unsigned int batch = 0;
   const __fp16 *__restrict x;
-  float Y32[rows];
+  float *Y32 = new float[M];
 
   unsigned int idx = 0;
 
-  for (; rows - idx >= 8; idx += 8) {
+  for (; M - idx >= 8; idx += 8) {
     float32x4_t y0_3 = vcvt_f32_f16(vld1_f16(&Y[idx]));
     float32x4_t y4_7 = vcvt_f32_f16(vld1_f16(&Y[idx + 4]));
     y0_3 = vmulq_n_f32(y0_3, beta);
@@ -410,19 +564,19 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
     vst1q_f32(&Y32[idx], y0_3);
     vst1q_f32(&Y32[idx + 4], y4_7);
   }
-  for (; rows - idx >= 4; idx += 4) {
+  for (; M - idx >= 4; idx += 4) {
     float32x4_t y0_3_32 = vcvt_f32_f16(vld1_f16(&Y[idx]));
     y0_3_32 = vmulq_n_f32(y0_3_32, beta);
 
     vst1q_f32(&Y32[idx], y0_3_32);
   }
-  for (; idx < rows; ++idx) {
+  for (; idx < M; ++idx) {
     Y32[idx] = beta * Y[idx];
   }
 
   idx = 0;
-  if (cols / 120 >= batch) {
-    for (; cols - idx >= 120; idx += 120) {
+  if (N / 120 >= batch) {
+    for (; N - idx >= 120; idx += 120) {
       float16x8_t x0_7 = vld1q_f16(&X[idx]);
       float16x8_t x8_15 = vld1q_f16(&X[idx + 8]);
       float16x8_t x16_23 = vld1q_f16(&X[idx + 16]);
@@ -463,8 +617,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
 
       const __fp16 *__restrict w;
 
-      for (unsigned int j = 0; j < rows; ++j) {
-        w = &A[j * cols + idx];
+      for (unsigned int j = 0; j < M; ++j) {
+        w = &A[j * N + idx];
         float16x8_t y = vmulq_f16(vld1q_f16(&w[0]), x0_7);
         y = vfmaq_f16(y, vld1q_f16(&w[8]), x8_15);
         y = vfmaq_f16(y, vld1q_f16(&w[16]), x16_23);
@@ -489,8 +643,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
       }
     }
   }
-  if (cols / 64 >= batch) {
-    for (; cols - idx >= 64; idx += 64) {
+  if (N / 64 >= batch) {
+    for (; N - idx >= 64; idx += 64) {
       float16x8_t x0_7 = vld1q_f16(&X[idx]);
       float16x8_t x8_15 = vld1q_f16(&X[idx + 8]);
       float16x8_t x16_23 = vld1q_f16(&X[idx + 16]);
@@ -514,8 +668,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
 
       const __fp16 *__restrict w;
 
-      for (unsigned int j = 0; j < rows; ++j) {
-        w = &A[j * cols + idx];
+      for (unsigned int j = 0; j < M; ++j) {
+        w = &A[j * N + idx];
         float16x8_t y = vmulq_f16(vld1q_f16(&w[0]), x0_7);
         y = vfmaq_f16(y, vld1q_f16(&w[8]), x8_15);
         y = vfmaq_f16(y, vld1q_f16(&w[16]), x16_23);
@@ -531,8 +685,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
       }
     }
   }
-  if (cols / 32 >= batch) {
-    for (; cols - idx >= 32; idx += 32) {
+  if (N / 32 >= batch) {
+    for (; N - idx >= 32; idx += 32) {
       float16x8_t x0_7 = vld1q_f16(&X[idx]);
       float16x8_t x8_15 = vld1q_f16(&X[idx + 8]);
       float16x8_t x16_23 = vld1q_f16(&X[idx + 16]);
@@ -547,8 +701,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
 
       const __fp16 *__restrict w;
 
-      for (unsigned int j = 0; j < rows; ++j) {
-        w = &A[j * cols + idx];
+      for (unsigned int j = 0; j < M; ++j) {
+        w = &A[j * N + idx];
         float16x8_t y = vmulq_f16(vld1q_f16(&w[0]), x0_7);
         y = vfmaq_f16(y, vld1q_f16(&w[8]), x8_15);
         y = vfmaq_f16(y, vld1q_f16(&w[16]), x16_23);
@@ -559,8 +713,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
       }
     }
   }
-  if (cols / 16 >= batch) {
-    for (; cols - idx >= 16; idx += 16) {
+  if (N / 16 >= batch) {
+    for (; N - idx >= 16; idx += 16) {
       float16x8_t x0_7 = vld1q_f16(&X[idx]);
       float16x8_t x8_15 = vld1q_f16(&X[idx + 8]);
 
@@ -570,8 +724,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
       }
 
       const __fp16 *__restrict w;
-      for (unsigned int j = 0; j < rows; ++j) {
-        w = &A[j * cols + idx];
+      for (unsigned int j = 0; j < M; ++j) {
+        w = &A[j * N + idx];
         float16x8_t y = vmulq_f16(vld1q_f16(&w[0]), x0_7);
         y = vfmaq_f16(y, vld1q_f16(&w[8]), x8_15);
 
@@ -580,7 +734,7 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
       }
     }
   }
-  for (; cols - idx >= 8; idx += 8) {
+  for (; N - idx >= 8; idx += 8) {
     float16x8_t x0_7 = vld1q_f16(&X[idx]);
 
     if (alpha != 1.0) {
@@ -589,8 +743,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
 
     const __fp16 *__restrict w;
 
-    for (unsigned int j = 0; j < rows; ++j) {
-      w = &A[j * cols + idx];
+    for (unsigned int j = 0; j < M; ++j) {
+      w = &A[j * N + idx];
       float16x8_t wvec0_7 = vld1q_f16(&w[0]);
       float16x8_t y = vmulq_f16(wvec0_7, x0_7);
 
@@ -598,7 +752,7 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
                 vaddvq_f32(vcvt_f32_f16(vget_high_f16(y)));
     }
   }
-  for (; cols - idx >= 4; idx += 4) {
+  for (; N - idx >= 4; idx += 4) {
     float32x4_t x0_3 = vcvt_f32_f16(vld1_f16(&X[idx]));
 
     if (alpha != 1.0) {
@@ -607,8 +761,8 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
 
     const __fp16 *__restrict w;
 
-    for (unsigned int j = 0; j < rows; ++j) {
-      w = &A[j * cols + idx];
+    for (unsigned int j = 0; j < M; ++j) {
+      w = &A[j * N + idx];
       float32x4_t wvec0_3 = vcvt_f32_f16(vld1_f16(&w[0]));
       float32x4_t y0 = vmulq_f32(wvec0_3, x0_3);
 
@@ -616,10 +770,10 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
     }
   }
 
-  // now, cols - idx is under 4 : 0 1 2 3 = cols - idx
-  if (cols != idx) {
+  // now, N - idx is under 4 : 0 1 2 3 = N - idx
+  if (N != idx) {
     float32x4_t x0_3 = vcvt_f32_f16(vld1_f16(&X[idx]));
-    for (int j = cols - idx; j < 4; ++j) {
+    for (unsigned int j = N - idx; j < 4; ++j) {
       x0_3[j] = 0;
     }
 
@@ -631,33 +785,37 @@ void sgemv_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t rows,
 
     __fp16 yVal;
 
-    for (unsigned int j = 0; j < rows; ++j) {
-      w = &A[j * cols + idx];
+    for (unsigned int j = 0; j < M; ++j) {
+      w = &A[j * N + idx];
       float32x4_t wvec0_3 = vcvt_f32_f16(vld1_f16(&w[0]));
 
-      for (int k = cols - idx; k < 4; ++k) {
-        wvec0_3[k] = 0;
+      for (unsigned int n = N - idx; n < 4; ++n) {
+        wvec0_3[n] = 0;
       }
 
       float32x4_t y0 = vmulq_f32(wvec0_3, x0_3);
 
-      for (int k = 0; k < cols - idx; ++k) {
-        Y32[j] += y0[k];
+      for (unsigned int n = 0; n < N - idx; ++n) {
+        Y32[j] += y0[n];
       }
     }
   }
 
-  scopy_neon_fp32_to_fp16(rows, Y32, Y);
+  copy_fp32_to_fp16(M, Y32, Y);
+  delete[] Y32;
   return;
 }
 
-void sgemv_transpose_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y,
-                               uint32_t rows, uint32_t cols, float alpha,
-                               float beta) {
-  float Y32[cols];
-  const int batch = 20;
+void hgemv_transpose(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M,
+                     uint32_t N, float alpha, float beta) {
+#ifdef OMP_NUM_THREADS
+  set_gemv_num_threads(OMP_NUM_THREADS);
+#endif
+  size_t GEMV_NUM_THREADS = get_gemv_num_threads();
+
+  float *Y32 = new float[N];
   unsigned int idx = 0;
-  for (; cols - idx >= 8; idx += 8) {
+  for (; N - idx >= 8; idx += 8) {
     float32x4_t y0_3_32 = vcvt_f32_f16(vld1_f16(&Y[idx]));
     float32x4_t y4_7_32 = vcvt_f32_f16(vld1_f16(&Y[idx + 4]));
 
@@ -667,408 +825,340 @@ void sgemv_transpose_neon_fp16(const __fp16 *A, const __fp16 *X, __fp16 *Y,
     vst1q_f32(&Y32[idx], y0_3_32);
     vst1q_f32(&Y32[idx + 4], y4_7_32);
   }
-  for (; cols - idx >= 4; idx += 4) {
+  for (; N - idx >= 4; idx += 4) {
     float32x4_t y0_3_32 = vcvt_f32_f16(vld1_f16(&Y[idx]));
     y0_3_32 = vmulq_n_f32(y0_3_32, beta);
     vst1q_f32(&Y32[idx], y0_3_32);
   }
-  for (; cols - idx >= 1; idx += 1) {
+  for (; N - idx >= 1; idx += 1) {
     Y32[idx] = beta * Y[idx];
   }
-  if (rows % 16 == 0 && rows / 16 >= batch && cols % 4 == 0) {
-    for (unsigned int i = 0; i < rows; i += 16) {
-      __fp16 x = alpha * (X[i]);
-      __fp16 x2 = alpha * (X[i + 1]);
-      __fp16 x3 = alpha * (X[i + 2]);
-      __fp16 x4 = alpha * (X[i + 3]);
-      __fp16 x5 = alpha * (X[i + 4]);
-      __fp16 x6 = alpha * (X[i + 5]);
-      __fp16 x7 = alpha * (X[i + 6]);
-      __fp16 x8 = alpha * (X[i + 7]);
-      __fp16 x9 = alpha * (X[i + 8]);
-      __fp16 x10 = alpha * (X[i + 9]);
-      __fp16 x11 = alpha * (X[i + 10]);
-      __fp16 x12 = alpha * (X[i + 11]);
-      __fp16 x13 = alpha * (X[i + 12]);
-      __fp16 x14 = alpha * (X[i + 13]);
-      __fp16 x15 = alpha * (X[i + 14]);
-      __fp16 x16 = alpha * (X[i + 15]);
+  unsigned int i = 0;
+  unsigned int N8 = (N >> 3) << 3;
+  for (; M - i >= 16; i += 16) {
+    __fp16 x[16];
+    vst1q_f16(&x[0], vmulq_n_f16(vld1q_f16(&X[i]), alpha));
+    vst1q_f16(&x[8], vmulq_n_f16(vld1q_f16(&X[i + 8]), alpha));
+#pragma omp parallel for schedule(guided) num_threads(GEMV_NUM_THREADS)
+    for (unsigned int idx = 0; idx < N8; idx += 8) {
+      float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
+      wvec0_7_f16 =
+        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
+      wvec0_7_f16 =
+        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
+      wvec0_7_f16 =
+        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
 
-      idx = 0;
-      for (; cols - idx >= 8; idx += 8) {
-        float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * cols + idx]), x);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * cols + idx]), x2);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 2) * cols + idx]), x3);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 3) * cols + idx]), x4);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 4) * cols + idx]), x5);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 5) * cols + idx]), x6);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 6) * cols + idx]), x7);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 7) * cols + idx]), x8);
+      float16x8_t w2vec0_7_f16 =
+        vmulq_n_f16(vld1q_f16(&A[(i + 4) * N + idx]), x[4]);
+      w2vec0_7_f16 =
+        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 5) * N + idx]), x[5]);
+      w2vec0_7_f16 =
+        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 6) * N + idx]), x[6]);
+      w2vec0_7_f16 =
+        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 7) * N + idx]), x[7]);
 
-        float16x8_t w2vec0_7_f16 =
-          vmulq_n_f16(vld1q_f16(&A[(i + 8) * cols + idx]), x9);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 9) * cols + idx]), x10);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 10) * cols + idx]), x11);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 11) * cols + idx]), x12);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 12) * cols + idx]), x13);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 13) * cols + idx]), x14);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 14) * cols + idx]), x15);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 15) * cols + idx]), x16);
+      float16x8_t w3vec0_7_f16 =
+        vmulq_n_f16(vld1q_f16(&A[(i + 8) * N + idx]), x[8]);
+      w3vec0_7_f16 =
+        vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 9) * N + idx]), x[9]);
+      w3vec0_7_f16 =
+        vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 10) * N + idx]), x[10]);
+      w3vec0_7_f16 =
+        vfmaq_n_f16(w3vec0_7_f16, vld1q_f16(&A[(i + 11) * N + idx]), x[11]);
 
-        float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
-                                     vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
-        y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
-        float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
-                                     vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
-        y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
+      float16x8_t w4vec0_7_f16 =
+        vmulq_n_f16(vld1q_f16(&A[(i + 12) * N + idx]), x[12]);
+      w4vec0_7_f16 =
+        vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 13) * N + idx]), x[13]);
+      w4vec0_7_f16 =
+        vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 14) * N + idx]), x[14]);
+      w4vec0_7_f16 =
+        vfmaq_n_f16(w4vec0_7_f16, vld1q_f16(&A[(i + 15) * N + idx]), x[15]);
 
-        vst1q_f32(&Y32[idx], y0_3);
-        vst1q_f32(&Y32[idx + 4], y4_7);
-      }
+      wvec0_7_f16 = vaddq_f16(wvec0_7_f16, w3vec0_7_f16);
+      w2vec0_7_f16 = vaddq_f16(w2vec0_7_f16, w4vec0_7_f16);
 
-      for (; cols - idx >= 4; idx += 4) {
+      float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
+                                   vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
+      y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
+      float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
+                                   vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
+      y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
 
-        float32x4_t y0_3 = vld1q_f32(&Y32[idx]);
-
-        y0_3 = vfmaq_n_f32(y0_3, vcvt_f32_f16(vld1_f16(&A[i * cols + idx])), x);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 1) * cols + idx])), x2);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 2) * cols + idx])), x3);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 3) * cols + idx])), x4);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 4) * cols + idx])), x5);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 5) * cols + idx])), x6);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 6) * cols + idx])), x7);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 7) * cols + idx])), x8);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 8) * cols + idx])), x9);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 9) * cols + idx])), x10);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 10) * cols + idx])), x11);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 11) * cols + idx])), x12);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 12) * cols + idx])), x13);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 13) * cols + idx])), x14);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 14) * cols + idx])), x15);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 15) * cols + idx])), x16);
-
-        vst1q_f32(&Y32[idx], y0_3);
-      }
-
-      if (cols - idx >= 1) {
-        float y0_3_0[4];
-
-        float v0[4], v1[4], v2[4], v3[4];
-        float v4[4], v5[4], v6[4], v7[4];
-        float v8[4], v9[4], v10[4], v11[4];
-        float v12[4], v13[4], v14[4], v15[4];
-
-        unsigned int k = 0;
-        for (; k < cols - idx; ++k) {
-
-          y0_3_0[k] = Y32[idx + k];
-
-          v0[k] = A[i * cols + idx + k];
-          v1[k] = A[(i + 1) * cols + idx + k];
-          v2[k] = A[(i + 2) * cols + idx + k];
-          v3[k] = A[(i + 3) * cols + idx + k];
-          v4[k] = A[(i + 4) * cols + idx + k];
-          v5[k] = A[(i + 5) * cols + idx + k];
-          v6[k] = A[(i + 6) * cols + idx + k];
-          v7[k] = A[(i + 7) * cols + idx + k];
-          v8[k] = A[(i + 8) * cols + idx + k];
-          v9[k] = A[(i + 9) * cols + idx + k];
-          v10[k] = A[(i + 10) * cols + idx + k];
-          v11[k] = A[(i + 11) * cols + idx + k];
-          v12[k] = A[(i + 12) * cols + idx + k];
-          v13[k] = A[(i + 13) * cols + idx + k];
-          v15[k] = A[(i + 15) * cols + idx + k];
-        }
-        for (; k < 4; ++k) {
-          y0_3_0[k] = 0;
-
-          v0[k] = v1[k] = v2[k] = v3[k] = 0;
-          v4[k] = v5[k] = v6[k] = v7[k] = 0;
-          v8[k] = v9[k] = v10[k] = v11[k] = 0;
-          v12[k] = v13[k] = v14[k] = v15[k] = 0;
-        }
-
-        float32x4_t y0_3 = vld1q_f32(y0_3_0);
-        float32x4_t y0_3_tmp = vmovq_n_f32(0);
-
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v0), x);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v1), x2);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v2), x3);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v3), x4);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v4), x5);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v5), x6);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v6), x7);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v7), x8);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v8), x9);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v9), x10);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v10), x11);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v11), x12);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v12), x13);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v13), x14);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v14), x15);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v15), x16);
-
-        for (unsigned int k = 0; k < cols - idx; ++k) {
-          Y32[idx + k] = y0_3[k];
-        }
-      }
+      vst1q_f32(&Y32[idx], y0_3);
+      vst1q_f32(&Y32[idx + 4], y4_7);
     }
-  } else if (rows % 8 == 0 && rows / 8 >= batch) {
-    for (unsigned int i = 0; i < rows; i += 8) {
-      __fp16 x = alpha * X[i];
-      __fp16 x2 = alpha * X[i + 1];
-      __fp16 x3 = alpha * X[i + 2];
-      __fp16 x4 = alpha * X[i + 3];
-      __fp16 x5 = alpha * X[i + 4];
-      __fp16 x6 = alpha * X[i + 5];
-      __fp16 x7 = alpha * X[i + 6];
-      __fp16 x8 = alpha * X[i + 7];
 
-      idx = 0;
-      for (; cols - idx >= 8; idx += 8) {
-        float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * cols + idx]), x);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * cols + idx]), x2);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 2) * cols + idx]), x3);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 3) * cols + idx]), x4);
+    if (N != N8) {
+      unsigned int idx = N8;
 
-        float16x8_t w2vec0_7_f16 =
-          vmulq_n_f16(vld1q_f16(&A[(i + 4) * cols + idx]), x5);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 5) * cols + idx]), x6);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 6) * cols + idx]), x7);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 7) * cols + idx]), x8);
+      float y0_7[8];
+      float v0[8], v1[8], v2[8], v3[8];
+      float v4[8], v5[8], v6[8], v7[8];
+      float v8[8], v9[8], v10[8], v11[8];
+      float v12[8], v13[8], v14[8], v15[8];
 
-        float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
-                                     vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
-        y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
-        float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
-                                     vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
-        y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
+      unsigned int n = 0;
+      for (; n < N - idx; ++n) {
+        y0_7[n] = Y32[idx + n];
 
-        vst1q_f32(&Y32[idx], y0_3);
-        vst1q_f32(&Y32[idx + 4], y4_7);
+        v0[n] = A[i * N + idx + n];
+        v1[n] = A[(i + 1) * N + idx + n];
+        v2[n] = A[(i + 2) * N + idx + n];
+        v3[n] = A[(i + 3) * N + idx + n];
+        v4[n] = A[(i + 4) * N + idx + n];
+        v5[n] = A[(i + 5) * N + idx + n];
+        v6[n] = A[(i + 6) * N + idx + n];
+        v7[n] = A[(i + 7) * N + idx + n];
+        v8[n] = A[(i + 8) * N + idx + n];
+        v9[n] = A[(i + 9) * N + idx + n];
+        v10[n] = A[(i + 10) * N + idx + n];
+        v11[n] = A[(i + 11) * N + idx + n];
+        v12[n] = A[(i + 12) * N + idx + n];
+        v13[n] = A[(i + 13) * N + idx + n];
+        v14[n] = A[(i + 14) * N + idx + n];
+        v15[n] = A[(i + 15) * N + idx + n];
+      }
+      for (; n < 8; ++n) {
+        y0_7[n] = 0;
+        v0[n] = v1[n] = v2[n] = v3[n] = 0;
+        v4[n] = v5[n] = v6[n] = v7[n] = 0;
+        v8[n] = v9[n] = v10[n] = v11[n] = 0;
+        v12[n] = v13[n] = v14[n] = v15[n] = 0;
       }
 
-      for (; cols - idx >= 4; idx += 4) {
+      float32x4_t y0_3 = vld1q_f32(&y0_7[0]);
+      float32x4_t y4_7 = vld1q_f32(&y0_7[4]);
 
-        float32x4_t y0_3 = vld1q_f32(&Y32[idx]);
-        y0_3 = vfmaq_n_f32(y0_3, vcvt_f32_f16(vld1_f16(&A[i * cols + idx])), x);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 1) * cols + idx])), x2);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 2) * cols + idx])), x3);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 3) * cols + idx])), x4);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 4) * cols + idx])), x5);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 5) * cols + idx])), x6);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 6) * cols + idx])), x7);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 7) * cols + idx])), x8);
-        vst1q_f32(&Y32[idx], y0_3);
-      }
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v0[0]), x[0]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v1[0]), x[1]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v2[0]), x[2]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v3[0]), x[3]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v4[0]), x[4]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v5[0]), x[5]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v6[0]), x[6]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v7[0]), x[7]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v8[0]), x[8]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v9[0]), x[9]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v10[0]), x[10]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v11[0]), x[11]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v12[0]), x[12]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v13[0]), x[13]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v14[0]), x[14]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v15[0]), x[15]);
 
-      if (cols - idx >= 1) {
-        float y0_3_0[4];
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v0[4]), x[0]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v1[4]), x[1]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v2[4]), x[2]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v3[4]), x[3]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v4[4]), x[4]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v5[4]), x[5]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v6[4]), x[6]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v7[4]), x[7]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v8[4]), x[8]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v9[4]), x[9]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v10[4]), x[10]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v11[4]), x[11]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v12[4]), x[12]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v13[4]), x[13]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v14[4]), x[14]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v15[4]), x[15]);
 
-        float v0[4], v1[4], v2[4], v3[4];
-        float v4[4], v5[4], v6[4], v7[4];
-
-        unsigned int k = 0;
-        for (; k < cols - idx; ++k) {
-          y0_3_0[k] = Y32[idx + k];
-
-          v0[k] = A[i * cols + idx + k];
-          v1[k] = A[(i + 1) * cols + idx + k];
-          v2[k] = A[(i + 2) * cols + idx + k];
-          v3[k] = A[(i + 3) * cols + idx + k];
-          v4[k] = A[(i + 4) * cols + idx + k];
-          v5[k] = A[(i + 5) * cols + idx + k];
-          v6[k] = A[(i + 6) * cols + idx + k];
-          v7[k] = A[(i + 7) * cols + idx + k];
-        }
-        for (; k < 4; ++k) {
-          y0_3_0[k] = 0;
-          v0[k] = v1[k] = v2[k] = v3[k] = 0;
-          v4[k] = v5[k] = v6[k] = v7[k] = 0;
-        }
-
-        float32x4_t y0_3 = vld1q_f32(y0_3_0);
-
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v0), x);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v1), x2);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v2), x3);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v3), x4);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v4), x5);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v5), x6);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v6), x7);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v7), x8);
-
-        for (unsigned int k = 0; k < cols - idx; ++k) {
-          Y32[idx + k] = y0_3[k];
-        }
-      }
-    }
-  } else if (rows % 4 == 0 && rows / 4 >= batch) {
-    for (unsigned int i = 0; i < rows; i += 4) {
-      __fp16 x = alpha * (X[i]);
-      __fp16 x2 = alpha * (X[i + 1]);
-      __fp16 x3 = alpha * (X[i + 2]);
-      __fp16 x4 = alpha * (X[i + 3]);
-
-      idx = 0;
-      for (; cols - idx >= 8; idx += 8) {
-        float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * cols + idx]), x);
-        wvec0_7_f16 =
-          vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * cols + idx]), x2);
-        float16x8_t w2vec0_7_f16 =
-          vmulq_n_f16(vld1q_f16(&A[(i + 2) * cols + idx]), x3);
-        w2vec0_7_f16 =
-          vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 3) * cols + idx]), x4);
-
-        float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
-                                     vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
-        y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
-        float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
-                                     vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
-        y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
-
-        vst1q_f32(&Y32[idx], y0_3);
-        vst1q_f32(&Y32[idx + 4], y4_7);
-      }
-
-      for (; cols - idx >= 4; idx += 4) {
-
-        float32x4_t y0_3 = vld1q_f32(&Y32[idx]);
-
-        y0_3 = vfmaq_n_f32(y0_3, vcvt_f32_f16(vld1_f16(&A[i * cols + idx])), x);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 1) * cols + idx])), x2);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 2) * cols + idx])), x3);
-        y0_3 = vfmaq_n_f32(
-          y0_3, vcvt_f32_f16(vld1_f16(&A[(i + 3) * cols + idx])), x4);
-
-        vst1q_f32(&Y32[idx], y0_3);
-      }
-
-      if (cols - idx >= 1) {
-        float y0_3_0[4];
-
-        float v0[4], v1[4], v2[4], v3[4];
-        unsigned int k = 0;
-        for (; k < cols - idx; ++k) {
-          y0_3_0[k] = Y32[idx + k];
-
-          v0[k] = A[i * cols + idx + k];
-          v1[k] = A[(i + 1) * cols + idx + k];
-          v2[k] = A[(i + 2) * cols + idx + k];
-          v3[k] = A[(i + 3) * cols + idx + k];
-        }
-        for (; k < 4; ++k) {
-          y0_3_0[k] = 0;
-          v0[k] = v1[k] = v2[k] = v3[k] = 0;
-        }
-
-        float32x4_t y0_3 = vld1q_f32(y0_3_0);
-
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v0), x);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v1), x2);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v2), x3);
-        y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(v3), x4);
-
-        for (unsigned int k = 0; k < cols - idx; ++k) {
-          Y32[idx + k] = y0_3[k];
-        }
-      }
-    }
-  } else {
-    for (unsigned int i = 0; i < rows; ++i) {
-      __fp16 x = alpha * (X[i]);
-      idx = 0;
-      for (; cols - idx >= 8; idx += 8) {
-
-        float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * cols + idx]), x);
-        float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
-                                     vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
-        float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
-                                     vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
-
-        vst1q_f32(&Y32[idx], y0_3);
-        vst1q_f32(&Y32[idx + 4], y4_7);
-      }
-
-      for (; cols - idx >= 4; idx += 4) {
-
-        float32x4_t y0_3 = vld1q_f32(&Y32[idx]);
-        y0_3 = vfmaq_n_f32(y0_3, vcvt_f32_f16(vld1_f16(&A[i * cols + idx])), x);
-
-        vst1q_f32(&Y32[idx], y0_3);
-      }
-
-      if (cols != idx) {
-        float y0_3[4];
-        float wvec0_3[4];
-        for (int j = 0; j < cols - idx; ++j) {
-          y0_3[j] = Y32[idx + j];
-          wvec0_3[j] = A[i * cols + idx + j];
-        }
-        for (int j = cols - idx; j < 4; ++j) {
-          y0_3[j] = 0;
-          wvec0_3[j] = 0;
-        }
-
-        float32x4_t y0_3_32 = vld1q_f32(y0_3);
-        y0_3_32 = vfmaq_n_f32(y0_3_32, vld1q_f32(wvec0_3), x);
-
-        for (int j = 0; j < cols - idx; ++j) {
-          Y32[idx + j] = y0_3_32[j];
-        }
+      for (unsigned int n = 0; n < N - idx; ++n) {
+        if (n < 4)
+          Y32[idx + n] = y0_3[n];
+        else
+          Y32[idx + n] = y4_7[n];
       }
     }
   }
-  scopy_neon_fp32_to_fp16(cols, Y32, Y);
+  for (; M - i >= 8; i += 8) {
+    __fp16 x[8];
+    vst1q_f16(&x[0], vmulq_n_f16(vld1q_f16(&X[i]), alpha));
+#pragma omp parallel for schedule(guided) num_threads(GEMV_NUM_THREADS)
+    for (unsigned int idx = 0; idx < N8; idx += 8) {
+      float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
+      wvec0_7_f16 =
+        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
+      wvec0_7_f16 =
+        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
+      wvec0_7_f16 =
+        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
+
+      float16x8_t w2vec0_7_f16 =
+        vmulq_n_f16(vld1q_f16(&A[(i + 4) * N + idx]), x[4]);
+      w2vec0_7_f16 =
+        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 5) * N + idx]), x[5]);
+      w2vec0_7_f16 =
+        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 6) * N + idx]), x[6]);
+      w2vec0_7_f16 =
+        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 7) * N + idx]), x[7]);
+
+      float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
+                                   vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
+      y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
+      float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
+                                   vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
+      y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
+
+      vst1q_f32(&Y32[idx], y0_3);
+      vst1q_f32(&Y32[idx + 4], y4_7);
+    }
+
+    if (N != N8) {
+      unsigned int idx = N8;
+
+      float y0_7[8];
+      float v0[8], v1[8], v2[8], v3[8];
+      float v4[8], v5[8], v6[8], v7[8];
+
+      unsigned int n = 0;
+      for (; n < N - idx; ++n) {
+        y0_7[n] = Y32[idx + n];
+
+        v0[n] = A[i * N + idx + n];
+        v1[n] = A[(i + 1) * N + idx + n];
+        v2[n] = A[(i + 2) * N + idx + n];
+        v3[n] = A[(i + 3) * N + idx + n];
+        v4[n] = A[(i + 4) * N + idx + n];
+        v5[n] = A[(i + 5) * N + idx + n];
+        v6[n] = A[(i + 6) * N + idx + n];
+        v7[n] = A[(i + 7) * N + idx + n];
+      }
+      for (; n < 8; ++n) {
+        y0_7[n] = 0;
+        v0[n] = v1[n] = v2[n] = v3[n] = 0;
+        v4[n] = v5[n] = v6[n] = v7[n] = 0;
+      }
+
+      float32x4_t y0_3 = vld1q_f32(&y0_7[0]);
+      float32x4_t y4_7 = vld1q_f32(&y0_7[4]);
+
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v0[0]), x[0]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v1[0]), x[1]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v2[0]), x[2]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v3[0]), x[3]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v4[0]), x[4]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v5[0]), x[5]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v6[0]), x[6]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v7[0]), x[7]);
+
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v0[4]), x[0]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v1[4]), x[1]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v2[4]), x[2]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v3[4]), x[3]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v4[4]), x[4]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v5[4]), x[5]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v6[4]), x[6]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v7[4]), x[7]);
+
+      for (unsigned int n = 0; n < N - idx; ++n) {
+        if (n < 4)
+          Y32[idx + n] = y0_3[n];
+        else
+          Y32[idx + n] = y4_7[n];
+      }
+    }
+  }
+  for (; M - i >= 4; i += 4) {
+    __fp16 x[4];
+    vst1_f16(&x[0], vmul_n_f16(vld1_f16(&X[i]), alpha));
+#pragma omp parallel for schedule(guided) num_threads(GEMV_NUM_THREADS)
+    for (unsigned int idx = 0; idx < N8; idx += 8) {
+      float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x[0]);
+      wvec0_7_f16 =
+        vfmaq_n_f16(wvec0_7_f16, vld1q_f16(&A[(i + 1) * N + idx]), x[1]);
+      float16x8_t w2vec0_7_f16 =
+        vmulq_n_f16(vld1q_f16(&A[(i + 2) * N + idx]), x[2]);
+      w2vec0_7_f16 =
+        vfmaq_n_f16(w2vec0_7_f16, vld1q_f16(&A[(i + 3) * N + idx]), x[3]);
+
+      float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
+                                   vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
+      y0_3 = vaddq_f32(y0_3, vcvt_f32_f16(vget_low_f16(w2vec0_7_f16)));
+      float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
+                                   vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
+      y4_7 = vaddq_f32(y4_7, vcvt_f32_f16(vget_high_f16(w2vec0_7_f16)));
+
+      vst1q_f32(&Y32[idx], y0_3);
+      vst1q_f32(&Y32[idx + 4], y4_7);
+    }
+    if (N != N8) {
+      unsigned int idx = N8;
+      float y0_3_0[8];
+      float v0[8], v1[8], v2[8], v3[8];
+      unsigned int n = 0;
+      for (; n < N - idx; ++n) {
+        y0_3_0[n] = Y32[idx + n];
+
+        v0[n] = A[i * N + idx + n];
+        v1[n] = A[(i + 1) * N + idx + n];
+        v2[n] = A[(i + 2) * N + idx + n];
+        v3[n] = A[(i + 3) * N + idx + n];
+      }
+      for (; n < 8; ++n) {
+        y0_3_0[n] = 0;
+        v0[n] = v1[n] = v2[n] = v3[n] = 0;
+      }
+
+      float32x4_t y0_3 = vld1q_f32(&y0_3_0[0]);
+      float32x4_t y4_7 = vld1q_f32(&y0_3_0[4]);
+
+      // we can separate mul and accum for faster compute.
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v0[0]), x[0]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v1[0]), x[1]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v2[0]), x[2]);
+      y0_3 = vfmaq_n_f32(y0_3, vld1q_f32(&v3[0]), x[3]);
+
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v0[4]), x[0]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v1[4]), x[1]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v2[4]), x[2]);
+      y4_7 = vfmaq_n_f32(y4_7, vld1q_f32(&v3[4]), x[3]);
+
+      for (unsigned int n = 0; n < N - idx; ++n) {
+        if (n < 4)
+          Y32[idx + n] = y0_3[n];
+        else
+          Y32[idx + n] = y4_7[n];
+      }
+    }
+  }
+  for (; i < M; ++i) {
+    __fp16 x = alpha * (X[i]);
+#pragma omp parallel for schedule(guided) num_threads(GEMV_NUM_THREADS)
+    for (unsigned int idx = 0; idx < N8; idx += 8) {
+      float16x8_t wvec0_7_f16 = vmulq_n_f16(vld1q_f16(&A[i * N + idx]), x);
+      float32x4_t y0_3 = vaddq_f32(vld1q_f32(&Y32[idx]),
+                                   vcvt_f32_f16(vget_low_f16(wvec0_7_f16)));
+      float32x4_t y4_7 = vaddq_f32(vld1q_f32(&Y32[idx + 4]),
+                                   vcvt_f32_f16(vget_high_f16(wvec0_7_f16)));
+
+      vst1q_f32(&Y32[idx], y0_3);
+      vst1q_f32(&Y32[idx + 4], y4_7);
+    }
+    if (N != N8) {
+      unsigned int idx = N8;
+      float v0[8];
+      for (unsigned int j = 0; j < N - idx; ++j) {
+        v0[j] = A[i * N + idx + j];
+      }
+      for (unsigned int j = N - idx; j < 8; ++j) {
+        v0[j] = 0;
+      }
+
+      for (unsigned int j = 0; j < N - idx; ++j) {
+        Y32[idx + j] = Y32[idx + j] + v0[j] * x;
+      }
+    }
+  }
+  copy_fp32_to_fp16(N, Y32, Y);
+  delete[] Y32;
   return;
 }
 
-void saxpy_neon_fp16(const unsigned int N, const float alpha, const __fp16 *X,
-                     __fp16 *Y) {
+void haxpy(const unsigned int N, const float alpha, const __fp16 *X,
+           __fp16 *Y) {
 
   const float16x8_t v_alphaX8 = vmovq_n_f16(alpha);
   const float16x4_t v_alphaX4 = vmov_n_f16(alpha);
@@ -1100,7 +1190,7 @@ void saxpy_neon_fp16(const unsigned int N, const float alpha, const __fp16 *X,
     Y[idx] = Y[idx] + alpha * X[idx];
 }
 
-__fp16 sdot_neon_fp16(const unsigned int N, const __fp16 *X, const __fp16 *Y) {
+__fp16 hdot(const unsigned int N, const __fp16 *X, const __fp16 *Y) {
 
   float16x8_t accX8 = vmovq_n_f16(0);
   float16x4_t accX4 = vmov_n_f16(0);
@@ -1148,7 +1238,7 @@ __fp16 sdot_neon_fp16(const unsigned int N, const __fp16 *X, const __fp16 *Y) {
   return ret;
 }
 
-__fp16 snrm2_neon_fp16(const unsigned int N, const __fp16 *X) {
+__fp16 hnrm2(const unsigned int N, const __fp16 *X) {
 
   float16x8_t accX8 = vmovq_n_f16(0);
   float16x4_t accX4 = vmov_n_f16(0);
@@ -1194,7 +1284,7 @@ __fp16 snrm2_neon_fp16(const unsigned int N, const __fp16 *X) {
   return ret;
 }
 
-void sscal_neon_fp16(const unsigned int N, __fp16 *X, const float alpha) {
+void hscal(const unsigned int N, __fp16 *X, const float alpha) {
   const float16x8_t v_alphaX8 = vmovq_n_f16(alpha);
   const float16x4_t v_alphaX4 = vmov_n_f16(alpha);
 
@@ -1230,7 +1320,7 @@ float32x4_t vcvtq_f32_u32_bitwise(uint32x4_t u32) {
                    vreinterpretq_f32_u32(offsetInt));
 }
 
-void scopy_neon_fp16(const unsigned int N, const __fp16 *X, __fp16 *Y) {
+void hcopy(const unsigned int N, const __fp16 *X, __fp16 *Y) {
 
   unsigned int idx = 0;
 
@@ -1251,8 +1341,7 @@ void scopy_neon_fp16(const unsigned int N, const __fp16 *X, __fp16 *Y) {
     Y[idx] = X[idx];
 }
 
-void scopy_neon_int4_to_fp16(const unsigned int N, const uint8_t *X,
-                             __fp16 *Y) {
+void copy_int4_to_fp16(const unsigned int N, const uint8_t *X, __fp16 *Y) {
 
   unsigned int idx = 0;
 
@@ -1271,7 +1360,7 @@ void scopy_neon_int4_to_fp16(const unsigned int N, const uint8_t *X,
     uint8x8_t low = vget_low_u8(batch);
     uint8x8_t high = vget_high_u8(batch);
 
-    for (int i = 0; i < 8; ++i) {
+    for (unsigned int i = 0; i < 8; ++i) {
       low0 = low[i] >> 4;
       low1 = low[i] & 0x0f;
 
@@ -1303,9 +1392,9 @@ void scopy_neon_int4_to_fp16(const unsigned int N, const uint8_t *X,
 
   // processing remaining batch of 8
   for (; (N - idx) >= 8; idx += 8) {
-    int8x8_t batch = vld1_u8(&X[idx]);
+    uint8x8_t batch = vld1_u8(&X[idx]);
 
-    for (int i = 0; i < 8; ++i) {
+    for (unsigned int i = 0; i < 8; ++i) {
       low0 = batch[i] >> 4;
       low1 = batch[i] & 0x0f;
 
@@ -1329,8 +1418,7 @@ void scopy_neon_int4_to_fp16(const unsigned int N, const uint8_t *X,
   }
 }
 
-void scopy_neon_int8_to_fp16(const unsigned int N, const uint8_t *X,
-                             __fp16 *Y) {
+void copy_int8_to_fp16(const unsigned int N, const uint8_t *X, __fp16 *Y) {
   unsigned int idx = 0;
   for (; (N - idx) >= 16; idx += 16) {
     uint8x16_t batch = vld1q_u8(&X[idx]);
@@ -1358,7 +1446,7 @@ void scopy_neon_int8_to_fp16(const unsigned int N, const uint8_t *X,
   }
 }
 
-void scopy_neon_int8_to_fp32(const unsigned int N, const uint8_t *X, float *Y) {
+void copy_int8_to_fp32(const unsigned int N, const uint8_t *X, float *Y) {
   unsigned int idx = 0;
   for (; (N - idx) >= 16; idx += 16) {
     uint8x16_t batch = vld1q_u8(&X[idx]);
@@ -1400,8 +1488,8 @@ void scopy_neon_int8_to_fp32(const unsigned int N, const uint8_t *X, float *Y) {
   }
 }
 
-void scopy_neon_fp16_to_fp32(const unsigned int N, const __fp16 *X, float *Y) {
-  int idx = 0;
+void copy_fp16_to_fp32(const unsigned int N, const __fp16 *X, float *Y) {
+  unsigned int idx = 0;
 
   for (; N - idx >= 8; idx += 8) {
     float32x4_t y1 = vcvt_f32_f16(vld1_f16(&X[idx]));
@@ -1422,8 +1510,8 @@ void scopy_neon_fp16_to_fp32(const unsigned int N, const __fp16 *X, float *Y) {
   }
 }
 
-void scopy_neon_fp32_to_fp16(const unsigned int N, const float *X, __fp16 *Y) {
-  int idx = 0;
+void copy_fp32_to_fp16(const unsigned int N, const float *X, __fp16 *Y) {
+  unsigned int idx = 0;
 
   for (; N - idx >= 8; idx += 8) {
     float32x4_t x1 = vld1q_f32(&X[idx]);
@@ -1447,7 +1535,7 @@ void scopy_neon_fp32_to_fp16(const unsigned int N, const float *X, __fp16 *Y) {
   }
 }
 
-unsigned int isamax_neon_fp16(const unsigned int N, const __fp16 *X) {
+unsigned int isamax(const unsigned int N, const __fp16 *X) {
 
   unsigned int retIdx;
   __fp16 maxNum;
@@ -1481,7 +1569,7 @@ unsigned int isamax_neon_fp16(const unsigned int N, const __fp16 *X) {
   // getting the index of the maxima
   maxNum = maxVal[0];
   retIdx = max_index[0];
-  for (int i = 1; i < 8; i++) {
+  for (unsigned int i = 1; i < 8; i++) {
     if (maxVal[i] > maxNum) {
       maxNum = maxVal[i];
       retIdx = max_index[i];
@@ -1499,9 +1587,8 @@ unsigned int isamax_neon_fp16(const unsigned int N, const __fp16 *X) {
   return retIdx;
 }
 
-void sgemm_neon_fp16(const __fp16 *A, const __fp16 *B, __fp16 *C, uint32_t M,
-                     uint32_t N, uint32_t K, float alpha, float beta,
-                     bool TransA, bool TransB) {
+void hgemm(const __fp16 *A, const __fp16 *B, __fp16 *C, uint32_t M, uint32_t N,
+           uint32_t K, float alpha, float beta, bool TransA, bool TransB) {
 
   // dynamic creation to avoid reaching stack limit(causes segmentation fault)
   float *C32 = (float *)malloc(M * N * sizeof(float));
@@ -1509,14 +1596,14 @@ void sgemm_neon_fp16(const __fp16 *A, const __fp16 *B, __fp16 *C, uint32_t M,
   // performing beta*C
   unsigned int idx = 0;
   unsigned int size = M * N;
-  for (; idx < (size - idx) >= 8; idx += 8) {
+  for (; idx < (size - idx) && (size - idx) >= 8; idx += 8) {
     float16x8_t c = vmulq_n_f16(vld1q_f16(&C[idx]), static_cast<__fp16>(beta));
 
     vst1q_f32(&C32[idx], vcvt_f32_f16(vget_low_f16(c)));
     vst1q_f32(&C32[idx + 4], vcvt_f32_f16(vget_high_f16(c)));
   }
   // remaining 4
-  for (; idx < (size - idx) >= 4; idx += 4) {
+  for (; idx < (size - idx) && (size - idx) >= 4; idx += 4) {
     float16x4_t c = vmul_n_f16(vld1_f16(&C[idx]), static_cast<__fp16>(beta));
 
     vst1q_f32(&C32[idx], vcvt_f32_f16(c));
@@ -1528,117 +1615,206 @@ void sgemm_neon_fp16(const __fp16 *A, const __fp16 *B, __fp16 *C, uint32_t M,
   }
 
   if (!TransA && TransB) {
-    sgemm_neon_fp16_transB(A, B, C32, M, N, K, alpha, beta);
+    hgemm_transB(A, B, C32, M, N, K, alpha, beta);
   } else if (TransA && !TransB) {
-    sgemm_neon_fp16_transA(A, B, C32, M, N, K, alpha, beta);
+    hgemm_transA(A, B, C32, M, N, K, alpha, beta);
   } else if (!TransA && !TransB) {
-    sgemm_neon_fp16_noTrans(A, B, C32, M, N, K, alpha, beta);
+    hgemm_noTrans(A, B, C32, M, N, K, alpha, beta);
   } else { // TransA && TransB
-    sgemm_neon_fp16_transAB(A, B, C32, M, N, K, alpha, beta, idx);
+    hgemm_transAB(A, B, C32, M, N, K, alpha, beta, idx);
   }
 
-  scopy_neon_fp32_to_fp16(M * N, C32, C);
+  copy_fp32_to_fp16(M * N, C32, C);
   free(C32);
 }
 
-void sgemm_neon_fp16_noTrans(const __fp16 *A, const __fp16 *B, float *C,
-                             uint32_t M, uint32_t N, uint32_t K, float alpha,
-                             float beta) {
+void hgemm_noTrans(const __fp16 *A, const __fp16 *B, float *C, uint32_t M,
+                   uint32_t N, uint32_t K, float alpha, float beta) {
 
-  unsigned int k = 0, n = 0;
+  size_t GEMM_NUM_THREADS = get_gemm_num_threads();
+  unsigned int k = 0;
+  unsigned int N8 = (N >> 3) << 3;
   __fp16 a[16];
   for (; (K - k) >= 16; k += 16) {
     for (unsigned int m = 0; m < M; m++) {
-      // calculating A * alpha;
-      vst1q_f16(a, vmulq_n_f16(vld1q_f16(&A[m * K + k]), alpha));
+      vst1q_f16(&a[0], vmulq_n_f16(vld1q_f16(&A[m * K + k]), alpha));
       vst1q_f16(&a[8], vmulq_n_f16(vld1q_f16(&A[m * K + k + 8]), alpha));
-
-      for (n = 0; (N - n) >= 8; n += 8) {
-
-        // fp16 multiplications and partial accumulations
+#pragma omp parallel for schedule(guided) num_threads(GEMM_NUM_THREADS)
+      for (unsigned int n = 0; n < N8; n += 8) {
         float16x8_t b0_7_0 = vmulq_n_f16(vld1q_f16(&B[k * N + n]), a[0]);
         b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 1) * N + n]), a[1]);
         b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 2) * N + n]), a[2]);
         b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 3) * N + n]), a[3]);
-        float16x8_t b0_7_4 = vmulq_n_f16(vld1q_f16(&B[(k + 4) * N + n]), a[4]);
-        b0_7_4 = vfmaq_n_f16(b0_7_4, vld1q_f16(&B[(k + 5) * N + n]), a[5]);
-        b0_7_4 = vfmaq_n_f16(b0_7_4, vld1q_f16(&B[(k + 6) * N + n]), a[6]);
-        b0_7_4 = vfmaq_n_f16(b0_7_4, vld1q_f16(&B[(k + 7) * N + n]), a[7]);
-        float16x8_t b0_7_8 = vmulq_n_f16(vld1q_f16(&B[(k + 8) * N + n]), a[8]);
-        b0_7_8 = vfmaq_n_f16(b0_7_8, vld1q_f16(&B[(k + 9) * N + n]), a[9]);
-        b0_7_8 = vfmaq_n_f16(b0_7_8, vld1q_f16(&B[(k + 10) * N + n]), a[10]);
-        b0_7_8 = vfmaq_n_f16(b0_7_8, vld1q_f16(&B[(k + 11) * N + n]), a[11]);
-        float16x8_t b0_7_12 =
-          vmulq_n_f16(vld1q_f16(&B[(k + 12) * N + n]), a[12]);
-        b0_7_12 = vfmaq_n_f16(b0_7_12, vld1q_f16(&B[(k + 13) * N + n]), a[13]);
-        b0_7_12 = vfmaq_n_f16(b0_7_12, vld1q_f16(&B[(k + 14) * N + n]), a[14]);
-        b0_7_12 = vfmaq_n_f16(b0_7_12, vld1q_f16(&B[(k + 15) * N + n]), a[15]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 4) * N + n]), a[4]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 5) * N + n]), a[5]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 6) * N + n]), a[6]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 7) * N + n]), a[7]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 8) * N + n]), a[8]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 9) * N + n]), a[9]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 10) * N + n]), a[10]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 11) * N + n]), a[11]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 12) * N + n]), a[12]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 13) * N + n]), a[13]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 14) * N + n]), a[14]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 15) * N + n]), a[15]);
 
         float32x4_t c0_7_low_32 = vaddq_f32(vld1q_f32(&C[m * N + n]),
                                             vcvt_f32_f16(vget_low_f16(b0_7_0)));
         float32x4_t c0_7_high_32 = vaddq_f32(
           vld1q_f32(&C[m * N + n + 4]), vcvt_f32_f16(vget_high_f16(b0_7_0)));
 
-        // fp32 partial accumulations
-        c0_7_low_32 =
-          vaddq_f32(c0_7_low_32, vcvt_f32_f16(vget_low_f16(b0_7_4)));
-        c0_7_high_32 =
-          vaddq_f32(c0_7_high_32, vcvt_f32_f16(vget_high_f16(b0_7_4)));
-        c0_7_low_32 =
-          vaddq_f32(c0_7_low_32, vcvt_f32_f16(vget_low_f16(b0_7_8)));
-        c0_7_high_32 =
-          vaddq_f32(c0_7_high_32, vcvt_f32_f16(vget_high_f16(b0_7_8)));
-        c0_7_low_32 =
-          vaddq_f32(c0_7_low_32, vcvt_f32_f16(vget_low_f16(b0_7_12)));
-        c0_7_high_32 =
-          vaddq_f32(c0_7_high_32, vcvt_f32_f16(vget_high_f16(b0_7_12)));
-
         vst1q_f32(&C[m * N + n], c0_7_low_32);
         vst1q_f32(&C[m * N + n + 4], c0_7_high_32);
+      }
+      if (N != N8) {
+        unsigned int n = N8;
+        __fp16 valsB_0[8];
+        __fp16 valsB_1[8];
+        __fp16 valsB_2[8];
+        __fp16 valsB_3[8];
+        __fp16 valsB_4[8];
+        __fp16 valsB_5[8];
+        __fp16 valsB_6[8];
+        __fp16 valsB_7[8];
+        __fp16 valsB_8[8];
+        __fp16 valsB_9[8];
+        __fp16 valsB_10[8];
+        __fp16 valsB_11[8];
+        __fp16 valsB_12[8];
+        __fp16 valsB_13[8];
+        __fp16 valsB_14[8];
+        __fp16 valsB_15[8];
+        float valsC[8];
+        for (unsigned int idx = n; idx < N; idx++) {
+          valsB_0[idx - n] = B[k * N + idx];
+          valsB_1[idx - n] = B[(k + 1) * N + idx];
+          valsB_2[idx - n] = B[(k + 2) * N + idx];
+          valsB_3[idx - n] = B[(k + 3) * N + idx];
+          valsB_4[idx - n] = B[(k + 4) * N + idx];
+          valsB_5[idx - n] = B[(k + 5) * N + idx];
+          valsB_6[idx - n] = B[(k + 6) * N + idx];
+          valsB_7[idx - n] = B[(k + 7) * N + idx];
+          valsB_8[idx - n] = B[(k + 8) * N + idx];
+          valsB_9[idx - n] = B[(k + 9) * N + idx];
+          valsB_10[idx - n] = B[(k + 10) * N + idx];
+          valsB_11[idx - n] = B[(k + 11) * N + idx];
+          valsB_12[idx - n] = B[(k + 12) * N + idx];
+          valsB_13[idx - n] = B[(k + 13) * N + idx];
+          valsB_14[idx - n] = B[(k + 14) * N + idx];
+          valsB_15[idx - n] = B[(k + 15) * N + idx];
+          valsC[idx - n] = C[m * N + idx];
+        }
+
+        float16x8_t b = vmulq_n_f16(vld1q_f16(valsB_0), a[0]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_1), a[1]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_2), a[2]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_3), a[3]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_4), a[4]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_5), a[5]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_6), a[6]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_7), a[7]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_8), a[8]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_9), a[9]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_10), a[10]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_11), a[11]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_12), a[12]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_13), a[13]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_14), a[14]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_15), a[15]);
+
+        float32x4_t c0_7_low_32 =
+          vaddq_f32(vld1q_f32(valsC), vcvt_f32_f16(vget_low_f16(b)));
+
+        float32x4_t c0_7_high_32 =
+          vaddq_f32(vld1q_f32(valsC + 4), vcvt_f32_f16(vget_high_f16(b)));
+
+        vst1q_f32(valsC, c0_7_low_32);
+        vst1q_f32(valsC + 4, c0_7_high_32);
+
+        for (unsigned int idx = n; idx < N; idx++) {
+          C[m * N + idx] = valsC[idx - n];
+        }
       }
     }
   }
 
   for (; (K - k) >= 8; k += 8) {
     for (unsigned int m = 0; m < M; m++) {
-      // calculating A * alpha;
       vst1q_f16(a, vmulq_n_f16(vld1q_f16(&A[m * K + k]), alpha));
 
-      for (n = 0; (N - n) >= 8; n += 8) {
-
-        // fp16 multiplications and partial accumulations
+#pragma omp parallel for schedule(guided) num_threads(GEMM_NUM_THREADS)
+      for (unsigned int n = 0; n < N8; n += 8) {
         float16x8_t b0_7_0 = vmulq_n_f16(vld1q_f16(&B[k * N + n]), a[0]);
         b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 1) * N + n]), a[1]);
         b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 2) * N + n]), a[2]);
         b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 3) * N + n]), a[3]);
-        float16x8_t b0_7_4 = vmulq_n_f16(vld1q_f16(&B[(k + 4) * N + n]), a[4]);
-        b0_7_4 = vfmaq_n_f16(b0_7_4, vld1q_f16(&B[(k + 5) * N + n]), a[5]);
-        b0_7_4 = vfmaq_n_f16(b0_7_4, vld1q_f16(&B[(k + 6) * N + n]), a[6]);
-        b0_7_4 = vfmaq_n_f16(b0_7_4, vld1q_f16(&B[(k + 7) * N + n]), a[7]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 4) * N + n]), a[4]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 5) * N + n]), a[5]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 6) * N + n]), a[6]);
+        b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 7) * N + n]), a[7]);
 
         float32x4_t c0_7_low_32 = vaddq_f32(vld1q_f32(&C[m * N + n]),
                                             vcvt_f32_f16(vget_low_f16(b0_7_0)));
         float32x4_t c0_7_high_32 = vaddq_f32(
           vld1q_f32(&C[m * N + n + 4]), vcvt_f32_f16(vget_high_f16(b0_7_0)));
 
-        // fp32 partial accumulations
-        c0_7_low_32 =
-          vaddq_f32(c0_7_low_32, vcvt_f32_f16(vget_low_f16(b0_7_4)));
-        c0_7_high_32 =
-          vaddq_f32(c0_7_high_32, vcvt_f32_f16(vget_high_f16(b0_7_4)));
-
         vst1q_f32(&C[m * N + n], c0_7_low_32);
         vst1q_f32(&C[m * N + n + 4], c0_7_high_32);
+      }
+      if (N != N8) {
+        unsigned int n = N8;
+        __fp16 valsB_0[8];
+        __fp16 valsB_1[8];
+        __fp16 valsB_2[8];
+        __fp16 valsB_3[8];
+        __fp16 valsB_4[8];
+        __fp16 valsB_5[8];
+        __fp16 valsB_6[8];
+        __fp16 valsB_7[8];
+        float valsC[8];
+        for (unsigned int idx = n; idx < N; idx++) {
+          valsB_0[idx - n] = B[k * N + idx];
+          valsB_1[idx - n] = B[(k + 1) * N + idx];
+          valsB_2[idx - n] = B[(k + 2) * N + idx];
+          valsB_3[idx - n] = B[(k + 3) * N + idx];
+          valsB_4[idx - n] = B[(k + 4) * N + idx];
+          valsB_5[idx - n] = B[(k + 5) * N + idx];
+          valsB_6[idx - n] = B[(k + 6) * N + idx];
+          valsB_7[idx - n] = B[(k + 7) * N + idx];
+          valsC[idx - n] = C[m * N + idx];
+        }
+
+        float16x8_t b = vmulq_n_f16(vld1q_f16(valsB_0), a[0]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_1), a[1]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_2), a[2]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_3), a[3]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_4), a[4]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_5), a[5]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_6), a[6]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_7), a[7]);
+
+        float32x4_t c0_7_low_32 =
+          vaddq_f32(vld1q_f32(valsC), vcvt_f32_f16(vget_low_f16(b)));
+
+        float32x4_t c0_7_high_32 =
+          vaddq_f32(vld1q_f32(valsC + 4), vcvt_f32_f16(vget_high_f16(b)));
+
+        vst1q_f32(valsC, c0_7_low_32);
+        vst1q_f32(valsC + 4, c0_7_high_32);
+
+        for (unsigned int idx = n; idx < N; idx++) {
+          C[m * N + idx] = valsC[idx - n];
+        }
       }
     }
   }
 
   for (; (K - k) >= 4; k += 4) {
     for (unsigned int m = 0; m < M; m++) {
-      // calculating A * alpha;
       vst1_f16(a, vmul_n_f16(vld1_f16(&A[m * K + k]), alpha));
 
-      for (n = 0; (N - n) >= 8; n += 8) {
+#pragma omp parallel for schedule(guided) num_threads(GEMM_NUM_THREADS)
+      for (unsigned int n = 0; n < N8; n += 8) {
 
         float16x8_t b0_7_0 = vmulq_n_f16(vld1q_f16(&B[k * N + n]), a[0]);
         b0_7_0 = vfmaq_n_f16(b0_7_0, vld1q_f16(&B[(k + 1) * N + n]), a[1]);
@@ -1658,6 +1834,39 @@ void sgemm_neon_fp16_noTrans(const __fp16 *A, const __fp16 *B, float *C,
         vst1q_f32(&C[m * N + n], c0_7_low_32);
         vst1q_f32(&C[m * N + n + 4], c0_7_high_32);
       }
+      if (N != N8) {
+        unsigned int n = N8;
+        __fp16 valsB_0[8];
+        __fp16 valsB_1[8];
+        __fp16 valsB_2[8];
+        __fp16 valsB_3[8];
+        float valsC[8];
+        for (unsigned int idx = n; idx < N; idx++) {
+          valsB_0[idx - n] = B[k * N + idx];
+          valsB_1[idx - n] = B[(k + 1) * N + idx];
+          valsB_2[idx - n] = B[(k + 2) * N + idx];
+          valsB_3[idx - n] = B[(k + 3) * N + idx];
+          valsC[idx - n] = C[m * N + idx];
+        }
+
+        float16x8_t b = vmulq_n_f16(vld1q_f16(valsB_0), a[0]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_1), a[1]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_2), a[2]);
+        b = vfmaq_n_f16(b, vld1q_f16(valsB_3), a[3]);
+
+        float32x4_t c0_7_low_32 =
+          vaddq_f32(vld1q_f32(valsC), vcvt_f32_f16(vget_low_f16(b)));
+
+        float32x4_t c0_7_high_32 =
+          vaddq_f32(vld1q_f32(valsC + 4), vcvt_f32_f16(vget_high_f16(b)));
+
+        vst1q_f32(valsC, c0_7_low_32);
+        vst1q_f32(valsC + 4, c0_7_high_32);
+
+        for (unsigned int idx = n; idx < N; idx++) {
+          C[m * N + idx] = valsC[idx - n];
+        }
+      }
     }
   }
 
@@ -1666,8 +1875,8 @@ void sgemm_neon_fp16_noTrans(const __fp16 *A, const __fp16 *B, float *C,
     for (unsigned int m = 0; m < M; m++) {
       __fp16 a0 = alpha * A[m * K + k];
 
-      for (n = 0; (N - n) >= 8; n += 8) {
-
+#pragma omp parallel for schedule(guided) num_threads(GEMM_NUM_THREADS)
+      for (unsigned int n = 0; n < N8; n += 8) {
         float16x8_t b0_7 = vmulq_n_f16(vld1q_f16(&B[k * N + n]), a0);
 
         float32x4_t c0_7_low_32 =
@@ -1679,16 +1888,10 @@ void sgemm_neon_fp16_noTrans(const __fp16 *A, const __fp16 *B, float *C,
         vst1q_f32(&C[m * N + n], c0_7_low_32);
         vst1q_f32(&C[m * N + n + 4], c0_7_high_32);
       }
-    }
-  }
-
-  // remaining N values
-  if (n < N) {
-    __fp16 valsB[8];
-    float valsC[8];
-    for (k = 0; k < K; k++) {
-      for (unsigned int m = 0; m < M; m++) {
-        __fp16 a = alpha * A[m * K + k];
+      if (N != N8) {
+        unsigned int n = N8;
+        __fp16 valsB[8];
+        float valsC[8];
         for (unsigned int idx = n; idx < N; idx++) {
           valsB[idx - n] = B[k * N + idx];
 
@@ -1696,7 +1899,7 @@ void sgemm_neon_fp16_noTrans(const __fp16 *A, const __fp16 *B, float *C,
           valsC[idx - n] = C[m * N + idx];
         }
 
-        float16x8_t b = vmulq_n_f16(vld1q_f16(valsB), a);
+        float16x8_t b = vmulq_n_f16(vld1q_f16(valsB), a0);
 
         float32x4_t c0_7_low_32 =
           vaddq_f32(vld1q_f32(valsC), vcvt_f32_f16(vget_low_f16(b)));
@@ -1715,9 +1918,8 @@ void sgemm_neon_fp16_noTrans(const __fp16 *A, const __fp16 *B, float *C,
   }
 }
 
-void sgemm_neon_fp16_transA(const __fp16 *A, const __fp16 *B, float *C,
-                            uint32_t M, uint32_t N, uint32_t K, float alpha,
-                            float beta) {
+void hgemm_transA(const __fp16 *A, const __fp16 *B, float *C, uint32_t M,
+                  uint32_t N, uint32_t K, float alpha, float beta) {
   __fp16 valsB[8];
   float valsC[8];
   for (unsigned int k = 0; k < K; k++) {
@@ -1765,14 +1967,13 @@ void sgemm_neon_fp16_transA(const __fp16 *A, const __fp16 *B, float *C,
   }
 }
 
-void sgemm_neon_fp16_transB(const __fp16 *A, const __fp16 *B, float *C,
-                            uint32_t M, uint32_t N, uint32_t K, float alpha,
-                            float beta) {
+void hgemm_transB(const __fp16 *A, const __fp16 *B, float *C, uint32_t M,
+                  uint32_t N, uint32_t K, float alpha, float beta) {
   __fp16 valsB[8];
   __fp16 valsA[8];
-  int m = 0;
+  unsigned int m = 0;
   for (; M - m >= 1; m++) {
-    int n = 0;
+    unsigned int n = 0;
     __fp16 valsB_2[8];
     __fp16 valsB_3[8];
     __fp16 valsB_4[8];
@@ -1934,9 +2135,9 @@ void sgemm_neon_fp16_transB(const __fp16 *A, const __fp16 *B, float *C,
   }
 }
 
-void sgemm_neon_fp16_transAB(const __fp16 *A, const __fp16 *B, float *C,
-                             uint32_t M, uint32_t N, uint32_t K, float alpha,
-                             float beta, uint32_t idx) {
+void hgemm_transAB(const __fp16 *A, const __fp16 *B, float *C, uint32_t M,
+                   uint32_t N, uint32_t K, float alpha, float beta,
+                   uint32_t idx) {
   float vals[8];
   __fp16 vals_fp16[8];
   for (unsigned int n = 0; n < N; n++) {
@@ -1975,36 +2176,129 @@ void sgemm_neon_fp16_transAB(const __fp16 *A, const __fp16 *B, float *C,
   }
 }
 
-void elementwise_vector_multiplication_neon_fp16(const unsigned int N,
-                                                 const __fp16 *X,
-                                                 const __fp16 *Y, __fp16 *Z) {
-  int i = 0;
+void ele_mul(const unsigned int N, const __fp16 *X, const __fp16 *Y, __fp16 *Z,
+             float alpha, float beta) {
+  unsigned int i = 0;
+  float16x8_t alpha_vec = vdupq_n_f16(alpha);
+  float16x8_t beta_vec = vdupq_n_f16(beta);
   for (; N - i >= 8; i += 8) {
     float16x8_t x0_7 = vld1q_f16(&X[i]);
     float16x8_t y0_7 = vld1q_f16(&Y[i]);
-    float16x8_t z0_7 = vmulq_f16(x0_7, y0_7);
-
-    vst1q_f16(&Z[i], z0_7);
+    if (alpha != 1.f) {
+      y0_7 = vmulq_f16(y0_7, alpha_vec);
+    }
+    float16x8_t xy0_7 = vmulq_f16(x0_7, y0_7);
+    if (std::abs(beta) > __FLT_MIN__) {
+      float16x8_t z0_7 = vmulq_f16(vld1q_f16(&Z[i]), beta_vec);
+      vst1q_f16(&Z[i], vaddq_f16(z0_7, xy0_7));
+    } else {
+      vst1q_f16(&Z[i], xy0_7);
+    }
   }
   while (i < N) {
-    Z[i] = X[i] * Y[i];
+    if (std::abs(beta) > __FLT_MIN__)
+      Z[i] = alpha * X[i] * Y[i] + beta * Z[i];
+    else
+      Z[i] = alpha * X[i] * Y[i];
     ++i;
   }
 }
 
-void elementwise_vector_addition_neon_fp16(const unsigned int N,
-                                           const __fp16 *X, const __fp16 *Y,
-                                           __fp16 *Z) {
-  int i = 0;
+void ele_add(const unsigned int N, const __fp16 *X, const __fp16 *Y, __fp16 *Z,
+             float alpha, float beta) {
+  unsigned int i = 0;
+  float16x8_t alpha_vec = vdupq_n_f16(alpha);
+  float16x8_t beta_vec = vdupq_n_f16(beta);
   for (; N - i >= 8; i += 8) {
     float16x8_t x0_7 = vld1q_f16(&X[i]);
     float16x8_t y0_7 = vld1q_f16(&Y[i]);
-    float16x8_t z0_7 = vaddq_f16(x0_7, y0_7);
-
-    vst1q_f16(&Z[i], z0_7);
+    if (alpha != 1.f) {
+      y0_7 = vmulq_f16(y0_7, alpha_vec);
+    }
+    float16x8_t xy0_7 = vaddq_f16(x0_7, y0_7);
+    if (std::abs(beta) > __FLT_MIN__) {
+      float16x8_t z0_7 = vmulq_f16(vld1q_f16(&Z[i]), beta_vec);
+      vst1q_f16(&Z[i], vaddq_f16(z0_7, xy0_7));
+    } else {
+      vst1q_f16(&Z[i], xy0_7);
+    }
   }
   while (i < N) {
-    Z[i] = X[i] + Y[i];
+    if (std::abs(beta) > __FLT_MIN__)
+      Z[i] = X[i] + alpha * Y[i] + beta * Z[i];
+    else
+      Z[i] = X[i] + alpha * Y[i];
+    ++i;
+  }
+}
+
+void ele_sub(const unsigned int N, const __fp16 *X, const __fp16 *Y, __fp16 *Z,
+             float alpha, float beta) {
+  unsigned int i = 0;
+  float16x8_t alpha_vec = vdupq_n_f16(alpha);
+  float16x8_t beta_vec = vdupq_n_f16(beta);
+  for (; N - i >= 8; i += 8) {
+    float16x8_t x0_7 = vld1q_f16(&X[i]);
+    float16x8_t y0_7 = vld1q_f16(&Y[i]);
+    if (alpha != 1.f) {
+      y0_7 = vmulq_f16(y0_7, alpha_vec);
+    }
+    float16x8_t xy0_7 = vsubq_f16(x0_7, y0_7);
+    if (std::abs(beta) > __FLT_MIN__) {
+      float16x8_t z0_7 = vmulq_f16(vld1q_f16(&Z[i]), beta_vec);
+      vst1q_f16(&Z[i], vaddq_f16(z0_7, xy0_7));
+    } else {
+      vst1q_f16(&Z[i], xy0_7);
+    }
+  }
+  while (i < N) {
+    if (std::abs(beta) > __FLT_MIN__)
+      Z[i] = X[i] - alpha * Y[i] + beta * Z[i];
+    else
+      Z[i] = X[i] - alpha * Y[i];
+    ++i;
+  }
+}
+
+void ele_div(const unsigned int N, const __fp16 *X, const __fp16 *Y, __fp16 *Z,
+             float alpha, float beta) {
+  unsigned int i = 0;
+  float16x8_t alpha_vec = vdupq_n_f16(alpha);
+  float16x8_t beta_vec = vdupq_n_f16(beta);
+  for (; N - i >= 8; i += 8) {
+    float16x8_t x0_7 = vld1q_f16(&X[i]);
+    float16x8_t y0_7 = vld1q_f16(&Y[i]);
+    if (alpha != 1.f) {
+      y0_7 = vmulq_f16(y0_7, alpha_vec);
+    }
+    float16x8_t xy0_7 = vdivq_f16(x0_7, y0_7);
+    if (std::abs(beta) > __FLT_MIN__) {
+      float16x8_t z0_7 = vmulq_f16(vld1q_f16(&Z[i]), beta_vec);
+      vst1q_f16(&Z[i], vaddq_f16(z0_7, xy0_7));
+    } else {
+      vst1q_f16(&Z[i], xy0_7);
+    }
+  }
+  while (i < N) {
+    if (std::abs(beta) > __FLT_MIN__)
+      Z[i] = X[i] / (alpha * Y[i]) + beta * Z[i];
+    else
+      Z[i] = X[i] / (alpha * Y[i]);
+    ++i;
+  }
+}
+
+void inv_sqrt_inplace(const unsigned int N, __fp16 *X) {
+  unsigned int i = 0;
+  for (; N - i >= 8; i += 8) {
+    float16x8_t x0_7 = vld1q_f16(&X[i]);
+    float16x8_t x0_7_sqrt = vsqrtq_f16(x0_7);
+    float16x8_t ones = vmovq_n_f16(1);
+    float16x8_t x0_7_sqrt_div = vdivq_f16(ones, x0_7_sqrt);
+    vst1q_f16(&X[i], x0_7_sqrt_div);
+  }
+  while (i < N) {
+    X[i] = (1 / std::sqrt(static_cast<float>(X[i])));
     ++i;
   }
 }
