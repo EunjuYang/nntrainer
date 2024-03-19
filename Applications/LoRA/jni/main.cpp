@@ -12,6 +12,7 @@ const int input_dim = 5;
 const int unit_dim1 = 10;
 const int unit_dim2 = 5;
 const int rank = 3;
+const float scaling = 2.0 / rank;
 
 /** create test model */
 std::unique_ptr<ml::train::Model> create_model() {
@@ -21,14 +22,14 @@ std::unique_ptr<ml::train::Model> create_model() {
   model->addLayer(ml::train::createLayer(
     "input", {"input_shape=1:1:" + std::to_string(input_dim)}));
 
-  model->addLayer(ml::train::createLayer("fully_connected",
-                                         {"unit=" + std::to_string(unit_dim1),
-                                          "lora_rank=" + std::to_string(rank),
-                                          "disable_bias=true"}));
-  model->addLayer(ml::train::createLayer("fully_connected",
-                                         {"unit=" + std::to_string(unit_dim2),
-                                          "lora_rank=" + std::to_string(rank),
-                                          "disable_bias=true"}));
+  model->addLayer(ml::train::createLayer(
+    "fully_connected",
+    {"unit=" + std::to_string(unit_dim1), "lora_rank=" + std::to_string(rank),
+     "lora_scaling=" + std::to_string(scaling), "disable_bias=true"}));
+  model->addLayer(ml::train::createLayer(
+    "fully_connected",
+    {"unit=" + std::to_string(unit_dim2), "lora_rank=" + std::to_string(rank),
+     "lora_scaling=" + std::to_string(scaling), "disable_bias=true"}));
 
   return model;
 }
