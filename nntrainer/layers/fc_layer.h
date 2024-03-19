@@ -106,7 +106,7 @@ public:
   inline static const std::string type = "fully_connected";
 
 private:
-  std::tuple<props::Unit, props::LoraRank>
+  std::tuple<props::Unit, props::LoraRank, props::LoraScaling>
     fc_props; /**< fc layer properties : unit - number of output neurons,
                  lora_rank : rank of lora (optional) */
   std::array<unsigned int, 2> weight_idx; /**< indices of the weights */
