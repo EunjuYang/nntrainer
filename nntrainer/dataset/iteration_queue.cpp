@@ -76,17 +76,17 @@ ScopedView<Sample> IterationQueue::requestEmptySlot() {
     current_iterator++;
   }
 
-  auto view =
-    ScopedView<Sample>(&(*current_iterator),
-                       [current_being_filed = this->being_filled] {
-                         current_being_filed->markSampleFilled();
-                       },
-                       [this, current_being_filled = this->being_filled] {
-                         std::unique_lock lg(empty_mutex);
-                         this->markEmpty(current_being_filled);
-                         num_being_filled--;
-                         notify_emptied_cv.notify_all();
-                       });
+  auto view = ScopedView<Sample>(
+    &(*current_iterator),
+    [current_being_filed = this->being_filled] {
+      current_being_filed->markSampleFilled();
+    },
+    [this, current_being_filled = this->being_filled] {
+      std::unique_lock lg(empty_mutex);
+      this->markEmpty(current_being_filled);
+      num_being_filled--;
+      notify_emptied_cv.notify_all();
+    });
   return view;
 }
 
@@ -107,6 +107,7 @@ ScopedView<Iteration> IterationQueue::requestFilledSlot() {
     auto stop_request_state = FlowState::FLOW_STATE_STOP_REQUESTED;
     bool exchange_result = flow_state.compare_exchange_strong(
       stop_request_state, FlowState::FLOW_STATE_STOPPED);
+    std::scoped_lock lg(empty_mutex);
     NNTR_THROW_IF(!exchange_result, std::runtime_error)
       << "the queue has either already stopped or running, but trying stopping "
          "without requesting stop, queue size: "
@@ -168,9 +169,7 @@ void IterationQueue::markEmpty(MarkableIteration *iteration) {
 IterationQueue::MarkableIteration::MarkableIteration(
   const std::vector<ml::train::TensorDim> &input_dims,
   const std::vector<ml::train::TensorDim> &label_dims, IterationQueue *iq) :
-  num_observed(0),
-  iteration(input_dims, label_dims),
-  iq(iq) {}
+  num_observed(0), iteration(input_dims, label_dims), iq(iq) {}
 
 IterationQueue::MarkableIteration::MarkableIteration(MarkableIteration &&rhs) :
   num_observed(rhs.num_observed),
@@ -183,8 +182,8 @@ void IterationQueue::MarkableIteration::reset() {
   iteration.setEndSample();
 }
 
-IterationQueue::MarkableIteration &IterationQueue::MarkableIteration::
-operator=(MarkableIteration &&rhs) {
+IterationQueue::MarkableIteration &
+IterationQueue::MarkableIteration::operator=(MarkableIteration &&rhs) {
   if (this == &rhs) {
     return *this;
   }
