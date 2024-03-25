@@ -412,6 +412,7 @@ int ml_train_model_destroy(ml_train_model_h model) {
     ML_TRAIN_RESET_VALIDATED_HANDLE(x.second);
     delete (x.second);
   }
+  ML_TRAIN_RESET_VALIDATED_HANDLE(nnmodel);
   nnmodel->layers_map.clear();
 
   delete nnmodel;

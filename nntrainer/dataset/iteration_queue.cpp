@@ -107,12 +107,11 @@ ScopedView<Iteration> IterationQueue::requestFilledSlot() {
     auto stop_request_state = FlowState::FLOW_STATE_STOP_REQUESTED;
     bool exchange_result = flow_state.compare_exchange_strong(
       stop_request_state, FlowState::FLOW_STATE_STOPPED);
-    std::scoped_lock lg(empty_mutex);
+
     NNTR_THROW_IF(!exchange_result, std::runtime_error)
       << "the queue has either already stopped or running, but trying stopping "
          "without requesting stop, queue size: "
       << iterations.size() << " num currently empty: " << empty_q.size()
-      << " num being filled: " << num_being_filled
       << " filled_q.size(): " << filled_q.size();
 
     return ScopedView<Iteration>(nullptr);
