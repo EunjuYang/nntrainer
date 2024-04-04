@@ -424,11 +424,11 @@ TEST(nntrainer_Tensor, dot_gemm_1024_1024_1024) {
   /// @note GEMM : A X B = C
   int batch = 1;
   int channel = 1;
-  int height = 1;
-  int width = 144;
+  int height = 1024;
+  int width = 1024;
 
-  int height_b = 144;
-  int width_b = 144;
+  int height_b = 1024;
+  int width_b = 1024;
 
   bool transA = false;
   bool transB = false;
@@ -896,14 +896,14 @@ GTEST_API_ int main(int argc, char **argv) {
   try {
     testing::InitGoogleTest(&argc, argv);
   } catch (...) {
-    std::cerr << "Error duing InitGoogleTest" << std::endl;
+    std::cerr << "Error during InitGoogleTest" << std::endl;
     return 0;
   }
 
   try {
     result = RUN_ALL_TESTS();
   } catch (...) {
-    std::cerr << "Error duing RUN_ALL_TESTS()" << std::endl;
+    std::cerr << "Error during RUN_ALL_TESTS()" << std::endl;
   }
 
   return result;

@@ -755,9 +755,9 @@ NetworkGraph::finalizeContext(const std::shared_ptr<LayerNode> &lnode,
    */
   std::vector<std::string> input_names;
   input_names.reserve(prev_inputs.size());
-  std::transform(prev_inputs.begin(), prev_inputs.end(),
-                 std::back_inserter(input_names),
-                 [](auto const &vg) -> const auto &{ return vg->getName(); });
+  std::transform(
+    prev_inputs.begin(), prev_inputs.end(), std::back_inserter(input_names),
+    [](auto const &vg) -> const auto & { return vg->getName(); });
   const std::vector<Var_Grad *> &inputs = tensor_manager->requestInputs(
     gnode, init_context.getInputDimensions(), input_names);
 
@@ -904,9 +904,9 @@ NetworkGraph::refinalizeContext(const std::shared_ptr<LayerNode> &lnode,
    */
   std::vector<std::string> input_names;
   input_names.reserve(prev_inputs.size());
-  std::transform(prev_inputs.begin(), prev_inputs.end(),
-                 std::back_inserter(input_names),
-                 [](auto const &vg) { return vg->getName(); });
+  std::transform(
+    prev_inputs.begin(), prev_inputs.end(), std::back_inserter(input_names),
+    [](auto const &vg) -> const auto & { return vg->getName(); });
   const std::vector<Var_Grad *> &inputs = tensor_manager->requestInputs(
     gnode, init_context.getInputDimensions(), input_names);
 
@@ -1044,7 +1044,7 @@ NetworkGraph::getLayerExecutionOrders(const std::shared_ptr<LayerNode> &lnode) {
   std::map<std::string, std::vector<unsigned int>> exec_orders;
 
   for (auto &spec : out_specs) {
-    const auto name = lnode->getName() + ":" + spec.variable_spec.name;
+    const auto &name = lnode->getName() + ":" + spec.variable_spec.name;
     auto orders = tensor_manager->getTensorExecutionOrders(name, false);
     exec_orders.insert({name, orders});
     try {
@@ -1058,7 +1058,7 @@ NetworkGraph::getLayerExecutionOrders(const std::shared_ptr<LayerNode> &lnode) {
   }
 
   for (auto &spec : weight_specs) {
-    const auto name = std::get<const std::string>(spec);
+    const auto &name = std::get<const std::string>(spec);
     auto orders = tensor_manager->getTensorExecutionOrders(name, true);
     exec_orders.insert({name, orders});
     try {
@@ -1520,12 +1520,14 @@ void NetworkGraph::setInputsLabels(sharedConstTensors &inputs,
                                    sharedConstTensors &labels) {
 
   std::vector<Tensor> ins;
-  std::transform(inputs.begin(), inputs.end(), std::back_inserter(ins),
-                 [](auto const &val) -> const auto &{ return *val.get(); });
+  std::transform(
+    inputs.begin(), inputs.end(), std::back_inserter(ins),
+    [](auto const &val) -> const auto & { return *val.get(); });
 
   std::vector<Tensor> labs;
-  std::transform(labels.begin(), labels.end(), std::back_inserter(labs),
-                 [](auto const &val) -> const auto &{ return *val.get(); });
+  std::transform(
+    labels.begin(), labels.end(), std::back_inserter(labs),
+    [](auto const &val) -> const auto & { return *val.get(); });
 
   setInputsLabels(ins, labs);
 }

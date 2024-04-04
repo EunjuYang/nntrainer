@@ -42,6 +42,7 @@ cl_headers = [
   'cl_operations/cl_interface.h'
 ]
 
+
 arch = host_machine.cpu_family()
 if get_option('enable-fp16') 
   if arch == 'arm'
@@ -50,6 +51,9 @@ if get_option('enable-fp16')
     if get_option('enable-neon')
       tensor_sources += 'blas_neon.cpp'
       tensor_headers += 'blas_neon.h'
+      subdir('hgemm')
+      nntrainer_inc += include_directories('hgemm')
+      nntrainer_inc_abs += meson.current_source_dir() / 'hgemm'
     endif
   elif get_option('enable-avx')
     tensor_sources += 'blas_avx.cpp'

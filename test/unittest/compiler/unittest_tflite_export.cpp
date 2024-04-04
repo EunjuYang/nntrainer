@@ -23,6 +23,7 @@
 #include <node_exporter.h>
 #include <optimizer.h>
 #include <realizer.h>
+#include <stdlib.h>
 
 #include <nntrainer_test_util.h>
 
@@ -42,6 +43,8 @@ std::vector<float> out;
 std::vector<float> ans;
 std::vector<float *> in_f;
 std::vector<float *> l_f;
+
+unsigned int seed = 0;
 
 /**
  * @brief make "key=value" from key and value
@@ -99,7 +102,7 @@ std::vector<float> run_tflite(std::string tf_file_name,
 
   EXPECT_EQ(tf_interpreter->AllocateTensors(), kTfLiteOk);
 
-  auto in_indices = tf_interpreter->inputs();
+  auto &in_indices = tf_interpreter->inputs();
   float *tf_input = tf_interpreter->typed_input_tensor<float>(0);
 
   for (unsigned int i = 0; i < input_vector.size(); i++) {
@@ -155,7 +158,7 @@ TEST(nntrainerInterpreterTflite, simple_fc) {
   float *nntr_input = new float[data_size];
 
   for (unsigned int i = 0; i < data_size; i++) {
-    auto rand_float = static_cast<float>(std::rand() / (RAND_MAX + 1.0));
+    auto rand_float = static_cast<float>(rand_r(&seed) / (RAND_MAX + 1.0));
     input_data.push_back(rand_float);
     nntr_input[i] = rand_float;
   }
@@ -284,7 +287,7 @@ TEST(nntrainerInterpreterTflite, part_of_resnet_0) {
   float *nntr_input = new float[data_size];
 
   for (unsigned int i = 0; i < data_size; i++) {
-    auto rand_float = static_cast<float>(std::rand() / (RAND_MAX + 1.0));
+    auto rand_float = static_cast<float>(rand_r(&seed) / (RAND_MAX + 1.0));
     input_data.push_back(rand_float);
     nntr_input[i] = rand_float;
   }
@@ -365,7 +368,7 @@ TEST(nntrainerInterpreterTflite, MNIST_FULL_TEST) {
   float nntr_input[28 * 28];
 
   for (unsigned int i = 0; i < data_size; i++) {
-    auto rand_float = static_cast<float>(std::rand() / (RAND_MAX + 1.0));
+    auto rand_float = static_cast<float>(rand_r(&seed) / (RAND_MAX + 1.0));
     input_data.push_back(rand_float);
     nntr_input[i] = rand_float;
   }

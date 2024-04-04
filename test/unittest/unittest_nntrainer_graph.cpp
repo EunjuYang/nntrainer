@@ -37,7 +37,7 @@ protected:
     name = std::string(std::get<0>(GetParam()));
     std::cout << "starting test case : " << name << std::endl << std::endl;
 
-    auto sections = std::get<1>(GetParam());
+    const auto &sections = std::get<1>(GetParam());
 
     ini = nntrainer::IniWrapper(name, sections);
 
@@ -252,14 +252,14 @@ int main(int argc, char **argv) {
   try {
     testing::InitGoogleTest(&argc, argv);
   } catch (...) {
-    std::cerr << "Error duing IniGoogleTest" << std::endl;
+    std::cerr << "Error during IniGoogleTest" << std::endl;
     return 0;
   }
 
   try {
     result = RUN_ALL_TESTS();
   } catch (...) {
-    std::cerr << "Error duing RUN_ALL_TSETS()" << std::endl;
+    std::cerr << "Error during RUN_ALL_TESTS()" << std::endl;
   }
 
   return result;
