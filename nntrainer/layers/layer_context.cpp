@@ -598,5 +598,4 @@ bool RunLayerContext::validate(bool skip_input, bool skip_label) {
 
   return ret;
 }
-
 } // namespace nntrainer
