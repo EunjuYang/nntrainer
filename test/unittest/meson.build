@@ -52,6 +52,7 @@ test_target = [
   ['unittest_nntrainer_tensor_pool', []],
   ['unittest_nntrainer_lr_scheduler', []],
   ['unittest_nntrainer_task', []],
+  ['unittest_model_init_check', []],
 ]
 
 if get_option('enable-fp16')
@@ -70,7 +71,7 @@ foreach target: test_target
     target[0],
     [target[0] + '.cpp'] + target[1],
     # below is temporary measure, we will eventually remove unittest_nntrainer_models
-    include_directories: include_directories('models'),
+    include_directories: include_directories('models', '../include', '.'),
     dependencies: unittest_nntrainer_deps,
     install: get_option('enable-test'),
     install_dir: application_install_dir
