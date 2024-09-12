@@ -13,6 +13,7 @@
 #include <float_tensor.h>
 #include <lazy_tensor.h>
 #include <short_tensor.h>
+#include <tensor_uint32.h>
 #include <tensor.h>
 
 #ifdef ENABLE_FP16
@@ -36,6 +37,9 @@ Tensor::Tensor(std::string name_, Tformat fm, Tdatatype d_type) {
   } else if (d_type == Tdatatype::UINT16) {
     itensor = std::shared_ptr<ShortTensor>(new ShortTensor(name_, fm),
                                            std::default_delete<ShortTensor>());
+  } else if (d_type == Tdatatype::UINT32) {
+    itensor = std::shared_ptr<Uint32Tensor>(new Uint32Tensor(name_, fm), 
+                                            std::default_delete<Uint32Tensor>);
   } else if (d_type == Tdatatype::QINT8) {
     itensor = std::shared_ptr<CharTensor>(new CharTensor(name_, fm),
                                           std::default_delete<CharTensor>());
