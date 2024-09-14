@@ -1,10 +1,22 @@
----
-title: Getting Started
-...
 
+<!-- omit in toc -->
 # Getting Started
 
-## Prerequisites
+In this document, we explain how to install the NNTrainer. We provide four installation methods. Please begin by reviewing the prerequisites, then choose the method that best fits your environment. For contributors, it is highly recommended to follow the instructions in the [`Build with meson`](#3-2-build-with-meson) section to build the project.
+
+- [Step 0) Prerequisites](#step-0-prerequisites)
+- [Step 1) Build and Install](#step-1-build-and-install)
+  - [Build on Linux (Debian / Ubuntu)](#build-on-linux-debian--ubuntu)
+    - [(1) Install via PPA repository (Debian/Ubuntu)](#1-install-via-ppa-repository-debianubuntu)
+    - [(2) Clean build with pdebuild (Ubuntu 18.04)](#2-clean-build-with-pdebuild-ubuntu-1804)
+    - [(3) Linux Self-Hosted Build](#3-linux-self-hosted-build)
+      - [(3-1) Build with Debian/Ubuntu tools](#3-1-build-with-debianubuntu-tools)
+      - [(3-2) Build with meson](#3-2-build-with-meson)
+  - [Build on Tizen](#build-on-tizen)
+- [Troubleshooting](#troubleshooting)
+
+
+## Step 0) Prerequisites
 
 The following dependencies are needed to compile/build/run.
 
@@ -17,7 +29,10 @@ The following dependencies are needed to compile/build/run.
 * libcurl3 >=7.47 ( if you want to use open AI )
 * libgtest >=1.10 ( for testing )
 
-## Install via PPA repository (Debian/Ubuntu)
+## Step 1) Build and Install
+
+### Build on Linux (Debian / Ubuntu)
+#### (1) Install via PPA repository (Debian/Ubuntu)
 
 The NNTrainer releases are available with launchpad PPA repository. In order to install it, use:
 
@@ -27,7 +42,9 @@ sudo apt update
 sudo apt install nntrainer
 ```
 
-## Clean build with pdebuild (Ubuntu 18.04)
+---
+
+#### (2) Clean build with pdebuild (Ubuntu 18.04)
 
 Use the NNStreamer PPA to resolve additional build-dependencies (Tensorflow/Tensorflow-Lite).
 
@@ -68,11 +85,14 @@ $ ls -al /var/cache/pbuilder/result/*.deb
 
 Refer to [PbuilderHowto](https://wiki.ubuntu.com/PbuilderHowto) for more about pdebuild.
 
-## Linux Self-Hosted Build
+---
 
-### Build with Debian/Ubuntu tools
+#### (3) Linux Self-Hosted Build
 
-#### Clone the needed repositories
+##### (3-1) Build with Debian/Ubuntu tools
+
+<!-- omit in toc -->
+###### Clone the needed repositories
 
 ```bash
 git clone https://github.com/nnstreamer/nntrainer
@@ -85,13 +105,15 @@ sudo apt-add-repository ppa:nnstreamer
 sudo apt install tensorflow2-lite-dev
 ```
 
-#### Build .deb package
+<!-- omit in toc -->
+###### Build .deb package
 
 ```bash
 cd nntrainer && sudo mk-build-deps --install debian/control && sudo dpkg -i *.deb
 ```
 
-#### Creating the .deb packages
+<!-- omit in toc -->
+###### Creating the .deb packages
 
 ```bash
 export DEB_BUILD_OPTIONS="parallel=$(($(cat /proc/cpuinfo |grep processor|wc -l) + 1))"
@@ -101,7 +123,8 @@ cd nntrainer && time debuild -us -uc
 If there is a missing package, debuild will tell you which package is missing.
 If you haven't configured debuild properly, yet, you will need to add `-uc -us` options to `debuild`.
 
-#### Install the generated \*.deb files
+<!-- omit in toc -->
+###### Install the generated \*.deb files
 
 The files will be there at the parent dir. Eg. at `nnbuilder/..` directory.
 
@@ -118,7 +141,7 @@ If you need nntrainer development package:
 sudo apt install ./nntrainer-dev_0.1.0*_amd64.deb
 ```
 
-### Build with meson
+##### (3-2) Build with meson
 
 Add nnstreamer ppa for some of the dependencies.
 
@@ -144,7 +167,7 @@ ninja -C build install
 * Installs libraries to ```{prefix}/{libdir}```
 * Installs common header files to ```{prefix}/{includedir}```
 
-## Build on Tizen
+### Build on Tizen
 
 Get GBS from <https://docs.tizen.org/platform/developing/building/>
 
@@ -164,6 +187,7 @@ gbs build
 
 ## Troubleshooting
 
+<!-- omit in toc -->
 ### Error 1:
 
 ```bash
@@ -177,6 +201,7 @@ In file included from /usr/include/tensorflow/lite/core/api/op_resolver.h:20,
 compilation terminated.
 ```
 
+<!-- omit in toc -->
 ### Solution: Please install libflatbuffers-dev using the following:
 
 ```bash
