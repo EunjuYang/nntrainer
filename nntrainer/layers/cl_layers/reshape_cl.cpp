@@ -214,6 +214,7 @@ void ReshapeLayerCl::copy_cl(const float *input, float *res,
   } while (false);
 }
 
+#ifdef ENABLE_FP16
 void ReshapeLayerCl::copy_cl_fp16(const __fp16 *input, __fp16 *res,
                                   unsigned int input_batch_size,
                                   unsigned int input_channels,
@@ -300,6 +301,7 @@ void ReshapeLayerCl::copy_cl_fp16(const __fp16 *input, __fp16 *res,
 
   } while (false);
 }
+#endif
 
 void ReshapeLayerCl::calcDerivative(RunLayerContext &context) {
   if (!context.executeInPlace()) {

@@ -478,6 +478,7 @@ void ConcatLayerCl::concat_cl_axis3(
   } while (false);
 }
 
+#ifdef ENABLE_FP16
 void ConcatLayerCl::concat_cl_axis3_fp16(
   const __fp16 *matAdata, const __fp16 *vecXdata, __fp16 *vecYdata,
   unsigned int input1_batch_size, unsigned int input1_channels,
@@ -592,6 +593,7 @@ void ConcatLayerCl::concat_cl_axis3_fp16(
 
   } while (false);
 }
+#endif
 
 void ConcatLayerCl::concat_cl_axis2(
   const float *matAdata, const float *vecXdata, float *vecYdata,
@@ -707,6 +709,7 @@ void ConcatLayerCl::concat_cl_axis2(
   } while (false);
 }
 
+#ifdef ENABLE_FP16
 void ConcatLayerCl::concat_cl_axis2_fp16(
   const __fp16 *matAdata, const __fp16 *vecXdata, __fp16 *vecYdata,
   unsigned int input1_batch_size, unsigned int input1_channels,
@@ -821,6 +824,7 @@ void ConcatLayerCl::concat_cl_axis2_fp16(
 
   } while (false);
 }
+#endif 
 
 void ConcatLayerCl::concat_cl_axis1(
   const float *matAdata, const float *vecXdata, float *vecYdata,
@@ -936,6 +940,7 @@ void ConcatLayerCl::concat_cl_axis1(
   } while (false);
 }
 
+#ifdef ENABLE_FP16
 void ConcatLayerCl::concat_cl_axis1_fp16(
   const __fp16 *matAdata, const __fp16 *vecXdata, __fp16 *vecYdata,
   unsigned int input1_batch_size, unsigned int input1_height,
@@ -1050,6 +1055,7 @@ void ConcatLayerCl::concat_cl_axis1_fp16(
 
   } while (false);
 }
+#endif
 
 void ConcatLayerCl::calcDerivative(RunLayerContext &context) {
   //   /**

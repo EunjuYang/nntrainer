@@ -127,6 +127,7 @@ public:
   void rmsnormProcess(Tensor const &input, Tensor &result, Tensor const &gamma,
                       const float epsilon, RunLayerContext &context);
 
+#ifdef ENABLE_FP16
   /**
    * @brief Process data and dimensions for FP16 rms norm operation
    * @param[in] input Tensor
@@ -139,6 +140,7 @@ public:
   void rmsnormProcess_fp16(Tensor const &input, Tensor &result,
                            Tensor const &gamma, const float epsilon,
                            RunLayerContext &context);
+#endif
   /**
    * @copydoc Layer::supportBackwarding()
    */

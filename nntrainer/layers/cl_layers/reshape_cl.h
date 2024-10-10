@@ -127,6 +127,7 @@ public:
                unsigned int input_channels, unsigned int input_height,
                unsigned int input_width, RunLayerContext &context);
 
+#ifdef ENABLE_FP16
   /**
    * @brief     copy computation
    * @param[in] input fp16 * for Input Tensor
@@ -142,6 +143,7 @@ public:
                     unsigned int input_batch_size, unsigned int input_channels,
                     unsigned int input_height, unsigned int input_width,
                     RunLayerContext &context);
+#endif
 
 protected:
   std::tuple<props::TargetShape>

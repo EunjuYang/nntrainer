@@ -115,7 +115,9 @@ void RMSNormLayerCl::forwarding(RunLayerContext &context, bool training) {
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
     rmsnormProcess(in, out, gamma, epsilon, context);
   } else {
+    #ifdef ENABLE_FP16
     rmsnormProcess_fp16(in, out, gamma, epsilon, context);
+    #endif
   }
 }
 
@@ -220,6 +222,7 @@ void RMSNormLayerCl::rmsnormProcess(Tensor const &input, Tensor &result,
   } while (false);
 }
 
+#ifdef ENABLE_FP16
 void RMSNormLayerCl::rmsnormProcess_fp16(Tensor const &input, Tensor &result,
                                          Tensor const &gamma,
                                          const float epsilon,
@@ -318,6 +321,7 @@ void RMSNormLayerCl::rmsnormProcess_fp16(Tensor const &input, Tensor &result,
     }
   } while (false);
 }
+#endif
 
 void RMSNormLayerCl::incremental_forwarding(nntrainer::RunLayerContext &context,
                                             unsigned int from, unsigned int to,

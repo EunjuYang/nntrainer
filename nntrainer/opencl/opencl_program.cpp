@@ -16,6 +16,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <memory>
 
 #include "opencl_loader.h"
 
@@ -70,7 +71,7 @@ bool Program::GetProgramInfo(cl_device_id device_id) {
   cl_int error_code = CL_SUCCESS;
 
   // Read the binary size
-  size_t binaries_size[num_devices];
+  size_t *binaries_size = new size_t[num_devices]();
   error_code =
     clGetProgramInfo(program_, CL_PROGRAM_BINARY_SIZES,
                      sizeof(size_t) * num_devices, binaries_size, nullptr);
@@ -95,7 +96,7 @@ bool Program::GetProgramInfo(cl_device_id device_id) {
   }
 
   // getting the kernel names
-  char kernel_names[kernel_names_size];
+  char *kernel_names = new char[kernel_names_size]();
   error_code = clGetProgramInfo(program_, CL_PROGRAM_KERNEL_NAMES,
                                 kernel_names_size, kernel_names, nullptr);
 
@@ -110,10 +111,9 @@ bool Program::GetProgramInfo(cl_device_id device_id) {
 
   // Read the binary
   size_t binaries_ptr_alloc_size = sizeof(unsigned char *) * num_devices;
-  unsigned char *binaries_ptr[num_devices];
-
+  unsigned char **binaries_ptr = new unsigned char*[num_devices]();
   for (unsigned int i = 0; i < num_devices; ++i) {
-    binaries_ptr[i] = new unsigned char[binaries_size[i]];
+    binaries_ptr[i] = new unsigned char[binaries_size[i]]();
   }
 
   error_code = clGetProgramInfo(program_, CL_PROGRAM_BINARIES,
@@ -128,6 +128,8 @@ bool Program::GetProgramInfo(cl_device_id device_id) {
     for (unsigned int i = 0; i < num_devices; ++i) {
       delete[] binaries_ptr[i];
     }
+    delete[] binaries_ptr;
+    delete[] binaries_size;
     return false;
   }
 
@@ -146,6 +148,9 @@ bool Program::GetProgramInfo(cl_device_id device_id) {
       for (unsigned int i = 0; i < num_devices; ++i) {
         delete[] binaries_ptr[i];
       }
+      delete[] binaries_ptr;
+      delete[] binaries_size;
+      delete[] kernel_names;
       return false;
     }
     fs.write((char *)binaries_ptr[i], binaries_size[i]);
@@ -156,6 +161,9 @@ bool Program::GetProgramInfo(cl_device_id device_id) {
   for (unsigned int i = 0; i < num_devices; ++i) {
     delete[] binaries_ptr[i];
   }
+  delete[] binaries_ptr;
+  delete[] binaries_size;
+  delete[] kernel_names;
 
   return true;
 }

@@ -137,6 +137,7 @@ public:
                        unsigned int input1_width, unsigned int input2_width,
                        RunLayerContext &context);
 
+#ifdef ENABLE_FP16
   /**
    * @brief     concat computation for axis 3 fp16
    * @param[in] matAdata fp16 * for Input Tensor A
@@ -157,6 +158,7 @@ public:
                             unsigned int input1_width,
                             unsigned int input2_width,
                             RunLayerContext &context);
+#endif
 
   /**
    * @brief     concat computation for axis 2
@@ -177,6 +179,7 @@ public:
                        unsigned int input1_height, unsigned int input2_height,
                        RunLayerContext &context);
 
+#ifdef ENABLE_FP16
   /**
    * @brief     concat computation for axis 2 fp16
    * @param[in] matAdata fp16 * for Input Tensor A
@@ -197,6 +200,7 @@ public:
                             unsigned int input1_height,
                             unsigned int input2_height,
                             RunLayerContext &context);
+#endif
 
   /**
    * @brief     concat computation for axis 1
@@ -217,6 +221,7 @@ public:
                        unsigned int input1_channels,
                        unsigned int input2_channels, RunLayerContext &context);
 
+#ifdef ENABLE_FP16
   /**
    * @brief     concat computation for axis 1 fp16
    * @param[in] matAdata fp16 * for Input Tensor A
@@ -237,6 +242,7 @@ public:
                             unsigned int input1_channels,
                             unsigned int input2_channels,
                             RunLayerContext &context);
+#endif
 
 private:
   std::tuple<props::ConcatDimension> concat_props;

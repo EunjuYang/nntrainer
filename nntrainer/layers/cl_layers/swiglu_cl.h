@@ -23,6 +23,7 @@
 #include <opencl_buffer.h>
 #include <opencl_kernel.h>
 #include <utility>
+#include <tensor_dim.h>
 
 namespace nntrainer {
 
@@ -118,6 +119,7 @@ public:
                  unsigned int dim1, unsigned int dim2,
                  RunLayerContext &context);
 
+  #ifdef ENABLE_FP16
   /**
    * @brief     fp16 swiglu computation
    * @param[in] matAdata fp16 * for Input Vector A
@@ -127,9 +129,10 @@ public:
    * @param[in] dim1 number of elements in input vector X
    * @param[in] context RunLayerContext reference
    */
-  void swiglu_cl_fp16(const __fp16 *matAdata, const __fp16 *vecXdata,
-                      __fp16 *vecYdata, unsigned int dim1, unsigned int dim2,
+  void swiglu_cl_fp16(const _FP16 *matAdata, const _FP16 *vecXdata,
+                      _FP16 *vecYdata, unsigned int dim1, unsigned int dim2,
                       RunLayerContext &context);
+  #endif
 };
 
 } // namespace nntrainer

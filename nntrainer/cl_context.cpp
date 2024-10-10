@@ -153,7 +153,7 @@ void ClContext::initBlasClKernels() {
   blas_kernels_initialized = true;
 }
 
-const ClContext::SharedPtrClKernel &
+const ClContext::SharedPtrClKernel
 ClContext::registerClKernel(std::string kernel_string,
                             std::string kernel_name) {
   // check if created before
@@ -195,7 +195,7 @@ bool ClContext::clCreateKernel(std::string &kernel_string,
       size_t binary_size = fs.tellg();
       fs.seekg(0, std::ios::beg);
 
-      unsigned char chunk[binary_size];
+      unsigned char *chunk = new unsigned char[binary_size]; 
       fs.read((char *)chunk, binary_size);
 
       result = program.CreateCLProgramWithBinary(

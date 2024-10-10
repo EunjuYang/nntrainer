@@ -25,6 +25,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+#include <optional>
 
 #include <layer.h>
 #include <layer_devel.h>
@@ -203,7 +204,7 @@ public:
    * @param kernel_name kernel name
    * @return reference of std::shared_ptr<opencl::Kernel>
    */
-  const SharedPtrClKernel &registerClKernel(std::string kernel_string,
+  const SharedPtrClKernel registerClKernel(std::string kernel_string,
                                             std::string kernel_name);
 
   /**
