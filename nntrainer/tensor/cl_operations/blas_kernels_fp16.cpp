@@ -10,6 +10,7 @@
  * @bug		No known bugs except for NYI items
  *
  */
+#ifdef ENABLE_FP16
 
 #include <blas_kernel_strings.h>
 #include <blas_kernels.h>
@@ -121,7 +122,7 @@ _FP16 dot_cl(const _FP16 *vecAdata, const _FP16 *vecXdata, unsigned int dim1){
     opencl::Buffer inputX(cl_context_ref.context_inst_, dim1_size, true,
                           nullptr);
 
-    opencl::Buffer dotResult(context.context_inst_, sizeof(_FP16), true,
+    opencl::Buffer dotResult(cl_context_ref.context_inst_, sizeof(_FP16), true,
                              &cl_ret);
 
     result = inputA.WriteData(cl_context_ref.command_queue_inst_, vecAdata);
@@ -402,3 +403,5 @@ void sscal_cl(_FP16 *X, const unsigned int N, const float alpha){
   } while (false);
 }
 } // namespace nntrainer
+
+#endif

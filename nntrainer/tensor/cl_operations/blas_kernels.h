@@ -32,7 +32,6 @@ static ClContext cl_context_ref;
  * @param[in] dim1 number of A's columns
  * @param[in] dim2 number of A's rows
  * @param[in] lda number of X's columns
- * @param[in] context RunLayerContext reference
  */
 void sgemv_cl(const float *matAdata, const float *vecXdata, float *vecYdata,
               unsigned int dim1, unsigned int dim2, unsigned int lda);
@@ -42,7 +41,6 @@ void sgemv_cl(const float *matAdata, const float *vecXdata, float *vecYdata,
  * @param[in] vecAdata float * for Vector A
  * @param[in] vecXdata float * for Vector X
  * @param[in] dim1 number of elements in both input vectors
- * @param[in] context RunLayerContext reference
  * @return    float dot product result
  */
 float dot_cl(const float *vecAdata, const float *vecXdata, unsigned int dim1);
@@ -61,7 +59,6 @@ float dot_cl(const float *vecAdata, const float *vecXdata, unsigned int dim1);
  * @param[in] lda number of A's columns
  * @param[in] ldb number of B's columns
  * @param[in] ldc number of C's columns
- * @param[in] context RunLayerContext reference
  */
 void sgemm_cl(bool TransA, bool TransB, const float *A, const float *B,
               float *C, unsigned int M, unsigned int N, unsigned int K,
@@ -72,7 +69,6 @@ void sgemm_cl(bool TransA, bool TransB, const float *A, const float *B,
  * @param[in] input float * for input
  * @param[in] res float * for result/output
  * @param[in] size number of elements in input vector
- * @param[in] context RunLayerContext reference
  */
 void addition_cl(const float *input, float *res, unsigned int size);
 
@@ -81,7 +77,6 @@ void addition_cl(const float *input, float *res, unsigned int size);
  * @param[in] X float * input
  * @param[in] N unsigned int number of elements
  * @param[in] alpha float multiplier
- * @param[in] context RunLayerContext reference
  */
 void sscal_cl(float *X, const unsigned int N, const float alpha);
 
@@ -95,7 +90,6 @@ void sscal_cl(float *X, const unsigned int N, const float alpha);
  * @param[in] dim1 number of A's columns
  * @param[in] dim2 number of A's rows
  * @param[in] lda number of X's columns
- * @param[in] context RunLayerContext reference
  */
 void sgemv_cl(const _FP16 *matAdata, const _FP16 *vecXdata, _FP16 *vecYdata,
               unsigned int dim1, unsigned int dim2, unsigned int lda);
@@ -105,7 +99,6 @@ void sgemv_cl(const _FP16 *matAdata, const _FP16 *vecXdata, _FP16 *vecYdata,
  * @param[in] vecAdata fp16 * for Vector A
  * @param[in] vecXdata fp16 * for Vector X
  * @param[in] dim1 number of elements in both input vectors
- * @param[in] context RunLayerContext reference
  * @return    fp16 dot product result
  */
 __fp16 dot_cl(const _FP16 *vecAdata, const _FP16 *vecXdata, unsigned int dim1);
@@ -124,7 +117,6 @@ __fp16 dot_cl(const _FP16 *vecAdata, const _FP16 *vecXdata, unsigned int dim1);
  * @param[in] lda number of A's columns
  * @param[in] ldb number of B's columns
  * @param[in] ldc number of C's columns
- * @param[in] context RunLayerContext reference
  */
 void sgemm_cl(bool TransA, bool TransB, const _FP16 *A, const _FP16 *B,
               _FP16 *C, unsigned int M, unsigned int N, unsigned int K,
@@ -135,7 +127,6 @@ void sgemm_cl(bool TransA, bool TransB, const _FP16 *A, const _FP16 *B,
  * @param[in] input fp16 * for input
  * @param[in] res fp16 * for result/output
  * @param[in] size number of elements in input vector
- * @param[in] context RunLayerContext reference
  */
 void addition_cl(const _FP16 *input, _FP16 *res, unsigned int size);
 
@@ -144,7 +135,6 @@ void addition_cl(const _FP16 *input, _FP16 *res, unsigned int size);
  * @param[in] X _FP16 * input
  * @param[in] N unsigned int number of elements
  * @param[in] alpha float multiplier
- * @param[in] context RunLayerContext reference
  */
 void sscal_cl(_FP16 *X, const unsigned int N, const float alpha);
 #endif
