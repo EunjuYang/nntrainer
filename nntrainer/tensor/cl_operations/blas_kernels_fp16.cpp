@@ -10,6 +10,7 @@
  * @bug		No known bugs except for NYI items
  *
  */
+#ifdef ENABLE_FP16
 
 #include <blas_kernel_strings.h>
 #include <blas_kernels.h>
@@ -402,3 +403,5 @@ void sscal_cl(_FP16 *X, const unsigned int N, const float alpha){
   } while (false);
 }
 } // namespace nntrainer
+
+#endif
