@@ -65,6 +65,14 @@ if get_option('enable-profile')
   endif
 endif
 
+if get_option('enable-opencl')
+  if get_option('enable-fp16')
+    test_target += [['unittest_blas_kernels_cl_fp16', []]]
+  else
+    test_target += [['unittest_blas_kernels_cl', []]]
+  endif
+endif
+
 foreach target: test_target
   exe = executable(
     target[0],

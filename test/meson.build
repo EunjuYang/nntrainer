@@ -31,6 +31,10 @@ nntrainer_test_main_deps = [
   nntrainer_testutil_dep
 ]
 
+if get_option('enable-opencl')
+  nntrainer_test_main_deps += opencl_dep
+endif
+
 if enable_capi
   subdir('tizen_capi')
 endif
