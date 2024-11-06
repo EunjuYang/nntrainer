@@ -1075,6 +1075,19 @@ public:
   static constexpr const char *key = "beta_initializer";
 };
 
+class RMS_NORM_GAMMA_INIT final : public EnumProperty<props::InitializerInfo> {
+public:
+  /**
+   * @brief Construct a RMS_NORM_GAMMA_INIT object
+   */
+  RMS_NORM_GAMMA_INIT(
+    ::nntrainer::Initializer value = ::nntrainer::Initializer::ONES) {
+    set(value);
+  };
+  using prop_tag = enum_class_prop_tag;
+  static constexpr const char *key = "gamma_initializer";
+};
+
 /**
  * @brief     Enumeration of tensor regularization type
  */

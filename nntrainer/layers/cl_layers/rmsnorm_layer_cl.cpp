@@ -91,13 +91,30 @@ static constexpr size_t SINGLE_INOUT_IDX = 0;
 
 enum RMSParams { gamma };
 
-RMSNormLayerCl::RMSNormLayerCl() : LayerImpl() { wt_idx.fill(0); }
+bool RMSNormLayerCl::registerClKernels() {
+  ClContext::SharedPtrClKernel kernel_rmsnorm_ptr = nullptr;
+
+  kernel_rmsnorm_ptr =
+    cl_context_ref.registerClKernel(rmsnorm_cl_kernel_, "rmsnorm_cl");
+  NNTR_THROW_IF(!kernel_rmsnorm_ptr, std::runtime_error)
+    << "OpenCL Error: Fail to register rmsnorm_cl kernel";
+  layer_kernel_ptrs.emplace_back(kernel_rmsnorm_ptr);
+
+  kernel_rmsnorm_ptr =
+    cl_context_ref.registerClKernel(rmsnorm_cl_kernel_fp16_, "rmsnorm_cl_fp16");
+  NNTR_THROW_IF(!kernel_rmsnorm_ptr, std::runtime_error)
+    << "OpenCL Error: Fail to register rmsnorm_cl_fp16 kernel";
+  layer_kernel_ptrs.emplace_back(kernel_rmsnorm_ptr);
+
+  return true;
+}
+
+RMSNormLayerCl::RMSNormLayerCl() : LayerImplCl() { wt_idx.fill(0); }
 
 void RMSNormLayerCl::finalize(InitLayerContext &context) {
   std::vector<TensorDim> dim = context.getInputDimensions();
   context.setOutputDimensions(dim);
-  auto &rmsparams_gamma =
-    std::get<props::RMS_NORM_GAMMA_INIT_GPU>(rmsnorm_props);
+  auto &rmsparams_gamma = std::get<props::RMS_NORM_GAMMA_INIT>(rmsnorm_props);
 
   TensorDim gamma_dim(
     1, 1, 1, dim[0].width(),
@@ -123,9 +140,6 @@ void RMSNormLayerCl::forwarding(RunLayerContext &context, bool training) {
   }
 }
 
-opencl::Kernel RMSNormLayerCl::kernel_rmsnorm;
-opencl::Kernel RMSNormLayerCl::kernel_rmsnorm_fp16;
-
 void RMSNormLayerCl::rmsnormProcess(Tensor const &input, Tensor &result,
                                     Tensor const &gamma, const float epsilon) {
   bool ret = false;
@@ -138,11 +152,8 @@ void RMSNormLayerCl::rmsnormProcess(Tensor const &input, Tensor &result,
   int w = input.width();
 
   do {
-    ClContext::SharedPtrClKernel kernel_rmsnorm_ptr =
-      cl_context_ref.registerClKernel(rmsnorm_cl_kernel_, "rmsnorm_cl");
-    if (!kernel_rmsnorm_ptr) {
-      break;
-    }
+
+    auto kernel_rmsnorm_ptr = layer_kernel_ptrs[Kernels::RMSNORM_CL];
 
     opencl::Buffer inputbuf(cl_context_ref.context_inst_, dim1 * sizeof(float),
                             true, nullptr);
@@ -232,12 +243,8 @@ void RMSNormLayerCl::rmsnormProcess_fp16(Tensor const &input, Tensor &result,
   int h = input.height();
   int w = input.width();
   do {
-    ClContext::SharedPtrClKernel kernel_rmsnorm_ptr =
-      cl_context_ref.registerClKernel(rmsnorm_cl_kernel_fp16_,
-                                      "rmsnorm_cl_fp16");
-    if (!kernel_rmsnorm_ptr) {
-      break;
-    }
+    auto kernel_rmsnorm_ptr = layer_kernel_ptrs[Kernels::RMSNORM_CL_FP16];
+
     opencl::Buffer inputbuf(cl_context_ref.context_inst_,
                             dim1 * sizeof(cl_half), true, nullptr);
 
