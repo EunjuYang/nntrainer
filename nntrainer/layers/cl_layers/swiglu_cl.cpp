@@ -63,8 +63,24 @@ void SwiGLULayerCl::incremental_forwarding(RunLayerContext &context,
   swigluProcess(in1, in2, out);
 }
 
-opencl::Kernel SwiGLULayerCl::kernel_swiglu;
-opencl::Kernel SwiGLULayerCl::kernel_swiglu_fp16;
+bool SwiGLULayerCl::registerClKernels() {
+
+  ClContext::SharedPtrClKernel kernel_swiglu_ptr = nullptr;
+
+  kernel_swiglu_ptr =
+    cl_context_ref.registerClKernel(swiglu_cl_kernel_, "swiglu_cl");
+  NNTR_THROW_IF(!kernel_swiglu_ptr, std::runtime_error)
+    << "OpenCL Error: Fail to register swiglu_cl kernel";
+  layer_kernel_ptrs.emplace_back(kernel_swiglu_ptr);
+
+  kernel_swiglu_ptr =
+    cl_context_ref.registerClKernel(swiglu_cl_kernel_fp16_, "swiglu_cl_fp16");
+  NNTR_THROW_IF(!kernel_swiglu_ptr, std::runtime_error)
+    << "OpenCL Error: Fail to register swiglu_cl kernel";
+  layer_kernel_ptrs.emplace_back(kernel_swiglu_ptr);
+
+  return true;
+}
 
 void SwiGLULayerCl::swigluProcess(Tensor const &in1, Tensor const &in2,
                                   Tensor &result) {
@@ -97,11 +113,8 @@ void SwiGLULayerCl::swiglu_cl(const float *matAdata, const float *vecXdata,
   bool result = false;
 
   do {
-    ClContext::SharedPtrClKernel kernel_swiglu_ptr =
-      cl_context_ref.registerClKernel(swiglu_cl_kernel_, "swiglu_cl");
-    if (!kernel_swiglu_ptr) {
-      break;
-    }
+
+    auto kernel_swiglu_ptr = layer_kernel_ptrs[Kernels::SWIGLU_CL];
 
     int dim = int(dim1 * dim2);
     opencl::Buffer inputA(cl_context_ref.context_inst_,
@@ -167,11 +180,8 @@ void SwiGLULayerCl::swiglu_cl_fp16(const __fp16 *matAdata,
   bool result = false;
 
   do {
-    ClContext::SharedPtrClKernel kernel_swiglu_ptr =
-      cl_context_ref.registerClKernel(swiglu_cl_kernel_fp16_, "swiglu_cl_fp16");
-    if (!kernel_swiglu_ptr) {
-      break;
-    }
+
+    auto kernel_swiglu_ptr = layer_kernel_ptrs[Kernels::SWIGLU_CL_FP16];
 
     int dim = int(dim1 * dim2);
     opencl::Buffer inputA(cl_context_ref.context_inst_,
