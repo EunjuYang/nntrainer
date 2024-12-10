@@ -11,6 +11,17 @@ nntrainer_inc_abs = [
   meson.source_root() / 'api' / 'ccapi' / 'include'
 ]
 
+# The code below feeds BiQGEMM absolute path to android.mk
+# The BiQGEMM absolute path is included only when biqgemm is enabled.
+if get_option('enable-biqgemm')
+    fs = import('fs')
+    if fs.is_dir('../../BiQGEMM')
+      nntrainer_inc_abs += meson.source_root() / '..' / 'BiQGEMM'
+    else
+      error ('BiQGEMM cannot be enabled without BiQGEMM library.')
+    endif
+endif
+
 nntrainer_sources = []
 nntrainer_headers = [
    meson.current_source_dir() / 'nntrainer_log.h',
