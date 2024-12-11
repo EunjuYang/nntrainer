@@ -38,8 +38,8 @@ BCQTensor::BCQTensor(const TensorDim &d, const void *buf) : BCQTensor(d, true) {
 }
 
 bool BCQTensor::operator==(const BCQTensor &rhs) const {
-  const uint32_t *_data = (uint32_t *)getData();
-  const uint32_t *_rdata = (uint32_t *)rhs.getData();
+  const uint32_t *_data = (uint32_t *)getScale();
+  const uint32_t *_rdata = (uint32_t *)rhs.getScale();
 
   for (size_t i = 0; i < size() + scale_size(); ++i) {
     if (_data[i] - _rdata[i])
@@ -82,7 +82,7 @@ void *BCQTensor::getData() const {
     return nullptr;
 
   data->validate();
-  return data->getAddr<uint32_t>() + offset;
+  return ((uint32_t *)getScale()) + scale_size();
 }
 
 void *BCQTensor::getData(size_t idx) const {
@@ -93,7 +93,7 @@ void *BCQTensor::getData(size_t idx) const {
     return nullptr;
 
   data->validate();
-  return data->getAddr<uint32_t>() + offset + (idx / 32);
+  return ((uint32_t *)getScale()) + scale_size() + (idx / 32);
 }
 
 void *BCQTensor::getScale() const {
@@ -101,7 +101,7 @@ void *BCQTensor::getScale() const {
     return nullptr;
 
   data->validate();
-  return ((uint32_t *)getData()) + size();
+  return data->getAddr<uint32_t>() + offset;
 }
 
 void *BCQTensor::getScale(size_t idx) const {
@@ -220,7 +220,7 @@ Tensor &BCQTensor::dot(Tensor const &input, Tensor &output, bool trans,
 
 void BCQTensor::copy(const Tensor &from) {
   reshape(from.getDim());
-  copy(from.getData());
+  copy(from.getScale());
 }
 
 void BCQTensor::copyData(const Tensor &from) {
@@ -234,7 +234,7 @@ void BCQTensor::copyData(const Tensor &from) {
   /// @todo check data type properly
   switch (from.getDataType()) {
   case ml::train::TensorDim::DataType::BCQ:
-    copy(from.getData());
+    copy(from.getScale());
   default:
     throw std::invalid_argument("Error: Unsupported data type");
     break;
@@ -335,13 +335,13 @@ void BCQTensor::copy(const void *buf) {
   NNTR_THROW_IF(!contiguous, std::invalid_argument)
     << getName() << " is not contiguous, cannot copy.";
 
-  if (buf == getData()) {
+  if (buf == getScale()) {
     return;
   }
 
   /// @todo need to optimize
   for (unsigned int i = 0; i < size() + scale_size(); ++i) {
-    ((uint32_t *)getData())[i] = ((uint32_t *)buf)[i];
+    ((uint32_t *)getScale())[i] = ((uint32_t *)buf)[i];
   }
 }
 
@@ -350,6 +350,8 @@ std::string BCQTensor::getStringDataType() const { return "BCQ"; }
 void BCQTensor::printScales(std::ostream &out) const {
   const float *q_scales = (float *)getScale();
   unsigned int len = scale_size();
+  out << "scale addr: " << reinterpret_cast<const float *>(q_scales) << '\n';
+  out << "scale size: " << len << '\n';
 
   if (len > 50) {
     out << "Scale factors: [" << (int)q_scales[0] << ' ' << (int)q_scales[1]
