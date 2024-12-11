@@ -428,7 +428,7 @@ Tensor &Tensor::multiply(Tensor const &m, Tensor &output,
 }
 
 int Tensor::divide_i(float const &value) {
-  if (value == 0.0f) {
+  if (std::fpclassify(value) == FP_ZERO){
     return ML_ERROR_INVALID_PARAMETER;
   }
   this->divide(value, *this);
@@ -442,7 +442,7 @@ Tensor Tensor::divide(float const &value) const {
 
 Tensor &Tensor::divide(float const &value, Tensor &output) const {
   /// @todo add unittest, ZeroDivisionError
-  if (value == 0.0f) {
+  if (std::fpclassify(value) == FP_ZERO){
     std::stringstream ss;
     ss << "[Tensor] divide by value failed, value: " << value;
     throw std::invalid_argument(ss.str().c_str());
