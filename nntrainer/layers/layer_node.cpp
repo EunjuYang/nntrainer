@@ -317,6 +317,11 @@ const std::string LayerNode::getName() const noexcept {
   return name.empty() ? "" : name.get();
 }
 
+const std::string LayerNode::getGraphName() const noexcept {
+  auto &graph_name = std::get<props::GraphName>(*layer_node_props);
+  return graph_name.empty() ? "default_graph" : graph_name.get();
+}
+
 std::ostream &operator<<(std::ostream &out, const LayerNode &l) {
 
   auto &input_connections =

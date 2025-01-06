@@ -38,7 +38,7 @@ public:
   /**
    * @brief     Constructor of Graph Core Class
    */
-  GraphCore() : sorted(false), node_names(), def_name_count(0) {}
+  GraphCore(const std::string& name) : sorted(false), node_names(), def_name_count(0), name(name){}
 
   /**
    * @brief     Destructor of Graph Core Class
@@ -253,6 +253,10 @@ public:
     return true;
   }
 
+  void setCompiled(const bool compiled_) {compiled = compiled;}
+  bool getCompiled() {return compiled;}
+  const std::string name(){return name;}
+
 private:
   std::vector<std::shared_ptr<GraphNode>> input_list;
   std::vector<std::shared_ptr<GraphNode>> output_list;
@@ -266,6 +270,8 @@ private:
   std::unordered_set<std::string>
     node_names;       /**< Set containing all the names of nodes in the model */
   int def_name_count; /**< Count assigned to node names declared by default */
+  bool compiled;      /**< if the subgraph is compiled */
+  std::string name;   /**< name of this subgraph */
 
   /**
    * @brief     topological sort

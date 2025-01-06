@@ -28,6 +28,7 @@
 namespace nntrainer {
 
 using ExecutionMode = ml::train::ExecutionMode;
+using SubGraph = std::shared_ptr<GraphCore>;
 
 class Connection;
 /**
@@ -120,7 +121,14 @@ public:
    * @brief getter of number of nodes
    * @param[out] number of nodes
    */
-  unsigned int size() const { return graph.size(); }
+  unsigned int size() const { 
+    unsigned int _size = 0;
+
+    for(auto &sg = graph.begin(); sg < graph.end(); ++sg) 
+      _size += sg.size();
+
+    return _size;
+  }
 
   /**
    * @brief get if the graph is empty
@@ -139,12 +147,12 @@ public:
   }
 
   /**
-   * @brief getter of Sorted LayerNode with index number
+   * @brief getter of Sorted LayerNode with index number of given subgraph
    * @param[in] index
    * @ret LayerNode
    */
-  std::shared_ptr<LayerNode> getSortedLayerNode(unsigned int ith) const {
-    return std::static_pointer_cast<LayerNode>(graph.getSortedNode(ith));
+  std::shared_ptr<LayerNode> getSortedLayerNode(SubGraph &subgraph, unsigned int ith) const {
+    return std::static_pointer_cast<LayerNode>(subgraph->getSortedNode(ith));
   }
 
   /**
@@ -152,8 +160,8 @@ public:
    * @param[in] layer name
    * @retval LayerNode
    */
-  std::shared_ptr<LayerNode> getLayerNode(const std::string &layer_name) const {
-    return std::static_pointer_cast<LayerNode>(graph.getNode(layer_name));
+  std::shared_ptr<LayerNode> getLayerNode(SubGraph &subgraph, const std::string &layer_name) const {
+    return std::static_pointer_cast<LayerNode>(subgraph->getNode(layer_name));
   }
 
   /**
@@ -229,51 +237,93 @@ public:
     void *user_data = nullptr);
 
   /**
-   * @brief     get begin iterator for the graph
-   * @retval    const iterator
+   * @brief     get the begin iterator for the given local subgraph
+   * @param subgraph the specified local subgraph
+   * @retval    const iterator of layernode in subgraph
    */
-  graph_const_iterator<LayerNode> cbegin() const {
-    return graph.cbegin<LayerNode>();
+  graph_const_iterator<LayerNode> cbegin(SubGraph &subgraph) const {
+    return subgraph->cbegin<LayerNode>();
   }
 
   /**
-   * @brief     get end iterator for the graph
-   * @retval    const iterator
+   * @brief     get the cbegin iterator for the global graph
+   * @retval    const iterator of SubGraph in graph
    */
-  graph_const_iterator<LayerNode> cend() const {
-    return graph.cend<LayerNode>();
+  std::iterator<SubGraph> cbegin() const {
+    return graph.cbegin();
   }
 
   /**
-   * @brief     get reverse begin iterator for the graph
+   * @brief     get the end iterator for the given local subgraph
+   * @param subgraph the specified local subgraph
+   * @retval    const iterator of layernode in the local subgraph
+   */
+  graph_const_iterator<LayerNode> cend(SubGraph &subgraph) const {
+    return subgraph->cend<LayerNode>();
+  }
+
+  /**
+   * @brief     get the cend iterator for the global graph
+   * @retval    const iterator of SubGraph in graph
+   */
+  std::iterator<SubGraph> cend() const {
+    return graph.cend();
+  }
+
+  /**
+   * @brief     get reverse begin iterator for the graph for the local subgraph
+   * @param subgraph the specified local subgraph
+   * @retval    const reverse iterator of layernode in the local subgraph
+   */
+  graph_const_reverse_iterator<LayerNode> crbegin(SubGraph &subgraph) const {
+    return subgraph->crbegin<LayerNode>();
+  }
+
+  /**
+   * @brief     get reverse end iterator for the graph for the local subgraph
+   * @param subgraph the specified local subgraph
    * @retval    const reverse iterator
    */
-  graph_const_reverse_iterator<LayerNode> crbegin() const {
-    return graph.crbegin<LayerNode>();
-  }
-
-  /**
-   * @brief     get reverse end iterator for the graph
-   * @retval    const reverse iterator
-   */
-  graph_const_reverse_iterator<LayerNode> crend() const {
-    return graph.crend<LayerNode>();
+  graph_const_reverse_iterator<LayerNode> crend(SubGraph &subgraph) const {
+    NNTR_THROW_IF(graph.empty(), std::invalid)
+    << "Error: crend() should be called after the global graph compilation";
+    return subgraph->crend<LayerNode>();
   }
 
   /**
    * @brief     get begin iterator for the backwarding
+   * @param subgraph the specified local subgraph
+   * @retval    const reverse iterator marking the begin of backwarding
+   */
+  graph_const_reverse_iterator<LayerNode> getBackwardingBeginIter(SubGraph &subgraph) const {
+    return crbegin(subgraph);
+  }
+
+  /**
+   * @brief     get begin iterator for the backwarding
+   * @param subgraph the specified local subgraph
    * @retval    const reverse iterator marking the begin of backwarding
    */
   graph_const_reverse_iterator<LayerNode> getBackwardingBeginIter() const {
-    return crbegin();
+    return crbegin(subgraph);
   }
 
   /**
    * @brief     get end iterator for the backwarding
+   * @param subgraph the specified local subgraph
    * @retval    const reverse iterator marking the end of backwarding
    */
-  graph_const_reverse_iterator<LayerNode> getBackwardingEndIter() const {
-    return crend();
+  graph_const_reverse_iterator<LayerNode> getBackwardingEndIter(SubGraph &subgraph) const {
+    return crend(subgraph);
+  }
+
+  /**
+   * @brief     get end iterator for the backwarding
+   * @param subgraph the specified local subgraph
+   * @retval    const reverse iterator marking the end of backwarding
+   */
+  graph_const_reverse_iterator<LayerNode> getBackwardingEndIter(SubGraph &subgraph) const {
+    return crend(subgraph);
   }
 
   /**
@@ -302,6 +352,7 @@ public:
    */
   NetworkGraph &copy(NetworkGraph &from) {
     graph.copy(from.graph);
+    subgraphs.copy(from.subgraphs);
     return *this;
   }
 
@@ -505,8 +556,8 @@ private:
   std::map<std::string, std::string> sub_in_out; /** This is map to identify
                    input and output layer name of subgraph */
   std::shared_ptr<Manager> tensor_manager;       /**< tensors manager */
-
-  GraphCore graph;             /** core graph object */
+  std::unordered_map<std::string, SubGraph> subgraphs; /**< subgraphs with name */
+  std::vector<SubGraph> graph;   /**< sorted graph object, which is valid after compile() */
   bool compiled;               /**< if the model graph is compiled */
   unsigned int batch_size;     /**< current batch_size */
   unsigned int graph_exec_end; /**< Inclusive, last execution order of the
@@ -544,6 +595,13 @@ private:
   unsigned int nan_count;
 
   /**
+   * @brief     Compile the given sub graph
+   * @param[in] loss_type loss for the graph
+   * returns ML_ERROR_NONE on success, error on failure
+   */
+  int compileSubGraph(SubGraph &subgraph, const std::string &loss_type);
+
+  /**
    * @brief     topological sort
    * @param[in] ith index of LayerNode
    * @param[in] visited temp list
@@ -567,6 +625,13 @@ private:
   int checkCompiledGraph();
 
   /**
+   * @brief     check if the compiled subgraph is of correct form.
+   * @retval #ML_ERROR_NONE graph is compiled correctly
+   * @retval #ML_ERROR_INVALID_PARAMETER did not compile correctly
+   */
+  int checkCompiledSubGraph(std::shared_from<GraphCore> subgraph);
+
+  /**
    * @brief     mark nodes required for backwarding.
    */
   void markNodesForBackwarding();
@@ -580,7 +645,12 @@ private:
   int addLossLayer(const std::string &loss_type);
 
   /**
-   * @brief     set output connections for all the layers
+   * @brief     set output connections for all layers in a given subgraph
+   */
+  void setOutputConnections(SubGraph &subgraph);
+
+  /**
+   * @brief     set output connections across subgraphs
    */
   void setOutputConnections();
 
@@ -617,8 +687,20 @@ private:
    * topological sort. The order of forwarding matches the topological sort. The
    * order for backwarding is in the exact reverse order. The calcDerivative()
    * is expected to be called right after calcGradient().
+   * 
+   * @todo
    */
   void setExecutionOrder();
+
+  /**
+   * @brief Set the order of execution for all the nodes in the given subgraph
+   *
+   * @details This sets the order of execution using the order from the
+   * topological sort. The order of forwarding matches the topological sort. The
+   * order for backwarding is in the exact reverse order. The calcDerivative()
+   * is expected to be called right after calcGradient().
+   */
+  void setExecutionOrder(SubGraph &subgraph);
 
   /**
    * @brief Set external data to the given tensors with name
@@ -628,6 +710,11 @@ private:
    */
   void setExternalTensors(const std::vector<Tensor> &data,
                           const std::vector<std::string> names);
+
+  /**
+   * @brief     Optimize the graph memory utilization for in-place operations of the given subgraph
+   */
+  void inPlaceOptimize(SubGraph &subgraph);
 
   /**
    * @brief     Optimize the graph memory utilization for in-place operations

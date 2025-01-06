@@ -54,6 +54,7 @@ class ClipGradByGlobalNorm;
 class Packed;
 class LossScaleForMixed;
 class ComputeEngine;
+class GraphName;
 } // namespace props
 
 /**
@@ -119,6 +120,12 @@ public:
   void setName(const std::string &name) override {
     setProperty({"name=" + name});
   }
+
+  /**
+   * @brief getter of graph name, where the layer node belongs to
+   */
+  const std::string getGraphName() const noexcept;
+
 
   /**
    * @brief     set weight and activation data type of layer

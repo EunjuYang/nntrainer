@@ -6,6 +6,7 @@
  * @date    19 Oct 2020
  * @see     https://github.com/nnstreamer/nntrainer
  * @author  Jijoong Moon <jijoong.moon@samsung.com>
+ * @author  Eunju Yang <ej.yang@samsung.com>
  * @bug     No known bugs except for NYI items
  * @brief   This is Network Graph Class for Neural Network
  *
@@ -50,21 +51,58 @@
 
 namespace nntrainer {
 
-int NetworkGraph::compile(const std::string &loss_type) {
+int compileSubGraph(SubGraph &subgraph, const std::string &loss_type){
+
   int status = ML_ERROR_NONE;
 
-  status = isCompilable();
+  /** compile the subgraph */
+  status = isCompilable(subgraph);
   NN_RETURN_STATUS();
 
   try {
-    setOutputConnections();
+    setOutputConnections(subgraph);
   } catch (std::exception &e) {
     ml_loge("setting output layer failed, reason: %s", e.what());
     return ML_ERROR_INVALID_PARAMETER;
   }
 
-  graph.realizeInputOutputNode();
+  subgraph->realizeInputOutputNode();
 
+  subgraph->topologicalSort();
+
+  setExecutionOrder(subgraph);
+
+  inPlaceOptimize(subgraph);
+
+  status = checkCompiledGraph(subgraph);
+  NN_RETURN_STATUS();
+
+  return status;
+}
+
+int NetworkGraph::compile(const std::string &loss_type) {
+
+  int status = ML_ERROR_NONE;
+
+  /** 1. compile each subgraph */
+  for(auto itr = subgraphs.begin(); itr < subgraphs.end(); ++itr){
+    auto &sg = itr.second;
+    compileSubGraph(sg, loss_type);
+  }
+
+  /** 2. topological sort the subgraphs and add it to graph */
+  // @todo NYI, this is just a naive version without considering the connection between subgraphs
+  // It needs to be updated to handle the connections and topological sorting in subgraph level
+  for(auto itr = subgraphs.begine(); itr < subgraphs.end(); ++itr){
+    auto &sg = itr.second;
+    graph.emplace_back(std::move(sg));
+  }
+
+  /** 
+   * 3. add Loss Layer to output layer of graph
+   * @todo The current version considers the last subgraph only takes the loss layer.
+   * It needs to be generalized to check all subgraphs
+   */
   try {
     /// @todo realize loss beforehand
     status = addLossLayer(loss_type);
@@ -75,27 +113,46 @@ int NetworkGraph::compile(const std::string &loss_type) {
     NN_RETURN_STATUS();
   }
 
-  graph.topologicalSort();
-
-  setExecutionOrder();
+  /**
+   * 4. Call the topological sort for the last subgraph again
+   */
+  graph.back()->topologicalSort();
   forward_iter_end = (*(cend() - 1)).get();
 
-  inPlaceOptimize();
+  /**
+   * 5. setExecutionOrder of the global graph
+   */
+  setExecutionOrder();
 
-  status = checkCompiledGraph();
   NN_RETURN_STATUS();
-
   compiled = true;
 
   return status;
 }
 
-void NetworkGraph::setExecutionOrder() {
-  auto backward_order = graph.size();
-  for (auto iter = getBackwardingBeginIter(); iter != getBackwardingEndIter();
+void NetworkGraph::setExecutionOrder(){
+
+  NNTR_THROW_IF(graph.empty(), std::invalid)
+  << "Error: setExecutionOrder() should be called after the global graph is set.";
+
+  /**
+   * @todo set the execution order of the subgraphs
+   */
+
+  /**
+   * This sets max execution order temporarily till model is initialized.
+   * This set max execution order is used to extend gradient exec orders for
+   * clipping.
+   */
+  graph_exec_end = std::get<3>((*(cbegin()))->getExecutionOrder());
+}
+
+void NetworkGraph::setExecutionOrder(SubGraph &subgraph) {
+  auto backward_order = subgraph.size();
+  for (auto iter = getBackwardingBeginIter(subgraph); iter != getBackwardingEndIter(subgraph);
        iter++) {
     auto &node = *iter;
-    auto order_idx = getBackwardingEndIter() - iter - 1;
+    auto order_idx = getBackwardingEndIter(subgraph) - iter - 1;
     auto forward_order = order_idx;
     auto calc_gradient_order = backward_order;
     if (node->getTrainable())
@@ -108,13 +165,6 @@ void NetworkGraph::setExecutionOrder() {
     node->setExecutionOrder({forward_order, calc_gradient_order,
                              calc_derivative_order, apply_gradient_order});
   }
-
-  /**
-   * This sets max execution order temporarily till model is initialized.
-   * This set max execution order is used to extend gradient exec orders for
-   * clipping.
-   */
-  graph_exec_end = std::get<3>((*(cbegin()))->getExecutionOrder());
 }
 
 void NetworkGraph::addLayerNode(std::unique_ptr<Layer> layer) {
@@ -122,8 +172,10 @@ void NetworkGraph::addLayerNode(std::unique_ptr<Layer> layer) {
 }
 
 int NetworkGraph::addLossLayer(const std::string &loss_type_) {
-  for (unsigned int i = 0; i < graph.getNumOutputNodes(); ++i) {
-    auto output_layer_node = LNODE(graph.getOutputNode(i));
+
+  auto &last_subgraph = graph.back();
+  for (unsigned int i = 0; i < last_subgraph.getNumOutputNodes(); ++i) {
+    auto output_layer_node = LNODE(last_subgraph.getOutputNode(i));
     std::string loss_type = loss_type_;
 
     if (output_layer_node->requireLabel())
@@ -157,11 +209,11 @@ int NetworkGraph::addLossLayer(const std::string &loss_type_) {
       }
 
       second_to_last_layer_node =
-        LNODE(graph.getNode(output_layer_node->getInputConnectionName(0)));
+        LNODE(last_subgraph.getNode(output_layer_node->getInputConnectionName(0)));
     }
 
     std::shared_ptr<LayerNode> lnode = createLayerNode(loss_type);
-    graph.ensureName(*lnode);
+    last_subgraph.ensureName(*lnode);
 
     if (second_to_last_layer_node->getDistribute()) {
       lnode->setProperty({"distribute=true"});
@@ -173,37 +225,57 @@ int NetworkGraph::addLossLayer(const std::string &loss_type_) {
       {"input_layers=" + second_to_last_layer_node->getName()});
 
     if (is_cross_entropy_loss) {
-      graph.replaceNode(output_layer_node, lnode);
+      last_subgraph.replaceNode(output_layer_node, lnode);
     } else {
-      graph.addNode(lnode, false);
+      last_subgraph.addNode(lnode, false);
     }
-    graph.replaceOutputNode(i, lnode);
+    last_subgraph.replaceOutputNode(i, lnode);
   }
 
   return ML_ERROR_NONE;
 }
 
-void NetworkGraph::setOutputConnections() {
-  for (auto layer_iter = cbegin(); layer_iter != cend(); layer_iter++) {
+void setOutputConnections(SubGraph &subgraph){
+  for (auto layer_iter = cbegin(subgraph); layer_iter != cend(subgraph); layer_iter++) {
     const auto &node = *layer_iter;
     for (auto i = 0u, num_inode = node->getNumInputConnections(); i < num_inode;
          ++i) {
       const auto &name = node->getInputConnectionName(i);
       const auto &idx = node->getInputConnectionIndex(i);
 
-      auto node_setting_output = getLayerNode(name);
+      auto node_setting_output = getLayerNode(subgraph, name);
       node_setting_output->setOutputConnection(idx, node->getName(), i);
     }
   }
 }
 
+void NetworkGraph::setOutputConnections() {
+  // @todo NYI
+}
+
+int NetworkGraph::isCompilable(SubGraph &subgraph) {
+
+  if (subgraph->getCompiled()) {
+    ml_loge("Graph " + subgraph->name() + " is already compiled");
+    return ML_ERROR_NOT_SUPPORTED;
+  }
+
+  if (subgraph->empty()) {
+    ml_loge("The subgraph is empty");
+    return ML_ERROR_INVALID_PARAMETER;
+  }
+
+  return ML_ERROR_NONE;
+}
+
 int NetworkGraph::isCompilable() {
+
   if (compiled) {
     ml_loge("Graph is already compiled");
     return ML_ERROR_NOT_SUPPORTED;
   }
 
-  if (graph.empty()) {
+  if (subgraphs.empty()) {
     ml_loge("Graph is empty");
     return ML_ERROR_INVALID_PARAMETER;
   }
@@ -213,7 +285,15 @@ int NetworkGraph::isCompilable() {
 
 int NetworkGraph::checkCompiledGraph() {
   /** Dimension of input layers must be known */
-  for (auto iter = cbegin(); iter != cend(); iter++) {
+  for (auto sg = graph.begin(); sg != graph.end(); sg++){
+    checkCompiledSubGraph(sg);
+  }
+  return ML_ERROR_NONE;
+}
+
+int NetworkGraph::checkCompiledSubGraph(std::shared_from<GraphCore> subgraph){
+  /** Dimension of input layers must be known */
+  for (auto iter = cbegin(subgraph); iter != cend(subgraph); iter++) {
     auto lnode = (*iter);
     if (lnode->getNumInputConnections() == 0) {
       if (!lnode->hasInputShapeProperty()) {
@@ -228,7 +308,9 @@ int NetworkGraph::checkCompiledGraph() {
 
 void NetworkGraph::markNodesForBackwarding() {
   /** accumulate all the nodes which must support backwarding */
-  std::unordered_set<std::string> must_support_backwarding;
+  std::unordered_map<std::string, std::unordered_set<std::string>> must_support_backwarding;  /** < subgraph_name, node_name */
+
+  /** INFERENCE mode, no need to mark but set them false */
   if (exec_mode == ExecutionMode::INFERENCE) {
     for (auto iter = cbegin(); iter != cend(); iter++) {
       auto lnode = (*iter);
@@ -242,36 +324,41 @@ void NetworkGraph::markNodesForBackwarding() {
    * if a node is trainable, then all the nodes ahead of it must support
    * backwarding operation
    */
-  for (auto iter = cbegin(); iter != cend(); iter++) {
-    auto lnode = (*iter);
-    if (lnode->getTrainable() ||
-        must_support_backwarding.find(lnode->getName()) !=
-          must_support_backwarding.end()) {
-      if (lnode->getTrainable()) {
-        lnode->needsCalcGradient(true);
-      }
-#ifdef ENABLE_TEST
-      if (lnode->supportBackwarding() && !optimize_memory) {
-        lnode->needsCalcDerivative(true);
-      }
-#endif
-
-      for (auto i = 0u, num_node = lnode->getNumOutputConnections();
-           i < num_node; ++i) {
-        auto conn = lnode->getOutputConnection(i);
-        if (!conn) {
-          continue;
+  for (auto sg = cbegin(); sg != cend(); ++sg){
+    const auto & sg_name = sg.name();
+    for (auto iter = cbegin(sg); iter != cend(sg); iter++) {
+      auto lnode = (*iter);
+      if (lnode->getTrainable() ||
+          must_support_backwarding[sg_name].find(lnode->getName()) !=
+            must_support_backwarding[sg_name].end()) {
+        if (lnode->getTrainable()) {
+          lnode->needsCalcGradient(true);
         }
+  #ifdef ENABLE_TEST
+        if (lnode->supportBackwarding() && !optimize_memory) {
+          lnode->needsCalcDerivative(true);
+        }
+  #endif
 
-        must_support_backwarding.insert(conn->getName());
+        for (auto i = 0u, num_node = lnode->getNumOutputConnections();
+            i < num_node; ++i) {
+          auto conn = lnode->getOutputConnection(i);
+          if (!conn) {
+            continue;
+          }
+
+          must_support_backwarding[sg_name].insert(conn->getName());
+        }
       }
     }
   }
 
   /** mark all the required nodes support backwarding */
-  for (auto const &node_name : must_support_backwarding) {
-    auto ln = LNODE(graph.getNode(node_name)).get();
-    ln->needsCalcDerivative(true);
+  for (auto const &sg_name : must_support_backwarding) {
+    for(auto const &node_name : must_support_backwarding[sg_name]){
+      auto ln = LNODE(subgraph[sg_name].getNode(node_name)).get();
+      ln->needsCalcDerivative(true);
+    }
   }
 }
 
@@ -288,24 +375,26 @@ void NetworkGraph::setBatchSize(unsigned int batch_size) {
   if (allocated)
     deallocateTensors();
 
-  for (auto iter = cbegin(); iter != cend(); iter++) {
-    if ((*iter)->isFinalized()) {
-      /// resize tensors spec
-      /// @todo remove below, if custom tensor needs to change dimension
-      /// according to the tensor, it must be done explicitly, or at least have
-      /// a property to control the behavior
-      const RunLayerContext &context = (*iter)->getRunContext();
-      for (unsigned int idx = 0; idx < context.getNumTensors(); idx++) {
-        auto const &ts = context.getTensor(idx);
-        tensor_manager->setBatchSize(ts.getName(), ts.getDim().batch());
-        if (context.tensorHasGradient(idx)) {
-          auto const &ts_grad = context.getTensorGrad(idx);
-          tensor_manager->setBatchSize(ts_grad.getName(),
-                                       ts_grad.getDim().batch());
+  for (auto sg = cbegin(); sg != cend(); ++sg){
+    for (auto iter = cbegin(sg); iter != cend(sg); iter++) {
+      if ((*iter)->isFinalized()) {
+        /// resize tensors spec
+        /// @todo remove below, if custom tensor needs to change dimension
+        /// according to the tensor, it must be done explicitly, or at least have
+        /// a property to control the behavior
+        const RunLayerContext &context = (*iter)->getRunContext();
+        for (unsigned int idx = 0; idx < context.getNumTensors(); idx++) {
+          auto const &ts = context.getTensor(idx);
+          tensor_manager->setBatchSize(ts.getName(), ts.getDim().batch());
+          if (context.tensorHasGradient(idx)) {
+            auto const &ts_grad = context.getTensorGrad(idx);
+            tensor_manager->setBatchSize(ts_grad.getName(),
+                                        ts_grad.getDim().batch());
+          }
         }
+        /// override setting batch as per request
+        (*iter)->setBatch(batch_size);
       }
-      /// override setting batch as per request
-      (*iter)->setBatch(batch_size);
     }
   }
   /// resize input and output spec
@@ -364,16 +453,23 @@ sharedConstTensors NetworkGraph::forwarding(
   bool training,
   std::function<void(std::shared_ptr<LayerNode>, bool)> forwarding_op,
   std::function<bool(void *userdata)> stop_cb, void *userdata) {
-  for (auto iter = cbegin(); iter != cend() && !stop_cb(userdata); iter++) {
-    auto &ln = *iter;
-    PROFILE_TIME_START(profile_keys.at(ln->getType()));
-    forwarding_op(*iter, training);
-    PROFILE_TIME_END(profile_keys.at(ln->getType()));
+
+  for (auto sg = cbegin(); sg != cend() && !stop_cb(userdata); ++sg){
+    for (auto iter = cbegin(sg); iter != cend(sg) && !stop_cb(userdata); ++iter{
+      auto &ln = *iter;
+      PROFILE_TIME_START(profile_keys.at(ln->getType()));
+      forwarding_op(*iter, training);
+      PROFILE_TIME_END(profile_keys.at(ln->getType()));
+    }
   }
 
+  // @todo this code assumes only the last subgraph of the global graph
+  // has output nodes. This should be updated to support various output nodes
+  // in other subgraphs.
   sharedConstTensors out;
-  for (unsigned int i = 0; i < graph.getNumOutputNodes(); ++i) {
-    auto const &output_layer_node = LNODE(graph.getOutputNode(i));
+  const auto& last_sg = graph.back();
+  for (unsigned int i = 0; i < last_sg->getNumOutputNodes(); ++i) {
+    auto const &output_layer_node = LNODE(last_sg->getOutputNode(i));
     for (unsigned int j = 0; j < output_layer_node->getNumOutputs(); ++j) {
       out.push_back(MAKE_SHARED_TENSOR(output_layer_node->getOutput(j)));
     }
@@ -386,16 +482,23 @@ sharedConstTensors NetworkGraph::incremental_forwarding(
   unsigned int from, unsigned int to, bool training,
   std::function<void(std::shared_ptr<LayerNode>, bool)> forwarding_op,
   std::function<bool(void *userdata)> stop_cb, void *userdata) {
-  for (auto iter = cbegin(); iter != cend() && !stop_cb(userdata); iter++) {
-    auto &ln = *iter;
-    PROFILE_TIME_START(profile_keys.at(ln->getType()));
-    forwarding_op(*iter, training);
-    PROFILE_TIME_END(profile_keys.at(ln->getType()));
+
+  for (auto sg = cbegin(); sg != cend() && !stop_cb(userdata); ++sg){
+    for (auto iter = cbegin(sg); iter != cend(sg) && !stop_cb(userdata); iter++) {
+      auto &ln = *iter;
+      PROFILE_TIME_START(profile_keys.at(ln->getType()));
+      forwarding_op(*iter, training);
+      PROFILE_TIME_END(profile_keys.at(ln->getType()));
+    }
   }
 
+  // @todo this code assumes only the last subgraph of the global graph
+  // has output nodes. This should be updated to support various output nodes
+  // in other subgraphs.
   sharedConstTensors out;
-  for (unsigned int i = 0; i < graph.getNumOutputNodes(); ++i) {
-    auto const &output_layer_node = LNODE(graph.getOutputNode(i));
+  const auto& last_sg = graph.back();
+  for (unsigned int i = 0; i < last_sg->getNumOutputNodes(); ++i) {
+    auto const &output_layer_node = LNODE(last_sg->getOutputNode(i));
     for (unsigned int j = 0; j < output_layer_node->getNumOutputs(); ++j) {
       out.push_back(MAKE_SHARED_TENSOR(output_layer_node->getOutput(j)));
     }
@@ -648,8 +751,16 @@ void NetworkGraph::addLayer(std::shared_ptr<LayerNode> layer) {
   if (compiled)
     throw std::runtime_error("Cannot modify graph after compile");
 
+  /** check layer's graph_scope */
+  const std::string &graph_name = layer->getGraphName();
+  auto sg = subgraphs.find(graph_name);
+  if(sg == subgraphs.end()){
+    subgraphs.emplace(graph_name, std::make_unique<GraphCore>(graph_name));
+    sg = subgraphs[graph_name];
+  }
+
   /** Insert the layer to the graph */
-  graph.addNode(layer);
+  sg->addNode(layer);
 }
 
 InPlaceType
@@ -692,6 +803,15 @@ NetworkGraph::canExecuteInPlace(const std::shared_ptr<LayerNode> &lnode) {
         return InPlaceType::NONE;
     }
     return inplace_type;
+  }
+}
+
+void NetworkGraph::inPlaceOptimize(SubGraph &subgraph) {
+  if (optimize_memory) {
+    for (unsigned int idx = 0; idx < subgraph->size(); ++idx) {
+      auto const &lnode = getSortedLayerNode(subgraph, idx);
+      lnode->setInPlaceType(canExecuteInPlace(lnode));
+    }
   }
 }
 
