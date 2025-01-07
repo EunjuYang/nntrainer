@@ -405,7 +405,7 @@ TEST(RemapRealizer, remap_03_n) {
   auto graph = makeGraph({input});
   EXPECT_NO_THROW(model_graph.addLayer(graph[0]));
   EXPECT_EQ(model_graph.compile("mse"), ML_ERROR_NONE);
-  EXPECT_NO_THROW(model_graph.finalizeContext(graph[0], {}));
+  EXPECT_NO_THROW(model_graph.initialize());
 
   RemapRealizer r([](std::string &name) { name = "scoped/" + name; });
   EXPECT_THROW(r.realize(graph), std::invalid_argument);
@@ -418,7 +418,7 @@ TEST(RemapRealizer, remap_04_n) {
   auto graph = makeGraph({input});
   EXPECT_NO_THROW(model_graph.addLayer(graph[0]));
   EXPECT_EQ(model_graph.compile("mse"), ML_ERROR_NONE);
-  EXPECT_NO_THROW(model_graph.finalizeContext(graph[0], {}));
+  EXPECT_NO_THROW(model_graph.initialize());
 
   RemapRealizer r(
     [](std::string &name, unsigned &_) { name = "scoped/" + name; });

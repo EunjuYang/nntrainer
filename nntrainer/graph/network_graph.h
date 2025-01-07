@@ -21,9 +21,9 @@
 #include <stack>
 #include <vector>
 
-#include <graph_core.h>
 #include <layer_node.h>
 #include <manager.h>
+#include <subgraph_cpu.h>
 
 namespace nntrainer {
 
@@ -82,6 +82,9 @@ public:
     tensor_format(tensor_format_),
     tensor_dtype(split(tensor_dtype_, getRegex("\\-"))) {
     nan_count = 0;
+
+    // @todo needs to be updated
+    graph.setLookAhead(lookahead);
   }
 
   /**
@@ -94,12 +97,16 @@ public:
    * @brief     Compile the graph
    * @param[in] loss_type loss for the graph
    * returns ML_ERROR_NONE on success, error on failure
+   * @todo needs to be updated. Current compile code assumes a graph consists of
+   * one subgraph.
    */
   int compile(const std::string &loss_type);
 
   /**
    * @brief Create new LayerNode and add into Graph
    * @param[in] layer shared_ptr of Layer
+   * @todo needs to be updated. Current addLayer code assumes a graph consists
+   * of one subgraph.
    */
   void addLayer(std::shared_ptr<LayerNode> layer);
 
@@ -144,6 +151,9 @@ public:
    * @ret LayerNode
    */
   std::shared_ptr<LayerNode> getSortedLayerNode(unsigned int ith) const {
+    /// @todo needs to be updated
+    // Current getSortedLayerNode code assumes a graph consists of one subgraph.
+    // This code call graph.getSurtedNode(ith).
     return std::static_pointer_cast<LayerNode>(graph.getSortedNode(ith));
   }
 
@@ -153,6 +163,9 @@ public:
    * @retval LayerNode
    */
   std::shared_ptr<LayerNode> getLayerNode(const std::string &layer_name) const {
+    /// @todo needs to be updated
+    // Current getLayerNode code assumes a graph consists of one subgraph.
+    // This code call graph.getLayerNode(ith).
     return std::static_pointer_cast<LayerNode>(graph.getNode(layer_name));
   }
 
@@ -167,19 +180,10 @@ public:
   /**
    * @brief     set batch size
    * @param[in] batch size
+   * @todo needs to be updated. Current code only consider a graph with one
+   * subgraph.
    */
   void setBatchSize(unsigned int batch_size);
-
-  /**
-   * @brief try apply gradient if possible
-   * @note if it is not the last of the gradient access, this is noop
-   * @note if the gradient is to be clipped by norm, this is noop
-   *
-   * @param node node to try apply gradient
-   * @param apply_func apply function
-   */
-  static void applyGradients(LayerNode *node,
-                             const std::function<void(Weight &)> &apply_func);
 
   /**
    * @brief     forwarding network graph
@@ -188,11 +192,9 @@ public:
    */
   sharedConstTensors forwarding(
     bool training = false,
-    std::function<void(std::shared_ptr<LayerNode>, bool)> forwarding_op =
-      [](std::shared_ptr<LayerNode>, bool) {},
     std::function<bool(void *userdata)> stop_cb =
       [](void *user_data) { return false; },
-    void *user_data = nullptr);
+    void *user_data = nullptr, bool swap_mode = false);
 
   /**
    * @brief     forwarding network graph
@@ -203,8 +205,6 @@ public:
    */
   sharedConstTensors incremental_forwarding(
     unsigned int from, unsigned int to, bool training = false,
-    std::function<void(std::shared_ptr<LayerNode>, bool)> forwarding_op =
-      [](std::shared_ptr<LayerNode>, bool) {},
     std::function<bool(void *userdata)> stop_cb =
       [](void *user_data) { return false; },
     void *user_data = nullptr);
@@ -220,49 +220,47 @@ public:
    * compute again the derivatives.
    */
   bool backwarding(
-    int iteration,
-    std::function<void(std::shared_ptr<LayerNode>, bool)> &forwarding_op,
-    std::function<bool(std::shared_ptr<LayerNode>, int)> &backwarding_op,
-    std::function<void(Weight &, int)> &lazy_apply_grad_op,
+    int iteration, std::function<void(Weight &, int)> &lazy_apply_grad_op,
     std::function<bool(void *userdata)> stop_cb =
       [](void *user_data) { return false; },
-    void *user_data = nullptr);
+    void *user_data = nullptr, bool is_grad_opt_mode = false);
 
   /**
    * @brief     get begin iterator for the graph
    * @retval    const iterator
+   * @todo  needs to updated
    */
-  graph_const_iterator<LayerNode> cbegin() const {
-    return graph.cbegin<LayerNode>();
-  }
+  graph_const_iterator<LayerNode> cbegin() const { return graph.cbegin(); }
 
   /**
    * @brief     get end iterator for the graph
    * @retval    const iterator
+   * @todo  needs to be updated
    */
-  graph_const_iterator<LayerNode> cend() const {
-    return graph.cend<LayerNode>();
-  }
+  graph_const_iterator<LayerNode> cend() const { return graph.cend(); }
 
   /**
    * @brief     get reverse begin iterator for the graph
    * @retval    const reverse iterator
+   * @todo  needs to updated
    */
   graph_const_reverse_iterator<LayerNode> crbegin() const {
-    return graph.crbegin<LayerNode>();
+    return graph.crbegin();
   }
 
   /**
    * @brief     get reverse end iterator for the graph
    * @retval    const reverse iterator
+   * @todo  needs to updated
    */
   graph_const_reverse_iterator<LayerNode> crend() const {
-    return graph.crend<LayerNode>();
+    return graph.crend();
   }
 
   /**
    * @brief     get begin iterator for the backwarding
    * @retval    const reverse iterator marking the begin of backwarding
+   * @todo  needs to update
    */
   graph_const_reverse_iterator<LayerNode> getBackwardingBeginIter() const {
     return crbegin();
@@ -271,6 +269,7 @@ public:
   /**
    * @brief     get end iterator for the backwarding
    * @retval    const reverse iterator marking the end of backwarding
+   * @todo  need to update
    */
   graph_const_reverse_iterator<LayerNode> getBackwardingEndIter() const {
     return crend();
@@ -279,12 +278,14 @@ public:
   /**
    * @brief     getter of output dimension of graph
    * @retval    output tensor dim list
+   * @todo  needs to update
    */
   std::vector<TensorDim> getOutputDimension() const;
 
   /**
    * @brief     getter of input dimension of graph
    * @retval    input tensor dim list
+   * @todo  needs to update
    */
   std::vector<TensorDim> getInputDimension() const;
 
@@ -329,26 +330,6 @@ public:
    */
   int reinitialize(const std::vector<Connection> &model_input_names = {},
                    const std::vector<Connection> &model_label_names = {});
-
-  /**
-   * @brief Create run layer context from the given init layer context
-   *
-   * @param lnode layer node to finalize and set run context
-   * @param prev_inputs previous input information
-   */
-  std::vector<Var_Grad *>
-  finalizeContext(const std::shared_ptr<LayerNode> &lnode,
-                  const std::vector<Var_Grad *> &prev_inputs);
-
-  /**
-   * @brief Recreate run layer context from the given init layer context
-   *
-   * @param lnode layer node to finalize and set run context
-   * @param prev_inputs previous input information
-   */
-  std::vector<Var_Grad *>
-  refinalizeContext(const std::shared_ptr<LayerNode> &lnode,
-                    const std::vector<Var_Grad *> &prev_inputs);
 
   /** Interface for manager */
 
@@ -501,13 +482,17 @@ public:
    */
   bool isMixedPrecision() { return (!istrequal(tensor_dtype[1], "FP32")); }
 
-private:
-  std::map<std::string, std::string> sub_in_out; /** This is map to identify
-                   input and output layer name of subgraph */
-  std::shared_ptr<Manager> tensor_manager;       /**< tensors manager */
+  /**
+   * @brief setOptimizer
+   */
+  void setOptimizer(std::shared_ptr<OptimizerWrapped> opt_);
 
-  GraphCore graph;             /** core graph object */
-  bool compiled;               /**< if the model graph is compiled */
+private:
+  std::shared_ptr<Manager> tensor_manager; /**< tensors manager */
+
+  SubGraphCpu graph; /** subgraph object @todo this will be updated as a vector
+                        of SubGraph */
+  bool compiled;     /**< if the model graph is compiled */
   unsigned int batch_size;     /**< current batch_size */
   unsigned int graph_exec_end; /**< Inclusive, last execution order of the
                                   given graph */
@@ -534,11 +519,8 @@ private:
 
   std::vector<std::string> tensor_dtype; /**< Model Tensor Type: FP32, FP16 */
 
-  std::unordered_map<std::string, int>
-    profile_keys; /**< profile keys based on the layer type */
-  std::vector<Weight *>
-    lazy_weights; /**< weights with delayed grad update, e.g., gradient
-                     clipping, loss scaling */
+  std::shared_ptr<OptimizerWrapped> opt;
+
   bool is_clip_grad;
   float loss_scale;
   unsigned int nan_count;
@@ -570,19 +552,6 @@ private:
    * @brief     mark nodes required for backwarding.
    */
   void markNodesForBackwarding();
-
-  /**
-   * @brief     adding loss layer at last position
-   * @param[in] loss_type loss type
-   * @retval #ML_ERROR_NONE Successful.
-   * @retval #ML_ERROR_INVALID_PARAMETER invalid parameter.
-   */
-  int addLossLayer(const std::string &loss_type);
-
-  /**
-   * @brief     set output connections for all the layers
-   */
-  void setOutputConnections();
 
   /**
    * @brief     Ensure that layer has a name.

@@ -279,6 +279,7 @@ int NeuralNetwork::initialize(ExecutionMode mode) {
         return opt->getOptimizerVariableDim(dim);
       };
     model_graph.requestOptimizerVariable(cb, true);
+    model_graph.setOptimizer(opt);
   }
 
   // Allocate weights
@@ -348,75 +349,9 @@ NeuralNetwork::~NeuralNetwork() {
 sharedConstTensors NeuralNetwork::forwarding(
   bool training, std::function<bool(void *userdata)> stop_cb, void *userdata) {
 
-  std::function<void(std::shared_ptr<LayerNode>, bool)> forwarding_op =
-    [this, stop_cb, userdata](std::shared_ptr<LayerNode> node,
-                              bool training) -> void {
-    (void)this;
-    PROFILE_MEM_ANNOTATE("Forwarding for layer: " + node->getName());
+  bool swap_mode = std::get<props::MemorySwap>(model_flex_props);
 
-    auto f = std::get<0>(node->getExecutionOrder());
-    bool swap_mode = std::get<props::MemorySwap>(model_flex_props);
-    // temperally remain. when we evaluate all for asynch mode, we weill remove
-    if (exec_mode == ExecutionMode::TRAIN or
-        (exec_mode == ExecutionMode::INFERENCE and !swap_mode)) {
-      model_graph.flushCacheExcept(f);
-      node->forwarding(training);
-    } else {
-      /**
-       currently, it supports FSU asynch mode for inference. The prcedure of
-       FSU is below,
-
-       Prerequests : This function is called node by node at the forwarding
-       function in network graph.
-
-       Step 1. If the execution order is the first (f==0) then, it will try to
-               load tensors which used at layer 0.
-
-       Step 2. It check whether these tensors from Step 1, then do the
-               forwarding of the first node.
-
-       Step 3. Then check the look a head which says how many layer weights need
-               to be loaded before running to hide overehad due to FSU,
-
-       Step 4. Try to get the tesors by asking tensors for layers which is done
-               by thread pool
-
-       Step 5. Try to release the weights which has execution order less then f.
-
-       Step n. repeat next layer starting with checking the tenosrs are loaded,
-               and if it is loaded, then run forwarding. Every time it finishes
-               the forwarding, ask load tensors for next n layers.
-      **/
-
-      if (f == 0)
-        model_graph.LoadTensors(f);
-
-      if (model_graph.checkLoadComplete(f)) {
-        node->forwarding(training);
-        ml_logd("Forwarding is done %d : %s", f, node->getName().c_str());
-
-        unsigned int lookahead =
-          std::get<props::MemorySwapLookahead>(model_flex_props);
-
-        if (lookahead != 0) {
-          if ((f) % (lookahead + 1) == lookahead - 1) {
-            std::cout << "request load tensor : " << f + lookahead + 1
-                      << std::endl;
-            ml_logd("request load tensor for %d", f + 1);
-            model_graph.LoadTensors((f / (lookahead + 1) + 1) *
-                                    (lookahead + 1));
-          }
-        } else {
-          model_graph.LoadTensors(f);
-        }
-
-        if (f != 0)
-          model_graph.UnloadTensors(f);
-      }
-    }
-  };
-
-  return model_graph.forwarding(training, forwarding_op, stop_cb, userdata);
+  return model_graph.forwarding(training, stop_cb, userdata);
 }
 
 /**
@@ -447,19 +382,9 @@ sharedConstTensors NeuralNetwork::forwarding(sharedConstTensors input,
 sharedConstTensors NeuralNetwork::incremental_forwarding(
   unsigned int from, unsigned int to, bool training,
   std::function<bool(void *userdata)> stop_cb, void *userdata) {
-  std::function<void(std::shared_ptr<LayerNode>, bool)> forwarding_op =
-    [this, from, to, stop_cb, userdata](std::shared_ptr<LayerNode> node,
-                                        bool training) -> void {
-    (void)this;
-    PROFILE_MEM_ANNOTATE("Forwarding for layer: " + node->getName());
 
-    auto f = std::get<0>(node->getExecutionOrder());
-    model_graph.flushCacheExcept(f);
-    node->incremental_forwarding(from, to, training);
-  };
-
-  return model_graph.incremental_forwarding(from, to, training, forwarding_op,
-                                            stop_cb, userdata);
+  return model_graph.incremental_forwarding(from, to, training, stop_cb,
+                                            userdata);
 }
 
 sharedConstTensors
@@ -505,84 +430,6 @@ void NeuralNetwork::backwarding(int iteration,
     node->forwarding(training);
   };
 
-  std::function<bool(std::shared_ptr<LayerNode>, int)> backwarding_op =
-    [this, stop_cb, userdata](std::shared_ptr<LayerNode> node,
-                              int iteration) -> bool {
-    /**
-     * Do not change this order:
-     * 1. calcGradient
-     * 2. calcDerivative
-     * 3. applyGradient
-     * 4. gradientClippingOnLastAccess
-     */
-
-    model_graph.flushCacheExcept(std::get<1>(node->getExecutionOrder()));
-    PROFILE_MEM_ANNOTATE("CalcGradient: " + node->getName());
-
-    bool apply_gradient = true;
-    if (node->getTrainable()) {
-      /** If gradient optimization mode, then calculate gradient first */
-      if (dynamic_training_opt.isGradientMode())
-        node->calcGradient();
-
-      /**
-       * If optimization off, or gradient must be applied, then this will be
-       * true
-       * @todo This apply gradient should be passed to the each weight and later
-       * be queried when updating gradient at once. (after moving apply_gradient
-       * out of this function)
-       *
-       */
-      // auto &layer = node->getObject();
-      // apply_gradient = dynamic_training_opt.checkIfApply(
-      //   layer->getWeightsRef(), layer->net_input[0], layer->net_hidden[0],
-      //   opt, iteration);
-
-      /** If gradient must be applied and its not gradient mode, calculate
-       * gradient
-       */
-      if (!dynamic_training_opt.isGradientMode() && apply_gradient) {
-        node->calcGradient();
-
-        RunLayerContext &rc = node->getRunContext();
-        if (model_graph.isMixedPrecision()) {
-          for (auto w : rc.getWeights()) {
-            if (w->hasGradient())
-              if (!w->getGradientRef().isValid())
-                return false;
-          }
-        }
-      }
-    }
-
-    model_graph.flushCacheExcept(std::get<2>(node->getExecutionOrder()));
-    PROFILE_MEM_ANNOTATE("CalcDerivative: " + node->getName());
-
-    if (stop_cb(userdata)) {
-      return true;
-    }
-
-    if (node->needsCalcDerivative()) {
-      node->calcDerivative();
-    }
-
-    model_graph.flushCacheExcept(std::get<3>(node->getExecutionOrder()));
-    PROFILE_MEM_ANNOTATE("ApplyGradient: " + node->getName());
-
-    if (apply_gradient) {
-      /// Apply gradient only at the end of the last shared weight access
-      model_graph.applyGradients(
-        node.get(), [iteration, opt_ = opt.get()](Weight &w) {
-          w.calcRegularizationGradient();
-          w.calcWeightDecayGradient();
-          RunOptimizerContext opt_context(&w, iteration,
-                                          opt_->getLearningRate(iteration));
-          opt_->applyGradient(opt_context);
-        });
-    }
-    return true;
-  };
-
   std::function<void(Weight &, int)> lazy_apply_grad_op =
     [opt_ = opt.get()](Weight &w, int iteration) -> void {
     w.calcRegularizationGradient();
@@ -596,8 +443,9 @@ void NeuralNetwork::backwarding(int iteration,
   bool ret = false;
 
   while (!ret) {
-    ret = model_graph.backwarding(iteration, forwarding_op, backwarding_op,
-                                  lazy_apply_grad_op, stop_cb, userdata);
+    ret =
+      model_graph.backwarding(iteration, lazy_apply_grad_op, stop_cb, userdata,
+                              dynamic_training_opt.isGradientMode());
   }
 }
 
