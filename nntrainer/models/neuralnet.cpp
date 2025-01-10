@@ -49,6 +49,7 @@
 #include <recurrent_realizer.h>
 #include <remap_realizer.h>
 #include <slice_realizer.h>
+#include <subgraph_scope_realizer.h>
 #include <util_func.h>
 
 #ifdef ENABLE_TFLITE_INTERPRETER
@@ -164,6 +165,7 @@ int NeuralNetwork::compile(ExecutionMode mode) {
 
   std::vector<std::unique_ptr<GraphRealizer>> realizers;
 
+  // realizers.emplace_back(new SubgraphScopeRealizer());
   realizers.emplace_back(new PreviousInputRealizer(
     std::vector<Connection>(input_conn.begin(), input_conn.end())));
   realizers.emplace_back(new MultioutRealizer());

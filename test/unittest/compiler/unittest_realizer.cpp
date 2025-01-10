@@ -26,6 +26,7 @@
 #include <recurrent_realizer.h>
 #include <remap_realizer.h>
 #include <slice_realizer.h>
+#include <subgraph_scope_realizer.h>
 
 #include <compiler_test_util.h>
 #include <nntrainer_test_util.h>
@@ -73,6 +74,60 @@ TEST(FlattenRealizer, flatten_p) {
   };
 
   EXPECT_NO_THROW(realizeAndEqual(fr, {input1}, {expected1, expected2}));
+}
+
+TEST(SubgraphScopeRealizer, subgraph_scope_default_p) {
+  SubgraphScopeRealizer sr;
+
+  std::vector<LayerRepresentation> input = {
+    {"fully_connected", {"name=layer1"}}, {"fully_connected", {"name=layer2"}}};
+  std::vector<LayerRepresentation> expected = {
+    {"fully_connected", {"name=default/layer1"}},
+    {"fully_connected", {"name=default/layer2"}}};
+  EXPECT_NO_THROW(realizeAndEqual(sr, {input}, {expected}));
+}
+
+TEST(SubgraphScopeRealizer, subgraph_scope_default_input_layers_p) {
+  SubgraphScopeRealizer sr;
+
+  std::vector<LayerRepresentation> input = {
+    {"fully_connected", {"name=layer1"}},
+    {"fully_connected", {"name=layer2", "input_layers=layer1"}}};
+  std::vector<LayerRepresentation> expected = {
+    {"fully_connected", {"name=default/layer1"}},
+    {"fully_connected",
+     {"name=default/layer2", "input_layers=default/layer1"}}};
+  EXPECT_NO_THROW(realizeAndEqual(sr, {input}, {expected}));
+}
+
+TEST(SubgraphScopeRealizer, subgraph_scope_p) {
+  SubgraphScopeRealizer sr;
+
+  std::vector<LayerRepresentation> input = {
+    {"fully_connected", {"name=layer1", "graph_scope=graphcpu0"}},
+    {"fully_connected", {"name=layer2", "graph_scope=graphcpu0"}},
+  };
+  std::vector<LayerRepresentation> expected = {
+    {"fully_connected", {"name=graphcpu0/layer1", "graph_scope=graphcpu0"}},
+    {"fully_connected", {"name=graphcpu0/layer2", "graph_scope=graphcpu0"}}};
+  EXPECT_NO_THROW(realizeAndEqual(sr, {input}, {expected}));
+}
+
+TEST(SubgraphScopeRealizer, subgraph_scope_input_layer_with_scope_p) {
+  SubgraphScopeRealizer sr;
+
+  std::vector<LayerRepresentation> input = {
+    {"fully_connected", {"name=layer1", "graph_scope=graphcpu0"}},
+    {"fully_connected",
+     {"name=layer2", "graph_scope=graphcpu0", "input_layers=graphcpu0/layer1"}},
+  };
+
+  std::vector<LayerRepresentation> expected = {
+    {"fully_connected", {"name=graphcpu0/layer1", "graph_scope=graphcpu0"}},
+    {"fully_connected",
+     {"name=graphcpu0/layer2", "graph_scope=graphcpu0",
+      "input_layers=graphcpu0/layer1"}}};
+  EXPECT_NO_THROW(realizeAndEqual(sr, {input}, {expected}));
 }
 
 TEST(RecurrentRealizer, recurrent_no_return_sequence_p) {
