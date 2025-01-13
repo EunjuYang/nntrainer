@@ -27,8 +27,16 @@
 #include <manager.h>
 #include <optimizer_wrapped.h>
 
+#include <common_properties.h>
+#include <compiler_fwd.h>
+#include <model_common_properties.h>
 #include <subgraph_base.h>
 #include <subgraph_cpu.h>
+
+#include <activation_realizer.h>
+#include <flatten_realizer.h>
+#include <multiout_realizer.h>
+#include <previous_input_realizer.h>
 
 namespace nntrainer {
 
@@ -72,8 +80,14 @@ public:
     graph.addNode(SGNODE(sg));
   }
 
+  using RigidPropTypes =
+    std::tuple<props::LossType, std::vector<props::InputConnection>,
+               std::vector<props::LabelLayer>, props::ClipGradByGlobalNorm,
+               props::LossScale>;
+
   /**
-   * @brief     Constructor of NeuralNetwork Graph Class
+   * @brief     Constructor of NeuralNetwork Graph Class, which is called at
+   * compile time.
    * @param[in] enable_swap enable memory swap for tensor
    * @param[in] mode execution mode (default ExecutionMode::TRAIN)
    * @param[in] swap_path memory swap file path when the swap is enabled
@@ -82,7 +96,9 @@ public:
    * @param[in] tensor_type It says weight type and activation type (default
    * FP32-FP32)
    */
-  NetworkGraph(bool enable_swap, ExecutionMode mode = ExecutionMode::TRAIN,
+  NetworkGraph(bool enable_swap, RigidPropTypes &model_props,
+               GraphRepresentation &graph_representation,
+               ExecutionMode mode = ExecutionMode::TRAIN,
                const std::string &swap_path = "", unsigned int lookahead = 0,
                const std::string &tensor_format_ = "NCHW",
                const std::string &tensor_dtype_ = "FP32-FP32") :
@@ -103,13 +119,42 @@ public:
     nan_count = 0;
 
     /**
-     * @note This code written based on the assumption that he graph consists
-     * with only one default subgraph node. It needs to be updated.
+     * @note If no layers are added. Create a default graph for dummy
+     * otherwise, the subgraphs are created based on the graph_representaiton
+     * info.
      */
-    auto sg = std::make_shared<SubGraphCpu>(tensor_manager, mode, lookahead,
-                                            tensor_format_, tensor_dtype_);
-    sg->setName("default");
-    graph.addNode(SGNODE(sg));
+    if (!graph_representation.size()) {
+      auto sg = std::make_shared<SubGraphCpu>(tensor_manager, mode, lookahead,
+                                              tensor_format_, tensor_dtype_);
+      sg->setName("default");
+      graph.addNode(SGNODE(sg));
+      return;
+    }
+
+    std::vector<std::unique_ptr<GraphRealizer>> realizers;
+    auto &input_conn =
+      std::get<std::vector<props::InputConnection>>(model_props);
+    /// @note label layer might need to be treated in the similar way as well
+    realizers.emplace_back(new PreviousInputRealizer(
+      std::vector<Connection>(input_conn.begin(), input_conn.end())));
+    realizers.emplace_back(new MultioutRealizer());
+    realizers.emplace_back(new FlattenRealizer());
+    realizers.emplace_back(new ActivationRealizer());
+
+    for (auto &realizer : realizers) {
+      graph_representation = realizer->realize(graph_representation);
+    }
+
+    for (auto &node : graph_representation) {
+      if (auto &prop = std::get<props::ClipGradByGlobalNorm>(model_props);
+          !prop.empty()) {
+        node->setProperty({"clip_grad_by_norm=" + to_string(prop)});
+      }
+      if (auto &prop = std::get<props::LossScale>(model_props); !prop.empty()) {
+        node->setProperty({"loss_scale=" + to_string(prop)});
+      }
+      addLayer(node);
+    }
   }
 
   /**

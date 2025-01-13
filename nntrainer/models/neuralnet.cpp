@@ -155,56 +155,23 @@ int NeuralNetwork::compile(ExecutionMode mode) {
                             ? std::string()
                             : std::get<props::LossType>(model_props);
 
-  auto &input_conn = std::get<std::vector<props::InputConnection>>(model_props);
-  /// @note label layer might need to be treated in the similar way as well
-
-  /// @todo make NetworkGraph compiled at the construction instead of having
-  /// graph.compile(), neuralnetwork have ownership of list of layer nodes,
-  /// which will be passed at compile time.
-
-  std::vector<std::unique_ptr<GraphRealizer>> realizers;
-
-  realizers.emplace_back(new PreviousInputRealizer(
-    std::vector<Connection>(input_conn.begin(), input_conn.end())));
-  realizers.emplace_back(new MultioutRealizer());
-  realizers.emplace_back(new FlattenRealizer());
-  realizers.emplace_back(new ActivationRealizer());
-
-  for (auto &realizer : realizers) {
-    graph_representation = realizer->realize(graph_representation);
-  }
-
   bool memory_swap = std::get<props::MemorySwap>(model_flex_props);
   const std::string memory_swap_path =
     std::get<props::MemorySwapPath>(model_flex_props);
   unsigned int lookahead =
     std::get<props::MemorySwapLookahead>(model_flex_props);
-
   const std::string tensor_format =
     to_string(std::get<props::TensorFormat>(model_flex_props));
-
   const std::string tensor_type =
     to_string(std::get<props::ModelTensorDataType>(model_flex_props));
-
-  model_graph = NetworkGraph(memory_swap, mode, memory_swap_path, lookahead,
-                             tensor_format, tensor_type);
-
+  model_graph =
+    NetworkGraph(memory_swap, model_props, graph_representation, mode,
+                 memory_swap_path, lookahead, tensor_format, tensor_type);
   model_graph.setMemoryOptimizations(
     std::get<props::MemoryOptimization>(model_flex_props));
-  for (auto &node : graph_representation) {
-    if (auto &prop = std::get<props::ClipGradByGlobalNorm>(model_props);
-        !prop.empty()) {
-      node->setProperty({"clip_grad_by_norm=" + to_string(prop)});
-    }
-    if (auto &prop = std::get<props::LossScale>(model_props); !prop.empty()) {
-      node->setProperty({"loss_scale=" + to_string(prop)});
-    }
-    model_graph.addLayer(node);
-  }
 
   int status = model_graph.compile(loss_type);
   NN_RETURN_STATUS();
-
   compiled = true;
 
   return status;
