@@ -165,7 +165,8 @@ int NeuralNetwork::compile(ExecutionMode mode) {
   const std::string tensor_type =
     to_string(std::get<props::ModelTensorDataType>(model_flex_props));
   model_graph =
-    NetworkGraph(memory_swap, model_props, graph_representation, mode,
+    NetworkGraph(memory_swap, model_props, graph_ln_representation,
+                 graph_representation, subgraph_representation, mode,
                  memory_swap_path, lookahead, tensor_format, tensor_type);
   model_graph.setMemoryOptimizations(
     std::get<props::MemoryOptimization>(model_flex_props));
@@ -569,7 +570,7 @@ void NeuralNetwork::saveModelIni(const std::string &file_path) {
   wrapper.save_ini(file_path);
 
   IniGraphInterpreter interpreter;
-  interpreter.serialize(graph_representation, file_path);
+  interpreter.serialize(graph_ln_representation, file_path);
 }
 
 bool NeuralNetwork::validateInput(sharedConstTensors X) {
@@ -1072,7 +1073,9 @@ void swap(NeuralNetwork &lhs, NeuralNetwork &rhs) {
     swap(lhs.data_buffers, rhs.data_buffers);
     swap(lhs.initialized, rhs.initialized);
     swap(lhs.model_graph, rhs.model_graph);
+    swap(lhs.graph_ln_representation, rhs.graph_ln_representation);
     swap(lhs.graph_representation, rhs.graph_representation);
+    swap(lhs.subgraph_representation, rhs.subgraph_representation);
     swap(lhs.compiled, rhs.compiled);
     swap(lhs.loadedFromConfig, rhs.loadedFromConfig);
   }
@@ -1087,7 +1090,13 @@ int NeuralNetwork::addLayer(NodeType layer) {
 
   /** Insert the layer to the graph */
   model_graph.addLayer(layer);
-  graph_representation.push_back(layer);
+  graph_ln_representation.push_back(layer);
+  const auto &subgraph_name = layer->getGraphName();
+  if (subgraph_representation.find(subgraph_name) ==
+      subgraph_representation.end()) {
+    graph_representation.push_back(subgraph_name);
+  }
+  subgraph_representation[subgraph_name].push_back(layer);
 
   return status;
 }
@@ -1434,7 +1443,7 @@ void NeuralNetwork::exports(const ml::train::ExportMethods &method,
     model_graph.deallocateTensors();
     model_graph.allocateTensors(ExecutionMode::INFERENCE);
     model_graph.setBatchSize(1); // For now, to inference batch size to be 1
-    interpreter.serialize(graph_representation, file_path);
+    interpreter.serialize(graph_ln_representation, file_path);
     model_graph.deallocateTensors();
 #else
     throw std::runtime_error{

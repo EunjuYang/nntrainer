@@ -996,6 +996,29 @@ public:
 };
 
 /**
+ * @brief InputSpec property, this defines connection specification of an input
+ *
+ */
+class GraphInputConnection : public nntrainer::Property<Connection> {
+public:
+  /**
+   * @brief Construct a new Input Spec object
+   *
+   */
+  GraphInputConnection();
+
+  /**
+   * @brief Construct a new Input Spec object
+   *
+   * @param value default value of a input spec
+   */
+  GraphInputConnection(const Connection &value);
+  static constexpr const char *key =
+    "input_subgraphs";                  /**< unique key to access */
+  using prop_tag = connection_prop_tag; /**< property type */
+};
+
+/**
  * @brief HiddenStateActivation Enumeration Information
  *
  */

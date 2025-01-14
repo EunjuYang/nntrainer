@@ -18,8 +18,10 @@
 namespace nntrainer {
 class LayerNode;
 class NetworkGraph;
+class SubGraphBase;
 
-using GraphRepresentation = std::vector<std::shared_ptr<LayerNode>>;
+using GraphRepresentation = std::vector<std::shared_ptr<SubGraphBase>>;
+using GraphLayerNodeRepresentation = std::vector<std::shared_ptr<LayerNode>>;
 using ExecutableGraph = NetworkGraph;
 
 } // namespace nntrainer

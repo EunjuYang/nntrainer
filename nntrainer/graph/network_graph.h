@@ -97,7 +97,10 @@ public:
    * FP32-FP32)
    */
   NetworkGraph(bool enable_swap, RigidPropTypes &model_props,
-               GraphRepresentation &graph_representation,
+               GraphLayerNodeRepresentation &graph_ln_representation,
+               std::vector<std::string> &graph_representation,
+               std::unordered_map<std::string, GraphLayerNodeRepresentation>
+                 &subgraph_representation,
                ExecutionMode mode = ExecutionMode::TRAIN,
                const std::string &swap_path = "", unsigned int lookahead = 0,
                const std::string &tensor_format_ = "NCHW",
@@ -123,7 +126,7 @@ public:
      * otherwise, the subgraphs are created based on the graph_representaiton
      * info.
      */
-    if (!graph_representation.size()) {
+    if (!graph_ln_representation.size()) {
       auto sg = std::make_shared<SubGraphCpu>(tensor_manager, mode, lookahead,
                                               tensor_format_, tensor_dtype_);
       sg->setName("default");
@@ -131,29 +134,39 @@ public:
       return;
     }
 
-    std::vector<std::unique_ptr<GraphRealizer>> realizers;
-    auto &input_conn =
-      std::get<std::vector<props::InputConnection>>(model_props);
-    /// @note label layer might need to be treated in the similar way as well
-    realizers.emplace_back(new PreviousInputRealizer(
-      std::vector<Connection>(input_conn.begin(), input_conn.end())));
-    realizers.emplace_back(new MultioutRealizer());
-    realizers.emplace_back(new FlattenRealizer());
-    realizers.emplace_back(new ActivationRealizer());
+    ///@todo Realize Subgraphs
 
-    for (auto &realizer : realizers) {
-      graph_representation = realizer->realize(graph_representation);
-    }
+    //
+    graph_ln_representation.clear();
+    for (auto &sg_name : graph_representation) {
+      auto sg_representation = subgraph_representation[sg_name];
 
-    for (auto &node : graph_representation) {
-      if (auto &prop = std::get<props::ClipGradByGlobalNorm>(model_props);
-          !prop.empty()) {
-        node->setProperty({"clip_grad_by_norm=" + to_string(prop)});
+      std::vector<std::unique_ptr<GraphRealizer>> realizers;
+      auto &input_conn =
+        std::get<std::vector<props::InputConnection>>(model_props);
+      /// @note label layer might need to be treated in the similar way as well
+      realizers.emplace_back(new PreviousInputRealizer(
+        std::vector<Connection>(input_conn.begin(), input_conn.end())));
+      realizers.emplace_back(new MultioutRealizer());
+      realizers.emplace_back(new FlattenRealizer());
+      realizers.emplace_back(new ActivationRealizer());
+
+      for (auto &realizer : realizers) {
+        sg_representation = realizer->realize(sg_representation);
       }
-      if (auto &prop = std::get<props::LossScale>(model_props); !prop.empty()) {
-        node->setProperty({"loss_scale=" + to_string(prop)});
+
+      for (auto &node : sg_representation) {
+        if (auto &prop = std::get<props::ClipGradByGlobalNorm>(model_props);
+            !prop.empty()) {
+          node->setProperty({"clip_grad_by_norm=" + to_string(prop)});
+        }
+        if (auto &prop = std::get<props::LossScale>(model_props);
+            !prop.empty()) {
+          node->setProperty({"loss_scale=" + to_string(prop)});
+        }
+        addLayer(node);
+        graph_ln_representation.push_back(node);
       }
-      addLayer(node);
     }
   }
 
