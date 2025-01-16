@@ -37,6 +37,7 @@
 #include <ini_interpreter.h>
 #include <ini_wrapper.h>
 #include <input_realizer.h>
+#include <iostream>
 #include <model_loader.h>
 #include <multiout_realizer.h>
 #include <neuralnet.h>
@@ -49,6 +50,7 @@
 #include <recurrent_realizer.h>
 #include <remap_realizer.h>
 #include <slice_realizer.h>
+#include <subgraph.h>
 #include <util_func.h>
 
 #ifdef ENABLE_TFLITE_INTERPRETER
@@ -164,13 +166,19 @@ int NeuralNetwork::compile(ExecutionMode mode) {
     to_string(std::get<props::TensorFormat>(model_flex_props));
   const std::string tensor_type =
     to_string(std::get<props::ModelTensorDataType>(model_flex_props));
-  model_graph =
-    NetworkGraph(memory_swap, model_props, graph_ln_representation,
-                 graph_representation, subgraph_representation, mode,
-                 memory_swap_path, lookahead, tensor_format, tensor_type);
+
+  std::cout << "[log] compile" << std::endl;
+
+  /** rebuild a network graph with model properties and graph representation */
+  model_graph = NetworkGraph(memory_swap, model_props, graph_representation,
+                             graph_ln_representation, mode, memory_swap_path,
+                             lookahead, tensor_format, tensor_type);
+
+  /** set memory optimization */
   model_graph.setMemoryOptimizations(
     std::get<props::MemoryOptimization>(model_flex_props));
 
+  /** compile model_graph */
   int status = model_graph.compile(loss_type);
   NN_RETURN_STATUS();
   compiled = true;
@@ -1088,15 +1096,20 @@ int NeuralNetwork::addLayer(NodeType layer) {
     return ML_ERROR_NOT_SUPPORTED;
   }
 
-  /** Insert the layer to the graph */
-  model_graph.addLayer(layer);
-  graph_ln_representation.push_back(layer);
+  /** Check the subgraph exists and create a new subgraph if not */
   const auto &subgraph_name = layer->getGraphName();
   if (subgraph_representation.find(subgraph_name) ==
       subgraph_representation.end()) {
-    graph_representation.push_back(subgraph_name);
+    const auto &sg = createSubGraph();
+    sg->setName(subgraph_name);
+    graph_representation.push_back(sg);
+    subgraph_representation[subgraph_name] = sg;
   }
-  subgraph_representation[subgraph_name].push_back(layer);
+
+  /** Insert the layer to the graph */
+  model_graph.addLayer(layer);
+  graph_ln_representation.push_back(layer);
+  subgraph_representation[subgraph_name]->addLayer(layer);
 
   return status;
 }

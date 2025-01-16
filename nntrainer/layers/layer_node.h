@@ -1107,5 +1107,11 @@ std::unique_ptr<LayerNode>
 createLayerNode(std::unique_ptr<nntrainer::Layer> &&layer,
                 const std::vector<std::string> &properties);
 
+/**
+ * @brief util function to get compute engine info from props
+ */
+ml::train::LayerComputeEngine
+getComputeEngine(const std::vector<std::string> &props);
+
 } // namespace nntrainer
 #endif // __LAYER_NODE_H__

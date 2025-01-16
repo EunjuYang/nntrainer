@@ -27,6 +27,7 @@
 #include <multiout_layer.h>
 #include <nntrainer_error.h>
 #include <nntrainer_log.h>
+#include <node_exporter.h>
 #include <optimizer_context.h>
 #include <profiler.h>
 #include <util_func.h>
@@ -38,10 +39,13 @@
 namespace nntrainer {
 
 const std::string SubGraphBase::getName() const noexcept {
-  return subgraph_name;
+  auto &name = std::get<props::GraphName>(*subgraph_node_props);
+  return name.empty() ? "default" : name.get();
 }
 
-void SubGraphBase::setName(const std::string &name) { subgraph_name = name; }
+void SubGraphBase::setName(const std::string &name) {
+  setProperty({"graph_name=" + name});
+}
 
 const std::string SubGraphBase::getType() const { return SubGraphBase::type; }
 
@@ -61,6 +65,69 @@ ExecutionOrder SubGraphBase::getExecutionOrder() const { return exec_order; }
 
 void SubGraphBase::setExecutionOrder(ExecutionOrder exec_order_) {
   exec_order = exec_order_;
+}
+
+void SubGraphBase::setProperty(const std::vector<std::string> &properties) {
+  auto left_properties = loadProperties(properties, *subgraph_node_props);
+}
+
+void SubGraphBase::finalize() {
+
+  /** finalize graph_name */
+  if (!std::get<props::GraphName>(*subgraph_node_props).empty()) {
+    subgraph_name = std::get<props::GraphName>(*subgraph_node_props).get();
+  } else {
+    subgraph_name = std::string("default");
+  }
+
+  /** finalize graph exectution engine */
+  if (!std::get<props::ComputeEngine>(*subgraph_node_props).empty()) {
+    compute_engine = std::get<props::ComputeEngine>(*subgraph_node_props).get();
+  }
+}
+
+void SubGraphBase::finalize(const std::vector<std::string> &properties) {
+  setProperty(properties);
+  finalize();
+}
+
+void SubGraphBase::realize(
+  const ModelPropsType &model_props,
+  GraphLayerNodeRepresentation &graph_ln_representation) {
+
+  /** clear subgraph */
+  subgraph = GraphCore();
+
+  /** deep copy the subgraph_representation and clear it */
+  GraphLayerNodeRepresentation subgraph_representation_ =
+    subgraph_representation;
+  subgraph_representation.clear();
+
+  /** apply realizers for subgraph layers */
+  std::vector<std::unique_ptr<GraphRealizer>> realizers;
+  auto &input_conn = std::get<std::vector<props::InputConnection>>(model_props);
+  realizers.emplace_back(new PreviousInputRealizer(
+    std::vector<Connection>(input_conn.begin(), input_conn.end())));
+  realizers.emplace_back(new MultioutRealizer());
+  realizers.emplace_back(new FlattenRealizer());
+  realizers.emplace_back(new ActivationRealizer());
+  for (auto &realizer : realizers) {
+    subgraph_representation_ = realizer->realize(subgraph_representation_);
+  }
+
+  /**  add realized-Layers to subgraph */
+  for (auto &layer : subgraph_representation_) {
+    if (auto &prop = std::get<props::ClipGradByGlobalNorm>(model_props);
+        !prop.empty()) {
+      layer->setProperty({"clip_grad_by_norm=" + to_string(prop)});
+    }
+    if (auto &prop = std::get<props::LossScale>(model_props); !prop.empty()) {
+      layer->setProperty({"loss_scale=" + to_string(prop)});
+    }
+    // add layer to `subgraph` and `subgraph_representation`
+    addLayer(layer);
+    graph_ln_representation.push_back(layer);
+  }
 }
 
 void SubGraphBase::setExecutionOrder() {
@@ -348,6 +415,7 @@ void SubGraphBase::addLayer(std::shared_ptr<LayerNode> layer) {
     throw std::runtime_error("Cannot modify graph after compile");
 
   /** Insert the layer to the graph */
+  subgraph_representation.push_back(layer);
   subgraph.addNode(layer);
 }
 

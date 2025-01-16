@@ -27,22 +27,24 @@
 #include <manager.h>
 #include <optimizer_wrapped.h>
 
+#include <activation_realizer.h>
 #include <common_properties.h>
 #include <compiler_fwd.h>
-#include <model_common_properties.h>
-#include <subgraph_base.h>
-#include <subgraph_cpu.h>
-
-#include <activation_realizer.h>
 #include <flatten_realizer.h>
+#include <model_common_properties.h>
 #include <multiout_realizer.h>
 #include <previous_input_realizer.h>
+#include <subgraph.h>
 
 namespace nntrainer {
 
 #define SGNODE(x) std::static_pointer_cast<SubGraphBase>(x)
 
 using ExecutionMode = ml::train::ExecutionMode;
+using RigidPropTypes =
+  std::tuple<props::LossType, std::vector<props::InputConnection>,
+             std::vector<props::LabelLayer>, props::ClipGradByGlobalNorm,
+             props::LossScale>;
 
 class Connection;
 /**
@@ -80,15 +82,12 @@ public:
     graph.addNode(SGNODE(sg));
   }
 
-  using RigidPropTypes =
-    std::tuple<props::LossType, std::vector<props::InputConnection>,
-               std::vector<props::LabelLayer>, props::ClipGradByGlobalNorm,
-               props::LossScale>;
-
   /**
    * @brief     Constructor of NeuralNetwork Graph Class, which is called at
-   * compile time.
+   *            compile time. The NetworkGraph is initialized with the given
+   *            graph represntation.
    * @param[in] enable_swap enable memory swap for tensor
+   * @param[in] model_props model property set by the neuralnet
    * @param[in] mode execution mode (default ExecutionMode::TRAIN)
    * @param[in] swap_path memory swap file path when the swap is enabled
    * @param[in] tensor_format define tensor format. One of NCHW and NHWC
@@ -96,12 +95,10 @@ public:
    * @param[in] tensor_type It says weight type and activation type (default
    * FP32-FP32)
    */
-  NetworkGraph(bool enable_swap, RigidPropTypes &model_props,
+  NetworkGraph(const bool enable_swap, RigidPropTypes &model_props,
+               GraphRepresentation &graph_representation,
                GraphLayerNodeRepresentation &graph_ln_representation,
-               std::vector<std::string> &graph_representation,
-               std::unordered_map<std::string, GraphLayerNodeRepresentation>
-                 &subgraph_representation,
-               ExecutionMode mode = ExecutionMode::TRAIN,
+               const ExecutionMode mode = ExecutionMode::TRAIN,
                const std::string &swap_path = "", unsigned int lookahead = 0,
                const std::string &tensor_format_ = "NCHW",
                const std::string &tensor_dtype_ = "FP32-FP32") :
@@ -120,61 +117,36 @@ public:
     tensor_dtype(split(tensor_dtype_, getRegex("\\-"))),
     lookahead(lookahead) {
     nan_count = 0;
+    graph_ln_representation.clear();
 
     /**
      * @note If no layers are added. Create a default graph for dummy
      * otherwise, the subgraphs are created based on the graph_representaiton
      * info.
      */
-    if (!graph_ln_representation.size()) {
+    if (!graph_representation.size()) {
       auto sg = std::make_shared<SubGraphCpu>(tensor_manager, mode, lookahead,
                                               tensor_format_, tensor_dtype_);
       sg->setName("default");
       graph.addNode(SGNODE(sg));
+      graph_representation.push_back(sg);
       return;
     }
-
-    ///@todo Realize Subgraphs
-
-    //
-    graph_ln_representation.clear();
-    for (auto &sg_name : graph_representation) {
-      auto sg_representation = subgraph_representation[sg_name];
-
-      std::vector<std::unique_ptr<GraphRealizer>> realizers;
-      auto &input_conn =
-        std::get<std::vector<props::InputConnection>>(model_props);
-      /// @note label layer might need to be treated in the similar way as well
-      realizers.emplace_back(new PreviousInputRealizer(
-        std::vector<Connection>(input_conn.begin(), input_conn.end())));
-      realizers.emplace_back(new MultioutRealizer());
-      realizers.emplace_back(new FlattenRealizer());
-      realizers.emplace_back(new ActivationRealizer());
-
-      for (auto &realizer : realizers) {
-        sg_representation = realizer->realize(sg_representation);
-      }
-
-      for (auto &node : sg_representation) {
-        if (auto &prop = std::get<props::ClipGradByGlobalNorm>(model_props);
-            !prop.empty()) {
-          node->setProperty({"clip_grad_by_norm=" + to_string(prop)});
-        }
-        if (auto &prop = std::get<props::LossScale>(model_props);
-            !prop.empty()) {
-          node->setProperty({"loss_scale=" + to_string(prop)});
-        }
-        addLayer(node);
-        graph_ln_representation.push_back(node);
-      }
-    }
+    realize(model_props, graph_representation, graph_ln_representation);
   }
 
   /**
    * @brief   Destructor of the NeuralNetwork Graph class
-   *
    */
   ~NetworkGraph() = default;
+
+  /**
+   * @brief     Realize the network's internal layers
+   * returns ML_ERROR_NONE on success, error on failure
+   */
+  void realize(const ModelPropsType &model_props,
+               GraphRepresentation &graph_representation,
+               GraphLayerNodeRepresentation &graph_ln_representation);
 
   /**
    * @brief     Compile the graph
@@ -182,6 +154,12 @@ public:
    * returns ML_ERROR_NONE on success, error on failure
    */
   int compile(const std::string &loss_type);
+
+  /**
+   * @brief Create new LayerNode and add into Graph
+   * @param[in] subgraph shared_ptr of SubGraph
+   */
+  void addSubGraph(const std::shared_ptr<SubGraphBase> subgraph);
 
   /**
    * @brief Create new LayerNode and add into Graph
@@ -321,11 +299,11 @@ public:
    * @param[in] user_data user data used for backwarding
    * @param[in] is_grad_opt_mode flag to designate grad_opt_mode (passed from
    *            neuralnet)
-   * @param[in] opt shared ptr of the optimizer used for applyGradients (opt is
-   *            passed from neuralnetwork)
-   * @retval ret it is false then the gradient has NaN valude in mixed precision
-   *         training. If it is, then we need to control the loss scale factor
-   *         and compute again the derivatives.
+   * @param[in] opt shared ptr of the optimizer used for applyGradients (opt
+   * is passed from neuralnetwork)
+   * @retval ret it is false then the gradient has NaN valude in mixed
+   * precision training. If it is, then we need to control the loss scale
+   * factor and compute again the derivatives.
    */
   bool backwarding(
     int iteration,
@@ -414,10 +392,10 @@ public:
   /**
    * @brief initialize network graph
    *
-   * @param model_input_names model input connection if empty list given, all of
-   * node that can be inputs will be identified in the sort order
-   * @param model_label_names model label names if empty list given, all of node
-   * that can be labels will be identified in the sort order
+   * @param model_input_names model input connection if empty list given, all
+   * of node that can be inputs will be identified in the sort order
+   * @param model_label_names model label names if empty list given, all of
+   * node that can be labels will be identified in the sort order
    * @return int ML_ERROR_NONE if successful
    */
   int initialize(ExecutionMode mode = ExecutionMode::TRAIN,
@@ -427,10 +405,10 @@ public:
   /**
    * @brief reinitialize network graph
    *
-   * @param model_input_names model input connection if empty list given, all of
-   * node that can be inputs will be identified in the sort order
-   * @param model_label_names model label names if empty list given, all of node
-   * that can be labels will be identified in the sort order
+   * @param model_input_names model input connection if empty list given, all
+   * of node that can be inputs will be identified in the sort order
+   * @param model_label_names model label names if empty list given, all of
+   * node that can be labels will be identified in the sort order
    * @return int ML_ERROR_NONE if successful
    */
   int reinitialize(const std::vector<Connection> &model_input_names = {},
@@ -461,7 +439,8 @@ public:
   /**
    * @brief Allocate memory for all the managed tensors
    *
-   * @param[in] training If true, initialize derivates/gradients, else, do not.
+   * @param[in] training If true, initialize derivates/gradients, else, do
+   * not.
    */
   void allocateTensors(ExecutionMode exec_mode_);
 
@@ -621,11 +600,11 @@ private:
     *backward_iter_end;        /**< inclusive end node of the valid backward
                                   execution when initialized, nodes after this node
                                   does not required backwarding thus making it noop */
-  LayerNode *forward_iter_end; /**< inclusive end node of the forward execution
-                                  when initialize */
+  LayerNode *forward_iter_end; /**< inclusive end node of the forward
+                                  execution when initialize */
 
-  /// @note *_list and *_dims must be synced at all times. Consider put it as a
-  /// structure
+  /// @note *_list and *_dims must be synced at all times. Consider put it as
+  /// a structure
   std::vector<std::string> label_list;  /**< identifier for the model labels */
   std::vector<std::string> input_list;  /**< identifier for the model inputs */
   std::vector<std::string> output_list; /**< identifier for the model outputs */

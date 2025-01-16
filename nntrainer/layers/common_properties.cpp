@@ -90,6 +90,11 @@ InputConnection::InputConnection() : nntrainer::Property<Connection>() {}
 InputConnection::InputConnection(const Connection &value) :
   nntrainer::Property<Connection>(value) {} /**< default value if any */
 
+GraphInputConnection::GraphInputConnection() :
+  nntrainer::Property<Connection>() {}
+GraphInputConnection::GraphInputConnection(const Connection &value) :
+  nntrainer::Property<Connection>(value) {} /**< default value if any */
+
 Epsilon::Epsilon(float value) { set(value); }
 
 bool Epsilon::isValid(const float &value) const { return value > 0.0f; }

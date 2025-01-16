@@ -986,12 +986,12 @@ public:
 
 /**
  * @brief Subgraph name, where the layer belongs to, with a default value
- * `default_graph`
+ * `default`
  */
 class GraphName : public Name {
 public:
   GraphName(const std::string &value = "default") : Name(value) {}
-  static constexpr const char *key = "graph_scope";
+  static constexpr const char *key = "graph_name";
   using prop_tag = str_prop_tag;
 };
 
@@ -1014,7 +1014,7 @@ public:
    */
   GraphInputConnection(const Connection &value);
   static constexpr const char *key =
-    "input_subgraphs";                  /**< unique key to access */
+    "input_graphs";                     /**< unique key to access */
   using prop_tag = connection_prop_tag; /**< property type */
 };
 

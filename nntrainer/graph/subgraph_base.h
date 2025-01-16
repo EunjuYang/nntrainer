@@ -22,17 +22,32 @@
 #include <stack>
 #include <vector>
 
+#include <common_properties.h>
+#include <compiler_fwd.h>
 #include <graph_core.h>
 #include <graph_node.h>
 #include <layer_node.h>
 #include <manager.h>
+#include <model_common_properties.h>
 #include <optimizer_wrapped.h>
+
+#include <activation_realizer.h>
+#include <flatten_realizer.h>
+#include <multiout_realizer.h>
+#include <previous_input_realizer.h>
 
 namespace nntrainer {
 
 using ExecutionMode = ml::train::ExecutionMode;
 using ExecutionOrder = GraphNode::ExecutionOrder;
 using PrintPreset = LayerNode::PrintPreset;
+using SubGraphPropsType =
+  std::tuple<props::GraphName, std::vector<props::GraphInputConnection>,
+             props::ComputeEngine>;
+using ModelPropsType =
+  std::tuple<props::LossType, std::vector<props::InputConnection>,
+             std::vector<props::LabelLayer>, props::ClipGradByGlobalNorm,
+             props::LossScale>;
 
 class Connection;
 
@@ -43,6 +58,36 @@ class Connection;
 class SubGraphBase : public GraphNode {
 
 public:
+  /**
+   * @brief     Constructor of NeuralNetwork Graph Class
+   * @param[in] mode execution mode (default ExecutionMode::TRAIN)
+   * @param[in] lookahead lookahead for swap (default 0)
+   * @param[in] tensor_format define tensor format. One of NCHW and NHWC
+   * (default NCHW)
+   * @param[in] tensor_type It says weight type and activation type (default
+   * FP32-FP32)
+   */
+  SubGraphBase(ExecutionMode mode = ExecutionMode::TRAIN,
+               unsigned int lookahead = 0,
+               const std::string &tensor_format_ = "NCHW",
+               const std::string &tensor_dtype_ = "FP32-FP32") :
+    subgraph_node_props(
+      new SubGraphPropsType(props::GraphName(), {}, props::ComputeEngine())),
+    tensor_manager(),
+    subgraph(),
+    compiled(false),
+    batch_size(0),
+    graph_exec_end(0),
+    backward_iter_end(nullptr),
+    forward_iter_end(nullptr),
+    optimize_memory(true),
+    exec_mode(mode),
+    tensor_format(tensor_format_),
+    tensor_dtype(split(tensor_dtype_, getRegex("\\-"))),
+    lookahead(lookahead) {
+    nan_count = 0;
+  }
+
   /**
    * @brief     Constructor of NeuralNetwork Graph Class
    * @param[in] enable_swap enable memory swap for tensor
@@ -58,6 +103,8 @@ public:
                unsigned int lookahead = 0,
                const std::string &tensor_format_ = "NCHW",
                const std::string &tensor_dtype_ = "FP32-FP32") :
+    subgraph_node_props(
+      new SubGraphPropsType(props::GraphName(), {}, props::ComputeEngine())),
     tensor_manager(tm),
     subgraph(),
     compiled(false),
@@ -141,6 +188,47 @@ public:
    * respectively
    */
   void setExecutionOrder(ExecutionOrder exec_order_) override;
+
+  /**
+   * @brief setGraphInfo, which is used to update SubGraph's graph info.
+   *        The graph info should be synchronized with the network_graph's.
+   */
+  void setGraphInfo(std::shared_ptr<Manager> &tm,
+                    const ExecutionMode exec_mode_ = ExecutionMode::TRAIN,
+                    const unsigned int lookahead_ = 0,
+                    const std::string &tensor_format_ = "NCHW",
+                    const std::string &tensor_dtype_ = "FP32-FP32") {
+
+    tensor_manager = tm;
+    exec_mode = exec_mode_;
+    tensor_format = tensor_format_;
+    tensor_dtype = split(tensor_dtype_, getRegex("\\-"));
+    lookahead = lookahead_;
+  }
+
+  /**
+   * @brief set Properties for the subgraph
+   */
+  void setProperty(const std::vector<std::string> &properties);
+
+  /**
+   * @brief finalize
+   */
+  void finalize();
+
+  /**
+   * @brief finalize
+   * @param properties
+   */
+  void finalize(const std::vector<std::string> &properties);
+
+  /**
+   * @brief     Realize the layers in the subgraph
+   * @param[in] model_props model properties
+   * returns ML_ERROR_NONE on success, error on failure
+   */
+  void realize(const ModelPropsType &model_props,
+               GraphLayerNodeRepresentation &graph_ln_representation);
 
   /**
    * @brief     Compile the subgraph
@@ -597,12 +685,15 @@ public:
   inline static const std::string type = "subgraph";
 
 protected:
+  std::unique_ptr<SubGraphPropsType> subgraph_node_props;
   std::string subgraph_name;
   std::map<std::string, std::string> sub_in_out; /** This is map to identify
                    input and output layer name of subgraph */
   std::shared_ptr<Manager> tensor_manager;       /**< tensors manager */
 
-  GraphCore subgraph;          /** core graph object */
+  GraphCore subgraph; /** core graph object */
+  GraphLayerNodeRepresentation subgraph_representation;
+
   bool compiled;               /**< if the subgraph is compiled */
   unsigned int batch_size;     /**< current batch_size */
   unsigned int graph_exec_end; /**< Inclusive, last execution order of the
@@ -644,6 +735,9 @@ protected:
   unsigned int lookahead;
   ExecutionOrder exec_order; /**< order/location of execution for this subgraph
                                    in forward and backwarding operations */
+  ml::train::LayerComputeEngine compute_engine =
+    ml::train::LayerComputeEngine::CPU; /**< compute engine information about
+                                           the compute backend being used */
 
   /**
    * @brief     check if subgraph is ready to compile.

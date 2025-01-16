@@ -680,9 +680,11 @@ private:
 
   NetworkGraph model_graph; /** Network Model Graph */
 
-  std::vector<std::string>
+  GraphRepresentation
     graph_representation; /** Unsorted subgraph representation */
-  std::unordered_map<std::string, GraphLayerNodeRepresentation>
+  // std::vector<std::string> graph_representation; /** Unsorted subgraph
+  // representation */
+  std::unordered_map<std::string, std::shared_ptr<SubGraphBase>>
     subgraph_representation; /** Unsorted layer node representations for each
                                 subgraph */
   GraphLayerNodeRepresentation
