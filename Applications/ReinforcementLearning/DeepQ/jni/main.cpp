@@ -160,7 +160,7 @@ static int rangeRandom(int Min, int Max) {
  * @param[in] Q Experience Replay Queue
  * @retval    Experience vector
  */
-static std::vector<Experience> getBatchSizeData(std::deque<Experience> Q) {
+static std::vector<Experience> getBatchSizeData(std::deque<Experience> &Q) {
   int Max = (BATCH_SIZE > Q.size()) ? BATCH_SIZE : Q.size();
   int Min = (BATCH_SIZE < Q.size()) ? BATCH_SIZE : Q.size();
 
