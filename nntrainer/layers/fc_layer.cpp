@@ -162,6 +162,19 @@ void FullyConnectedLayer::finalize(InitLayerContext &context) {
       context.requestTensor(loraOut_dim, "hidden_lora", Initializer::NONE, true,
                             TensorLifespan::FORWARD_FUNC_LIFESPAN);
   }
+
+  ///@todo this quantizaer should be moved to tensor, not layer!
+  switch (context.getWeightDataType()) {
+  case ml::train::TensorDim::DataType::QINT4:
+  case ml::train::TensorDim::DataType::QINT8:
+  case ml::train::TensorDim::DataType::QINT16:
+    quantizer =
+      Quantization::createQuantizer(nntrainer::QScheme::PER_TENSOR_AFFINE);
+    break;
+  default:
+    quantizer = nullptr;
+    break;
+  }
 }
 
 void FullyConnectedLayer::exportTo(
@@ -189,19 +202,9 @@ void FullyConnectedLayer::forwarding(RunLayerContext &context, bool training) {
   Tensor &hidden_ = context.getOutput(SINGLE_INOUT_IDX);
   Tensor &input_ = context.getInput(SINGLE_INOUT_IDX);
 
-  if (weight.getDataType() == nntrainer::Tdatatype::QINT4 ||
-      weight.getDataType() == nntrainer::Tdatatype::QINT8) {
-    Tdatatype dtype = input_.getDataType();
-
-    Tensor weight_(
-      {{weight.batch(), weight.channel(), weight.height(), weight.width()},
-       {weight.getFormat(), dtype}},
-      true);
-
-    unsigned int axis =
-      context.getWeightObject(weight_idx[FCParams::weight]).getOutputAxis();
-
-    // weight.dequantize(weight_, axis);
+  ///@todo This dequantization action should be moved to tensor.dot()
+  if (quantizer != nullptr) {
+    Tensor weight_ = quantizer->dequantize(weight, input_.getDataType());
     input_.dot(weight_, hidden_, false, false);
   } else {
     input_.dot(weight, hidden_, false, false);
