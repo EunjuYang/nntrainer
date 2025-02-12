@@ -76,11 +76,11 @@ std::vector<LayerHandle> createGraph() {
   layers.push_back(createLayer(
     "input", {withKey("name", "input0"), withKey("input_shape", "1:1:1024")}));
 
-  for (int i = 0; i < 28; i++) {
+  for (int i = 0; i < 100; i++) {
     layers.push_back(createLayer(
       "fully_connected",
       {withKey("unit", 1024), withKey("weight_initializer", "xavier_uniform"),
-       withKey("bias_initializer", "zeros")}));
+       withKey("disable_bias", "true")}));
   }
 
   return layers;
@@ -97,39 +97,28 @@ ModelHandle create() {
   return model;
 }
 
-void createAndRun(unsigned int epochs, unsigned int batch_size,
-                  std::string swap_on_off, std::string look_ahaed) {
+double createAndRun(unsigned int batch_size, std::string model_type,
+                    std::string swap_on_off, std::string look_ahaed) {
 
   // setup model
   ModelHandle model = create();
   model->setProperty({withKey("batch_size", batch_size),
-                      withKey("epochs", epochs),
-                      withKey("model_tensor_type", "FP16-FP16")});
-
+                      withKey("model_tensor_type", model_type)});
   model->setProperty({withKey("memory_swap", swap_on_off)});
   if (swap_on_off == "true") {
     model->setProperty({withKey("memory_swap_lookahead", look_ahaed)});
   }
 
-  auto optimizer = ml::train::createOptimizer("sgd", {"learning_rate=0.001"});
-  int status = model->setOptimizer(std::move(optimizer));
-  if (status) {
-    throw std::invalid_argument("failed to set optimizer!");
-  }
-
-  status = model->compile(ml::train::ExecutionMode::INFERENCE);
-  if (status) {
+  if (model->compile(ml::train::ExecutionMode::INFERENCE)) {
     throw std::invalid_argument("model compilation failed!");
   }
 
-  status = model->initialize(ml::train::ExecutionMode::INFERENCE);
-  if (status) {
+  if (model->initialize(ml::train::ExecutionMode::INFERENCE)) {
     throw std::invalid_argument("model initialization failed!");
   }
 
-  unsigned int feature_size = 1 * 1 * 1024;
-
-  float input[1 * 1024];
+  const unsigned int feature_size = 1 * 1 * 1024;
+  float input[feature_size];
 
   for (unsigned int j = 0; j < feature_size; ++j)
     input[j] = (j / (float)feature_size);
@@ -139,28 +128,20 @@ void createAndRun(unsigned int epochs, unsigned int batch_size,
 
   in.push_back(input);
 
-  auto start = std::chrono::system_clock::now();
-  std::time_t start_time = std::chrono::system_clock::to_time_t(start);
-  std::cout << "started computation at " << std::ctime(&start_time)
-            << std::endl;
-
   // to test asynch fsu, we do need save the model weight data in file
-  std::string filePath = "./simplefc_weight_fp16_fp16_100.bin";
-  if (access(filePath.c_str(), F_OK) == 0) {
-    model->load(filePath);
-  } else {
+  const std::string filePath = "./simplefc_weight_" + model_type + ".bin";
+  if (access(filePath.c_str(), F_OK) != 0)
     model->save(filePath, ml::train::ModelFormat::MODEL_FORMAT_BIN);
-    model->load(filePath);
-  }
 
+  ///////////////////////////////////////////////////
+  auto start = std::chrono::system_clock::now();
+  model->load(filePath);
   answer = model->inference(1, in);
-
   auto end = std::chrono::system_clock::now();
-  std::chrono::duration<double> elapsed_seconds = end - start;
-  std::time_t end_time = std::chrono::system_clock::to_time_t(end);
-  std::cout << "finished computation at " << std::ctime(&end_time)
-            << "elapsed time: " << elapsed_seconds.count() << "s\n";
+  ///////////////////////////////////////////////////
   in.clear();
+
+  return std::chrono::duration<double>(end - start).count();
 }
 
 int main(int argc, char *argv[]) {
@@ -173,21 +154,38 @@ int main(int argc, char *argv[]) {
 
   std::string swap_on = "true";
   std::string look_ahead = "1";
-  if (argc < 3) {
-    std::cerr << "need more argc, executable swap_on look_ahead" << std::endl;
-  }
+  std::string weight_dtype = "FP16";
+  std::string tensor_dtype = "FP16";
+  unsigned int num_tests = 1;
 
-  swap_on = argv[1];    // true or false
-  look_ahead = argv[2]; // int
+  if (argc > 1)
+    num_tests = std::stoi(argv[1]);
+  if (argc > 2)
+    swap_on = argv[2]; 
+  if (argc > 3)
+    look_ahead = argv[3]; 
+  if (argc > 4)
+    weight_dtype = argv[4];
+  if (argc > 5)
+    tensor_dtype = argv[5];
 
+  std::string model_type = weight_dtype + "-" + tensor_dtype;
+
+  std::cout << "============================" << std::endl;
+  std::cout << "num_tests : " << num_tests << std::endl;
   std::cout << "swap_on : " << swap_on << std::endl;
   std::cout << "look_ahead : " << look_ahead << std::endl;
+  std::cout << "model_type : " << model_type << std::endl;
+  std::cout << "============================" << std::endl;
 
   unsigned int batch_size = 1;
   unsigned int epoch = 1;
+  double time = 0;
 
   try {
-    createAndRun(epoch, batch_size, swap_on, look_ahead);
+    for (unsigned int i = 0; i < num_tests; ++i)
+      time += createAndRun(batch_size, model_type, swap_on, look_ahead);
+    std::cout << time / num_tests << std::endl;
   } catch (const std::exception &e) {
     std::cerr << "uncaught error while running! details: " << e.what()
               << std::endl;
@@ -198,6 +196,5 @@ int main(int argc, char *argv[]) {
   std::cout << *listener;
 #endif
 
-  int status = EXIT_SUCCESS;
-  return status;
+  return EXIT_SUCCESS;
 }
