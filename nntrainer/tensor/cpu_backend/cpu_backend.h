@@ -14,6 +14,7 @@
 #ifndef __CPU_BACKEND_H__
 #define __CPU_BACKEND_H__
 #ifdef __cplusplus
+
 #if defined(__aarch64__) || defined(__ARM_ARCH_7A__) ||                        \
   defined(__ANDROID__) || defined(__arm__)
 #include <arm_compute_backend.h>
