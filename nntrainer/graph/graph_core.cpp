@@ -13,6 +13,7 @@
  */
 
 #include <algorithm>
+#include <queue>
 #include <sstream>
 
 #include <graph_core.h>
@@ -72,35 +73,65 @@ void GraphCore::topologicalSortUtil(
 }
 
 void GraphCore::topologicalSort() {
-  std::vector<std::list<std::shared_ptr<GraphNode>>> adj;
-  std::stack<std::shared_ptr<GraphNode>> dfs_stack;
-  std::vector<bool> visited(node_list.size(), false);
 
-  makeAdjacencyList(adj);
-  Sorted.clear();
+  size_t num_nodes = node_list.size();
+  std::unordered_map<std::string, size_t> in_degree;
 
-  // Quite likely this is not needed - verify this
-  // TODO : After make node list of graph, we have to find root. (That means it
-  // should be the only one input for now.). Need to support multiple input and
-  // support search.
+  // Initialize in_degree map
+  for (const auto &node : node_list) {
+    in_degree[node->getName()] = 0;
+  }
 
-  for (unsigned int i = 0; i < adj.size(); ++i) {
-    if (visited[i] == false) {
-      topologicalSortUtil(adj, i, visited, dfs_stack);
+  for (const auto &node : node_list) {
+    for (const auto &input_name : node->getInputConnections()) {
+      if (in_degree.count(input_name) == 0) {
+        throw std::invalid_argument("Input node not found in graph: " +
+                                    input_name);
+      }
+      in_degree[node->getName()]++;
     }
   }
 
-  while (dfs_stack.empty() == false) {
-    Sorted.push_back(dfs_stack.top());
-    dfs_stack.pop();
+  // Initialize queue with nodes having in-degree 0 (i.e., finding root nodes)
+  std::queue<std::shared_ptr<GraphNode>> q;
+  for (const auto &node : node_list) {
+    if (in_degree[node->getName()] == 0) {
+      q.push(node);
+    }
   }
 
-  if (Sorted.size() != node_list.size())
-    throw std::runtime_error("Internal error in topologicalSort");
-  unsigned int idx = 0;
-  for (auto &n : Sorted) {
-    sorted_node_map[n->getName()] = idx;
-    idx++;
+  // Kahn's algorithm for topological sorting
+  Sorted.clear();
+  sorted_node_map.clear();
+
+  while (!q.empty()) {
+    auto current = q.front();
+    q.pop();
+
+    Sorted.push_back(current);
+    sorted_node_map[current->getName()] = Sorted.size() - 1;
+
+    for (const auto &out_name : current->getOutputConnections()) {
+      if (in_degree.count(out_name) == 0) {
+        throw std::runtime_error("Invalid output connection: " + out_name);
+      }
+      in_degree[out_name]--;
+      if (in_degree[out_name] == 0) {
+        q.push(getNode(out_name));
+      }
+    }
+  }
+
+  // Check for cycle
+  if (Sorted.size() != num_nodes) {
+    std::ostringstream oss;
+    oss << "Cycle detected. Unsorted nodes: ";
+    for (const auto &node : node_list) {
+      if (sorted_node_map.count(node->getName()) == 0) {
+        oss << node->getName() << " ";
+      }
+    }
+    throw std::runtime_error(oss.str());
   }
 }
 
