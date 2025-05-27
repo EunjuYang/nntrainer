@@ -39,6 +39,7 @@ void Engine::add_default_object(Engine &eg) {
 
   nntrainer::AppContext *app_context = new nntrainer::AppContext();
   app_context->Global();
+  init_backend();
 
   eg.registerContext("cpu", app_context);
 

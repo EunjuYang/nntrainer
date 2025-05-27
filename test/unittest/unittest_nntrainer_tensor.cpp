@@ -864,6 +864,174 @@ TEST(nntrainer_Tensor, QTensor_16_p) {
   EXPECT_NE(q6_k_tensor.getData<uint8_t>(), nullptr);
 }
 
+#ifdef ENABLE_GGML
+TEST(nntrainer_Tensor, QTensor_17_p) {
+
+  const unsigned int M = 1;
+  uint32_t K = 3072;   // height
+  uint32_t N = 105900; // width
+
+  nntrainer::init_backend();
+
+  // Float tensor
+  std::vector<float> weight = generate_random_vector<float>(K * N, -0.05, 0.05);
+  std::vector<float> activation =
+    generate_random_vector<float>(M * K, -0.05, 0.05);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {ml::train::TensorDim::Format::NCHW, ml::train::TensorDim::DataType::FP32});
+  nntrainer::Tensor A_fp32(
+    1, 1, M, K,
+    {ml::train::TensorDim::Format::NCHW, ml::train::TensorDim::DataType::FP32});
+  nntrainer::Tensor W_q6k(
+    1, 1, N, K, {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q6_K});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  for (uint32_t m = 0; m < M; ++m)
+    for (uint32_t k = 0; k < K; ++k)
+      A_fp32.setValue(0, 0, m, k, activation[m * K + k]);
+
+  nntrainer::Tensor out_t = A_fp32.dot(W_fp32, false, false);
+
+  // Now create a quantized tensor, which dimension is same with W_fp32
+  // but its data should be transposed
+  nntrainer::Tensor W_fp32_t = W_fp32.transpose("0:2:1");
+  const float *src_ptr = W_fp32_t.getData<float>();
+  std::vector<float> ref_dst(M * N);
+  EXPECT_NO_THROW(nntrainer::quantize_q6_K(
+    src_ptr, (void *)W_q6k.getData<uint8_t>(), N, K, nullptr));
+  nntrainer::gemm_q6_K(M, N, K, A_fp32.getData<float>(), K,
+                       (void *)W_q6k.getData<char>(), N, ref_dst.data(), N);
+
+  nntrainer::Tensor out_q6k_t(
+    1, 1, M, N, {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+  A_fp32.dot(W_q6k, out_q6k_t);
+
+  const float eps = 1e-4;
+  auto mean_squared_error =
+    mse<float, float>(out_t.getData<float>(), ref_dst.data(), M * N);
+  EXPECT_NEAR(mean_squared_error, 0., eps * M * N);
+
+  for (int i = 0; i < 10; ++i) {
+    std::cout << "gemm_out[" << i << "] = " << ref_dst[i] << std::endl;
+    std::cout << "out_t[" << i << "] = " << out_t.getData<float>()[i]
+              << std::endl;
+  }
+  auto mean_squared_error_tensor = mse<float, float>(
+    out_t.getData<float>(), out_q6k_t.getData<float>(), M * N);
+  EXPECT_NEAR(mean_squared_error_tensor, 0., eps * M * N);
+
+  for (int i = 0; i < 10; ++i) {
+    std::cout << "gemm_out[" << i << "] = " << out_t.getData<float>()[i]
+              << std::endl;
+    std::cout << "out_t[" << i << "] = " << out_q6k_t.getData<float>()[i]
+              << std::endl;
+  }
+}
+
+TEST(nntrainer_Tensor, Q_Tensor_18_p) {
+
+  const unsigned int M = 1;
+  uint32_t K = 105900; // height
+  uint32_t N = 3072;   // width
+
+  // Float tensor
+  std::vector<float> weight = generate_random_vector<float>(K * N);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {ml::train::TensorDim::Format::NCHW, ml::train::TensorDim::DataType::FP32});
+  nntrainer::Tensor W_dequant(
+    1, 1, K, N,
+    {ml::train::TensorDim::Format::NCHW, ml::train::TensorDim::DataType::FP32});
+  nntrainer::Tensor W_q6k(
+    1, 1, K, N,
+    {ml::train::TensorDim::Format::NCHW, ml::train::TensorDim::DataType::Q6_K});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  nntrainer::quantize_q6_K((const float *)W_fp32.getData(),
+                           (void *)W_q6k.getData<uint8_t>(), N, K, nullptr);
+
+  nntrainer::dequantize_row_q6_K(W_q6k.getData<uint8_t>(), W_dequant.getData(),
+                                 K * N);
+
+  auto mean_squared_error =
+    mse<float, float>(W_fp32.getData(), W_dequant.getData(), N * K);
+  auto cos_sim =
+    cosine_similarity(W_dequant.getData(), W_fp32.getData(), N * K);
+
+  std::cout << W_fp32 << std::endl;
+  std::cout << W_dequant << std::endl;
+  const float eps = 1e-5;
+  ///@todo Find proper metric and standard to assess
+  EXPECT_NEAR(mean_squared_error, 0, eps * K * N);
+  EXPECT_NEAR(cos_sim, 0., eps * K * N);
+}
+
+TEST(nntrainer_Tensor, QTensor_19_p) {
+
+  const unsigned int M = 1;
+  uint32_t K = 3072;
+  uint32_t N = 105900;
+
+  std::vector<float> weight = generate_random_vector<float>(K * N, -0.05, 0.05);
+  std::vector<float> activation =
+    generate_random_vector<float>(M * K, -0.05, 0.05);
+
+  nntrainer::Tensor E_fp32(
+    1, 1, N, K,
+    {ml::train::TensorDim::Format::NCHW, ml::train::TensorDim::DataType::FP32});
+  nntrainer::Tensor L_fp32(
+    1, 1, K, N,
+    {ml::train::TensorDim::Format::NCHW, ml::train::TensorDim::DataType::FP32});
+  nntrainer::Tensor A_fp32(
+    1, 1, M, K,
+    {ml::train::TensorDim::Format::NCHW, ml::train::TensorDim::DataType::FP32});
+  nntrainer::Tensor W_q6k(
+    1, 1, N, K, {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q6_K});
+
+  for (uint32_t n = 0; n < N; ++n)
+    for (uint32_t k = 0; k < K; ++k)
+      E_fp32.setValue(0, 0, n, k, weight[n * K + k]);
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      L_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  for (uint32_t m = 0; m < M; ++m)
+    for (uint32_t k = 0; k < K; ++k)
+      A_fp32.setValue(0, 0, m, k, activation[m * K + k]);
+
+  std::vector<float> ref_dst(M * N);
+  EXPECT_NO_THROW(nntrainer::quantize_q6_K(
+    E_fp32.getData<float>(), (void *)W_q6k.getData<uint8_t>(), N, K, nullptr));
+
+  nntrainer::Tensor out = A_fp32.dot(L_fp32, false, false);
+  nntrainer::Tensor out_q6k(
+    1, 1, M, N, {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+  A_fp32.dot(W_q6k, out_q6k);
+
+  const float eps = 1e-4;
+  auto mean_squared_error =
+    mse<float, float>(out.getData<float>(), out_q6k.getData<float>(), M * N);
+  EXPECT_NEAR(mean_squared_error, 0., eps * M * N);
+
+  for (int i = 0; i < 10; ++i) {
+    std::cout << "gemm_out[" << i << "] = " << out_q6k.getData<float>()[i]
+              << std::endl;
+    std::cout << "out_t[" << i << "] = " << out.getData<float>()[i]
+              << std::endl;
+  }
+}
+#endif
+
 TEST(nntrainer_Tensor, copy_01_n) {
   int batch = 3;
   int channel = 1;
