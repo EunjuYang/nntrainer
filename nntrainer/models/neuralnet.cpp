@@ -712,6 +712,7 @@ void NeuralNetwork::load(const std::string &file_path,
     auto model_file = checkedOpenStream<std::ifstream>(
       (v.size() == 2) ? v[1] : v[0], std::ios::in | std::ios::binary);
 
+    /**
     if (exec_mode == ml::train::ExecutionMode::INFERENCE) {
       std::vector<std::future<void>> futures;
       for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
@@ -727,11 +728,11 @@ void NeuralNetwork::load(const std::string &file_path,
       for (auto &f : futures)
         f.get();
     } else {
-      for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
-           ++iter) {
-        (*iter)->read(model_file, false, exec_mode, fsu_mode);
-      }
+     */
+    for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); ++iter) {
+      (*iter)->read(model_file, false, exec_mode, fsu_mode);
     }
+    // }
     try {
       /// this is assuming that the failure is allowed at the end of the file
       /// read. so, after this line, additional read shouldn't be called
