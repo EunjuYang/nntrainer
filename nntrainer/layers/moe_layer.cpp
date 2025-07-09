@@ -22,11 +22,13 @@
  */
 
 #include <acti_func.h>
+#include <algorithm>
 #include <cmath>
 #include <moe_layer.h>
 #include <node_exporter.h>
 #include <omp.h>
 #include <stdexcept>
+#include <string>
 
 namespace nntrainer {
 
@@ -43,7 +45,12 @@ MoELayer::MoELayer() :
   expert_down_proj_indices({}),
   gate_idx(std::numeric_limits<unsigned>::max()),
   router_logits_idx(std::numeric_limits<unsigned>::max()),
-  expert_mask_idx(std::numeric_limits<unsigned>::max()) {}
+  temp_gate_out_indices(MAX_THREADS, std::numeric_limits<unsigned>::max()),
+  temp_up_out_indices(MAX_THREADS, std::numeric_limits<unsigned>::max()),
+  temp_intermediate_indices(MAX_THREADS, std::numeric_limits<unsigned>::max()),
+  temp_expert_input_indices(MAX_THREADS, std::numeric_limits<unsigned>::max()),
+  temp_expert_output_indices(MAX_THREADS,
+                             std::numeric_limits<unsigned>::max()) {}
 
 void MoELayer::finalize(InitLayerContext &context) {
 
@@ -143,89 +150,242 @@ void MoELayer::finalize(InitLayerContext &context) {
     {total_tokens, 1, 1, num_experts}, "router_logits", Initializer::NONE,
     false, TensorLifespan::FORWARD_FUNC_LIFESPAN);
 
-  // Expert mask: [num_experts, batch*seq]
-  expert_mask_idx = context.requestTensor(
-    {num_experts, 1, topk, total_tokens}, "expert_mask", Initializer::ZEROS,
-    false, TensorLifespan::FORWARD_FUNC_LIFESPAN);
+  // Pre-allocate temporary tensors for efficient computation
+  // Maximum tokens any single expert might process
+  const unsigned max_expert_tokens = total_tokens;
+
+  // Determine actual number of threads to use (avoid over-allocation)
+  MAX_THREADS = std::min(MAX_THREADS, omp_get_max_threads());
+  MAX_THREADS =
+    std::min(MAX_THREADS, std::max(1, static_cast<int>(num_experts)));
+
+  // Allocate one set of temporary tensors for each thread
+  for (int thread_id = 0; thread_id < MAX_THREADS; ++thread_id) {
+    temp_gate_out_indices[thread_id] = context.requestTensor(
+      {max_expert_tokens, 1, 1, intermediate_size},
+      "temp_gate_out_" + std::to_string(thread_id), Initializer::NONE, false,
+      TensorLifespan::FORWARD_FUNC_LIFESPAN);
+
+    temp_up_out_indices[thread_id] = context.requestTensor(
+      {max_expert_tokens, 1, 1, intermediate_size},
+      "temp_up_out_" + std::to_string(thread_id), Initializer::NONE, false,
+      TensorLifespan::FORWARD_FUNC_LIFESPAN);
+
+    temp_intermediate_indices[thread_id] = context.requestTensor(
+      {max_expert_tokens, 1, 1, intermediate_size},
+      "temp_intermediate_" + std::to_string(thread_id), Initializer::NONE,
+      false, TensorLifespan::FORWARD_FUNC_LIFESPAN);
+
+    temp_expert_input_indices[thread_id] = context.requestTensor(
+      {max_expert_tokens, 1, 1, hidden_size},
+      "temp_expert_input_" + std::to_string(thread_id), Initializer::NONE,
+      false, TensorLifespan::FORWARD_FUNC_LIFESPAN);
+
+    temp_expert_output_indices[thread_id] = context.requestTensor(
+      {max_expert_tokens, 1, 1, hidden_size},
+      "temp_expert_output_" + std::to_string(thread_id), Initializer::NONE,
+      false, TensorLifespan::FORWARD_FUNC_LIFESPAN);
+  }
+
+  // Initialize routing cache
+  routing_cache.expert_token_indices.resize(num_experts);
+  routing_cache.expert_token_weights.resize(num_experts);
+  routing_cache.token_expert_counts.resize(total_tokens);
 }
 
 void MoELayer::forwarding(RunLayerContext &context, bool training) {
   Tensor &input = context.getInput(SINGLE_INOUT_IDX);
   Tensor &output = context.getOutput(SINGLE_INOUT_IDX);
-
   Tensor &router_logits = context.getTensor(router_logits_idx);
-  Tensor &expert_mask = context.getTensor(expert_mask_idx);
 
   const unsigned batch_size = input.batch();
   const unsigned seq_len = input.height();
   const unsigned hidden_size = input.width();
   const unsigned total_tokens = batch_size * seq_len;
 
-  // reshape input: [B,1,S,H] -> [B*S,1,1,H]
+  // reshape : [B,1,S,H] -> [B*S,1,1,H]
   input.reshape({total_tokens, 1, 1, hidden_size});
-
-  // reshape output: [B,1,S,H] -> [B*S,1,1,H]
   output.reshape({total_tokens, 1, 1, hidden_size});
   output.setZero();
 
-  // routing
+  // Compute router logits and apply softmax
   Tensor &gate_weights = context.getWeight(gate_idx);
   input.dot(gate_weights, router_logits);
   router_logits.apply(ActiFunc::softmax<float>, router_logits);
-  auto topk_result = router_logits.topK(topk);
-  auto topk_values = std::get<0>(topk_result);
-  auto topk_indices = std::get<1>(topk_result);
 
-  const uint32_t *indices_data = topk_indices.getData<uint32_t>();
-#pragma omp parallel for collapse(2)
-  for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
-    for (int k = 0; k < static_cast<int>(topk); ++k) {
-      expert_mask.setValue(indices_data[i * topk + k], 0, k, i, 1.0f);
-    }
-  }
+  // Compute optimized routing information
+  compute_routing_optimized(router_logits, routing_cache);
 
-// expert forwarding
-#pragma omp parallel
-  {
-#pragma omp for schedule(dynamic)
-    for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
-         ++expert_idx) {
-      std::vector<unsigned> token_indices;
+  // Get raw data pointers for efficient access
+  const float *input_data = input.getData<float>();
+  float *output_data = output.getData<float>();
 
-      // get token indices for this expert
-      for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
-        for (int k = 0; k < static_cast<int>(topk); ++k) {
-          if (expert_mask.getValue<float>(expert_idx, 0, k, i) > 0.5f) {
-            token_indices.push_back(i);
-          }
-        }
-      }
-      if (token_indices.empty())
-        continue;
+// Process experts in parallel
+#pragma omp parallel for schedule(dynamic)
+  for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
+       ++expert_idx) {
+    const auto &token_indices = routing_cache.expert_token_indices[expert_idx];
+    const auto &token_weights = routing_cache.expert_token_weights[expert_idx];
 
-      // slicing and computing expert forward pass
-      Tensor expert_output = compute_expert_forward(
-        input.getBatchSlice(token_indices),
-        topk_values.getBatchSlice(token_indices),
-        context.getWeight(expert_gate_proj_indices[expert_idx]),
-        context.getWeight(expert_up_proj_indices[expert_idx]),
-        context.getWeight(expert_down_proj_indices[expert_idx]));
+    if (token_indices.empty())
+      continue;
 
-// acuumulate expert output into the main output tensor
-#pragma omp critical
-      {
-        for (int i = 0; i < static_cast<int>(token_indices.size()); ++i) {
-          unsigned idx = token_indices[i];
-          auto tgt_output = output.getBatchSlice(idx, 1);
-          // tgt_output.add_i(expert_output.getBatchSlice(i, 1));
-          tgt_output.copyData(expert_output.getBatchSlice(i, 1));
-        }
-      }
-    }
+    // Use optimized expert forward computation
+    compute_expert_forward_optimized(
+      input_data, output_data, token_indices, token_weights,
+      context.getWeight(expert_gate_proj_indices[expert_idx]),
+      context.getWeight(expert_up_proj_indices[expert_idx]),
+      context.getWeight(expert_down_proj_indices[expert_idx]), context);
   }
 
   // reshape output: [B*S,1,1,H] -> [B,1,S,H]
   output.reshape({batch_size, 1, seq_len, hidden_size});
+}
+
+void MoELayer::compute_routing_optimized(const Tensor &routing_logits,
+                                         RoutingInfo &routing_info) {
+  const unsigned total_tokens = routing_logits.batch();
+  const float *logits_data = routing_logits.getData<float>();
+
+  // Clear previous routing information
+  for (auto &indices : routing_info.expert_token_indices) {
+    indices.clear();
+  }
+  for (auto &weights : routing_info.expert_token_weights) {
+    weights.clear();
+  }
+  std::fill(routing_info.token_expert_counts.begin(),
+            routing_info.token_expert_counts.end(), 0);
+
+  // Reserve space to avoid frequent reallocations
+  const size_t estimated_tokens_per_expert =
+    (total_tokens * topk) / num_experts + 1;
+  for (unsigned int i = 0; i < num_experts; ++i) {
+    routing_info.expert_token_indices[i].reserve(estimated_tokens_per_expert);
+    routing_info.expert_token_weights[i].reserve(estimated_tokens_per_expert);
+  }
+
+  // Process tokens efficiently without creating intermediate tensors
+  for (unsigned int token_idx = 0; token_idx < total_tokens; ++token_idx) {
+    const float *token_logits = logits_data + token_idx * num_experts;
+
+    // Find top-k experts for this token using partial sort
+    std::vector<std::pair<float, unsigned int>> expert_probs;
+    expert_probs.reserve(num_experts);
+
+    for (unsigned int expert_idx = 0; expert_idx < num_experts; ++expert_idx) {
+      expert_probs.emplace_back(token_logits[expert_idx], expert_idx);
+    }
+
+    // Partial sort to get top-k
+    std::nth_element(
+      expert_probs.begin(), expert_probs.begin() + topk, expert_probs.end(),
+      [](const auto &a, const auto &b) { return a.first > b.first; });
+
+    // Add token to selected experts
+    for (unsigned int k = 0; k < topk; ++k) {
+      const unsigned int expert_idx = expert_probs[k].second;
+      const float weight = expert_probs[k].first;
+
+      routing_info.expert_token_indices[expert_idx].push_back(token_idx);
+      routing_info.expert_token_weights[expert_idx].push_back(weight);
+    }
+
+    routing_info.token_expert_counts[token_idx] = topk;
+  }
+}
+
+void MoELayer::compute_expert_forward_optimized(
+  const float *input_data, float *output_data,
+  const std::vector<unsigned int> &token_indices,
+  const std::vector<float> &token_weights, const Tensor &gate_project,
+  const Tensor &up_project, const Tensor &down_project,
+  RunLayerContext &context) {
+
+  const unsigned int num_tokens = token_indices.size();
+  if (num_tokens == 0)
+    return;
+
+  const unsigned int hidden_size = gate_project.height();
+  const unsigned int intermediate_size = gate_project.width();
+
+  // Get thread-specific temporary tensors to avoid race conditions
+  const int thread_id = omp_get_thread_num();
+  const int safe_thread_id =
+    std::min(thread_id, static_cast<int>(temp_gate_out_indices.size() - 1));
+
+  Tensor &temp_gate_out =
+    context.getTensor(temp_gate_out_indices[safe_thread_id]);
+  Tensor &temp_up_out = context.getTensor(temp_up_out_indices[safe_thread_id]);
+  Tensor &temp_intermediate =
+    context.getTensor(temp_intermediate_indices[safe_thread_id]);
+  Tensor &temp_expert_input =
+    context.getTensor(temp_expert_input_indices[safe_thread_id]);
+  Tensor &temp_expert_output =
+    context.getTensor(temp_expert_output_indices[safe_thread_id]);
+
+  // Resize temporary tensors for current batch
+  temp_gate_out.reshape({num_tokens, 1, 1, intermediate_size});
+  temp_up_out.reshape({num_tokens, 1, 1, intermediate_size});
+  temp_intermediate.reshape({num_tokens, 1, 1, intermediate_size});
+  temp_expert_input.reshape({num_tokens, 1, 1, hidden_size});
+  temp_expert_output.reshape({num_tokens, 1, 1, hidden_size});
+
+  // Get raw data pointers
+  float *gate_out_data = temp_gate_out.getData<float>();
+  float *up_out_data = temp_up_out.getData<float>();
+  float *intermediate_data = temp_intermediate.getData<float>();
+  float *expert_input_data = temp_expert_input.getData<float>();
+  float *expert_output_data = temp_expert_output.getData<float>();
+
+  const float *gate_proj_data = gate_project.getData<float>();
+  const float *up_proj_data = up_project.getData<float>();
+  const float *down_proj_data = down_project.getData<float>();
+
+  // Gather input tokens efficiently
+#pragma omp parallel for
+  for (int i = 0; i < static_cast<int>(num_tokens); ++i) {
+    const unsigned int token_idx = token_indices[i];
+    const float *src = input_data + token_idx * hidden_size;
+    float *dst = expert_input_data + i * hidden_size;
+    std::memcpy(dst, src, hidden_size * sizeof(float));
+  }
+
+  temp_expert_input.dot(gate_project, temp_gate_out);
+  temp_expert_input.dot(up_project, temp_up_out);
+
+// Apply activation function (silu)
+#pragma omp parallel for
+  for (int i = 0; i < static_cast<int>(num_tokens); ++i) {
+    for (unsigned int j = 0; j < intermediate_size; ++j) {
+      const unsigned int idx = i * intermediate_size + j;
+      const float gate_value = gate_out_data[idx];
+      // SiLU activatieon: x * sigmoid(x)
+      const float activated = gate_value / (1.0f + std::exp(-gate_value));
+      intermediate_data[idx] = activated * up_out_data[idx];
+    }
+  }
+
+  // Down projection: intermediate * down_proj -> expert_output
+  temp_intermediate.dot(down_project, temp_expert_output);
+
+  // Apply routing weights and scatter to output (with atomic operations for
+  // thread safety)
+#pragma omp parallel for
+  for (int i = 0; i < static_cast<int>(num_tokens); ++i) {
+    const unsigned int token_idx = token_indices[i];
+    const float weight = token_weights[i];
+
+    const float *src = expert_output_data + i * hidden_size;
+    float *dst = output_data + token_idx * hidden_size;
+
+    // Apply weight and accumulate to output
+    for (unsigned int j = 0; j < hidden_size; ++j) {
+      const float weighted_val = src[j] * weight;
+#pragma omp atomic
+      dst[j] += weighted_val;
+    }
+  }
 }
 
 inline Tensor MoELayer::compute_expert_forward(const Tensor &input,

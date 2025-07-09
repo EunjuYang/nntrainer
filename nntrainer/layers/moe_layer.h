@@ -25,6 +25,25 @@
 #include <layer_impl.h>
 
 namespace nntrainer {
+
+/**
+ * @brief Structure to represent routing information for efficient processing
+ */
+struct RoutingInfo {
+  std::vector<std::vector<unsigned int>>
+    expert_token_indices; /**< token indices per expert> */
+  std::vector<std::vector<float>>
+    expert_token_weights; /**< token weights per expert */
+  std::vector<unsigned int>
+    token_expert_counts; /**< number of experts per token */
+
+  void clear() {
+    expert_token_indices.clear();
+    expert_token_weights.clear();
+    token_expert_counts.clear();
+  }
+};
+
 /**
  * @class   MoELayer
  * @brief   Mixture of Expert Layer
@@ -119,7 +138,44 @@ private:
 
   // Intermediate tensor indices
   unsigned int router_logits_idx;
-  unsigned int expert_mask_idx;
+
+  // Thread-local pre-allocated tensors for efficient computation (one set per
+  // thread)
+  int MAX_THREADS = 64;
+  std::vector<unsigned int> temp_gate_out_indices;
+  std::vector<unsigned int> temp_up_out_indices;
+  std::vector<unsigned int> temp_intermediate_indices;
+  std::vector<unsigned int> temp_expert_input_indices;
+  std::vector<unsigned int> temp_expert_output_indices;
+
+  // Routing information cache
+  RoutingInfo routing_cache;
+
+  /**
+   * @brief Efficient expert forward computation usinge pre-allocated tensors
+   * @param input_data Raw input data pointer
+   * @param output_data Raw output data pointer
+   * @param token_indices Token indices for this expert
+   * @param token_weights Token weights for this expert
+   * @param gate_proj Gate projection weight tensor
+   * @param up_proj Up projecteion weight tensor
+   * @param down_proj Down projection weight tensor
+   * @param context Run context for accessing temporary tensros
+   */
+  void compute_expert_forward_optimized(
+    const float *input_data, float *output_data,
+    const std::vector<unsigned int> &token_indices,
+    const std::vector<float> &token_weights, const Tensor &gate_project,
+    const Tensor &up_project, const Tensor &down_project,
+    RunLayerContext &context);
+
+  /**
+   * @brief Optimized routing computation that avoids expert mask tensor
+   * @param router_logits Router logits tensor
+   * @param routing_info Output routing information
+   */
+  void compute_routing_optimized(const Tensor &routing_logits,
+                                 RoutingInfo &routing_info);
 
   inline Tensor compute_expert_forward(const Tensor &input,
                                        const Tensor &weights,
