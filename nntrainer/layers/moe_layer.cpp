@@ -114,17 +114,17 @@ void MoELayer::finalize(InitLayerContext &context) {
     is_nchw ? 0b0011 : 0b0101);
 
   for (unsigned int i = 0; i < num_experts; ++i) {
-    // Gate projection
-    expert_gate_proj_indices.push_back(context.requestWeight(
-      expert_gate_dim, weight_initializer, weight_regularizer,
-      weight_regularizer_constant, weight_decay,
-      "expert_gate_" + std::to_string(i), true));
-
     // Up projection
     expert_up_proj_indices.push_back(context.requestWeight(
       expert_gate_dim, // Same dimensions as gate projection
       weight_initializer, weight_regularizer, weight_regularizer_constant,
       weight_decay, "expert_up_" + std::to_string(i), false));
+
+    // Gate projection
+    expert_gate_proj_indices.push_back(context.requestWeight(
+      expert_gate_dim, weight_initializer, weight_regularizer,
+      weight_regularizer_constant, weight_decay,
+      "expert_gate_" + std::to_string(i), true));
 
     // Down projection
     expert_down_proj_indices.push_back(context.requestWeight(
@@ -191,12 +191,15 @@ void MoELayer::forwarding(RunLayerContext &context, bool training) {
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
          ++expert_idx) {
       std::vector<unsigned> token_indices;
+      std::vector<float> topk_values_vector;
 
       // get token indices for this expert
       for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
         for (int k = 0; k < static_cast<int>(topk); ++k) {
           if (expert_mask.getValue<float>(expert_idx, 0, k, i) > 0.5f) {
             token_indices.push_back(i);
+            topk_values_vector.push_back(
+              topk_values.getValue<float>(i, 0, 0, k));
           }
         }
       }
@@ -205,8 +208,7 @@ void MoELayer::forwarding(RunLayerContext &context, bool training) {
 
       // slicing and computing expert forward pass
       Tensor expert_output = compute_expert_forward(
-        input.getBatchSlice(token_indices),
-        topk_values.getBatchSlice(token_indices),
+        input.getBatchSlice(token_indices), topk_values_vector,
         context.getWeight(expert_gate_proj_indices[expert_idx]),
         context.getWeight(expert_up_proj_indices[expert_idx]),
         context.getWeight(expert_down_proj_indices[expert_idx]));
@@ -228,11 +230,9 @@ void MoELayer::forwarding(RunLayerContext &context, bool training) {
   output.reshape({batch_size, 1, seq_len, hidden_size});
 }
 
-inline Tensor MoELayer::compute_expert_forward(const Tensor &input,
-                                               const Tensor &weights,
-                                               const Tensor &gate_proj,
-                                               const Tensor &up_proj,
-                                               const Tensor &down_proj) {
+inline Tensor MoELayer::compute_expert_forward(
+  const Tensor &input, const std::vector<float> &weights,
+  const Tensor &gate_proj, const Tensor &up_proj, const Tensor &down_proj) {
 
   const unsigned tokens = input.batch();
   const unsigned hidden_size = input.width();
@@ -261,7 +261,7 @@ inline Tensor MoELayer::compute_expert_forward(const Tensor &input,
 
   // Weight by routing scores (broadcast multiply)
   for (unsigned i = 0; i < tokens; ++i) {
-    float weight_val = weights.getValue(i, 0, 0, 0);
+    float weight_val = weights[i];
     auto weighted_expert_output = expert_output.getBatchSlice(i, 1);
     weighted_expert_output.multiply_i(weight_val);
   }
@@ -271,7 +271,118 @@ inline Tensor MoELayer::compute_expert_forward(const Tensor &input,
 
 void MoELayer::incremental_forwarding(RunLayerContext &context,
                                       unsigned int from, unsigned int to,
-                                      bool training) {}
+                                      bool training) {
+  if (from) {
+    NNTR_THROW_IF(to - from != 1, std::invalid_argument)
+      << "incremental step size is not 1";
+    from = 0;
+    to = 1;
+  }
+
+  Tensor &input_ = context.getInput(SINGLE_INOUT_IDX);
+  Tensor &output_ = context.getOutput(SINGLE_INOUT_IDX);
+
+  Tensor &router_logits_ = context.getTensor(router_logits_idx);
+  Tensor &expert_mask = context.getTensor(expert_mask_idx);
+
+  TensorDim input_step_dim = input_.getDim();
+  TensorDim output_step_dim = output_.getDim();
+  TensorDim router_logits_step_dim = router_logits_.getDim();
+
+  input_step_dim.batch(1);
+  output_step_dim.batch(1);
+  router_logits_step_dim.batch(to - from);
+
+  input_step_dim.height(to - from);
+  output_step_dim.height(to - from);
+
+  for (unsigned int b = 0; b < input_.batch(); ++b) {
+
+    auto input = input_.getSharedDataTensor(
+      input_step_dim, b * input_step_dim.getFeatureLen(), true);
+    auto output = output_.getSharedDataTensor(
+      output_step_dim, b * output_step_dim.getFeatureLen(), true);
+    auto router_logits =
+      router_logits_.getSharedDataTensor(router_logits_step_dim, 0, true);
+
+    const unsigned batch_size = input.batch();
+    const unsigned seq_len = input.height();
+    const unsigned hidden_size = input.width();
+    const unsigned total_tokens = batch_size * seq_len;
+
+    // reshape input: [B,1,S,H] -> [B*S,1,1,H]
+    input.reshape({total_tokens, 1, 1, hidden_size});
+
+    // reshape output: [B,1,S,H] -> [B*S,1,1,H]
+    output.reshape({total_tokens, 1, 1, hidden_size});
+    output.setZero();
+    expert_mask.setZero();
+
+    // routing
+    Tensor &gate_weights = context.getWeight(gate_idx);
+    input.dot(gate_weights, router_logits);
+    router_logits.apply(ActiFunc::softmax<float>, router_logits);
+    auto topk_result = router_logits.topK(topk);
+    auto topk_values = std::get<0>(topk_result);
+    auto topk_indices = std::get<1>(topk_result);
+
+    // norm_topk_prob
+    topk_values.divide_i(topk_values.sum(3));
+
+    const uint32_t *indices_data = topk_indices.getData<uint32_t>();
+    // #pragma omp parallel for collapse(2)
+    for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
+      for (int k = 0; k < static_cast<int>(topk); ++k) {
+        expert_mask.setValue(indices_data[i * topk + k], 0, k, i, 1.0f);
+      }
+    }
+
+    // expert forwarding
+    // #pragma omp parallel
+    {
+      // #pragma omp for schedule(dynamic)
+      for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
+           ++expert_idx) {
+        std::vector<unsigned> token_indices;
+        std::vector<float> topk_values_vector;
+
+        // get token indices for this expert
+        for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
+          for (int k = 0; k < static_cast<int>(topk); ++k) {
+            if (expert_mask.getValue<float>(expert_idx, 0, k, i) > 0.5f) {
+              token_indices.push_back(i);
+              topk_values_vector.push_back(
+                topk_values.getValue<float>(i, 0, 0, k));
+            }
+          }
+        }
+        if (token_indices.empty())
+          continue;
+
+        // slicing and computing expert forward pass
+        Tensor expert_output = compute_expert_forward(
+          input.getBatchSlice(token_indices), topk_values_vector,
+          context.getWeight(expert_gate_proj_indices[expert_idx]),
+          context.getWeight(expert_up_proj_indices[expert_idx]),
+          context.getWeight(expert_down_proj_indices[expert_idx]));
+
+        // acuumulate expert output into the main output tensor
+        // #pragma omp critical
+        {
+          for (int i = 0; i < static_cast<int>(token_indices.size()); ++i) {
+            unsigned idx = token_indices[i];
+            auto tgt_output = output.getBatchSlice(idx, 1);
+            tgt_output.add_i(expert_output.getBatchSlice(i, 1));
+            // tgt_output.copyData(expert_output.getBatchSlice(i, 1));
+          }
+        }
+      }
+    }
+
+    // reshape output: [B*S,1,1,H] -> [B,1,S,H]
+    output.reshape({batch_size, 1, seq_len, hidden_size});
+  }
+}
 
 void MoELayer::setProperty(const std::vector<std::string> &values) {
   auto remain_props = loadProperties(values, moe_props);

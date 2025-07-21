@@ -121,11 +121,12 @@ private:
   unsigned int router_logits_idx;
   unsigned int expert_mask_idx;
 
-  inline Tensor compute_expert_forward(const Tensor &input,
-                                       const Tensor &weights,
-                                       const Tensor &gate_proj_weight,
-                                       const Tensor &up_proj_weight,
-                                       const Tensor &down_proj_weight);
+  inline nntrainer::Tensor
+  compute_expert_forward(const nntrainer::Tensor &input,
+                         const std::vector<float> &weights,
+                         const nntrainer::Tensor &gate_proj_weight,
+                         const nntrainer::Tensor &up_proj_weight,
+                         const nntrainer::Tensor &down_proj_weight);
 };
 } // namespace nntrainer
 
