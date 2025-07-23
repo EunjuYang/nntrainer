@@ -12,93 +12,101 @@ causallm_moe_layer_src_abs = [meson.current_source_dir() / 'qwen_moe_layer.cpp']
 
 openmp_dep = dependency('openmp')
 
-causallm_rms_norm = shared_library(
-    'rms_norm_layer', 
-    causallm_rms_norm_src_abs, 
-    include_directories: causallm_layer_inc, 
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep],
-    install: true,
-    install_dir: application_install_dir
-)
-causallm_rms_norm_dep = declare_dependency(
-    link_with: causallm_rms_norm,
-    include_directories: causallm_layer_inc
-)
+    if get_option('platform') != 'android'
+    causallm_rms_norm = shared_library(
+        'rms_norm_layer', 
+        causallm_rms_norm_src_abs, 
+        include_directories: causallm_layer_inc, 
+        dependencies: [nntrainer_dep, nntrainer_ccapi_dep],
+        install: true,
+        install_dir: application_install_dir
+    )
+    causallm_rms_norm_dep = declare_dependency(
+        link_with: causallm_rms_norm,
+        include_directories: causallm_layer_inc
+    )
 
-causallm_swiglu = shared_library(
-    'swiglu_layer',
-    causallm_swiglu_src_abs,
-    include_directories: causallm_layer_inc,
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep],
-    install: true,
-    install_dir: application_install_dir
-)
-causallm_swiglu_dep = declare_dependency(
-    link_with: causallm_swiglu,
-    include_directories: causallm_layer_inc
-)
+    causallm_swiglu = shared_library(
+        'swiglu_layer',
+        causallm_swiglu_src_abs,
+        include_directories: causallm_layer_inc,
+        dependencies: [nntrainer_dep, nntrainer_ccapi_dep],
+        install: true,
+        install_dir: application_install_dir
+    )
+    causallm_swiglu_dep = declare_dependency(
+        link_with: causallm_swiglu,
+        include_directories: causallm_layer_inc
+    )
 
-causallm_tie_word_embedding = shared_library(
-    'tie_word_embedding_layer',
-    causallm_tie_word_embedding_src_abs,
-    include_directories: causallm_layer_inc,
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
-    install: true,
-    install_dir: application_install_dir
-)
-causallm_tie_word_embedding_dep = declare_dependency(
-    link_with: causallm_tie_word_embedding,
-    include_directories: causallm_layer_inc
-)
+    causallm_tie_word_embedding = shared_library(
+        'tie_word_embedding_layer',
+        causallm_tie_word_embedding_src_abs,
+        include_directories: causallm_layer_inc,
+        dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
+        install: true,
+        install_dir: application_install_dir
+    )
+    causallm_tie_word_embedding_dep = declare_dependency(
+        link_with: causallm_tie_word_embedding,
+        include_directories: causallm_layer_inc
+    )
 
-causallm_mha_core = shared_library(
-    'mha_core_layer',
-    causallm_mha_core_abs,
-    include_directories: causallm_layer_inc,
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
-    install: true,
-    install_dir: application_install_dir
-)
-causallm_mha_core_dep = declare_dependency(
-    link_with: causallm_mha_core,
-    include_directories: causallm_layer_inc
-)
+    causallm_mha_core = shared_library(
+        'mha_core_layer',
+        causallm_mha_core_abs,
+        include_directories: causallm_layer_inc,
+        dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
+        install: true,
+        install_dir: application_install_dir
+    )
+    causallm_mha_core_dep = declare_dependency(
+        link_with: causallm_mha_core,
+        include_directories: causallm_layer_inc
+    )
 
-causallm_embedding_layer = shared_library(
-    'embedding_layer',
-    causallm_embedding_src_abs,
-    include_directories: causallm_layer_inc,
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
-    install: true,
-    install_dir: application_install_dir
-)
-causallm_embedding_layer_dep = declare_dependency(
-    link_with: causallm_embedding_layer,
-    include_directories: causallm_layer_inc
-)
+    causallm_embedding_layer = shared_library(
+        'embedding_layer',
+        causallm_embedding_src_abs,
+        include_directories: causallm_layer_inc,
+        dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
+        install: true,
+        install_dir: application_install_dir
+    )
+    causallm_embedding_layer_dep = declare_dependency(
+        link_with: causallm_embedding_layer,
+        include_directories: causallm_layer_inc
+    )
 
-causallm_reshaped_rms_norm = shared_library(
-    'reshaped_rms_norm_layer', 
-    causallm_reshaped_rms_norm_src_abs, 
-    include_directories: causallm_layer_inc, 
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep],
-    install: true,
-    install_dir: application_install_dir
-)
-causallm_reshaped_rms_norm_dep = declare_dependency(
-    link_with: causallm_reshaped_rms_norm,
-    include_directories: causallm_layer_inc
-)
+    causallm_reshaped_rms_norm = shared_library(
+        'reshaped_rms_norm_layer', 
+        causallm_reshaped_rms_norm_src_abs, 
+        include_directories: causallm_layer_inc, 
+        dependencies: [nntrainer_dep, nntrainer_ccapi_dep],
+        install: true,
+        install_dir: application_install_dir
+    )
+    causallm_reshaped_rms_norm_dep = declare_dependency(
+        link_with: causallm_reshaped_rms_norm,
+        include_directories: causallm_layer_inc
+    )
 
-causallm_moe_layer = shared_library(
-    'qwen_moe_layer',
-    causallm_moe_layer_src_abs,
-    include_directories: causallm_layer_inc,
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
-    install: true,
-    install_dir: application_install_dir
-)
-causallm_moe_layer_dep = declare_dependency(
-    link_with: causallm_moe_layer,
-    include_directories: causallm_layer_inc
-)
+    causallm_moe_layer = shared_library(
+        'qwen_moe_layer',
+        causallm_moe_layer_src_abs,
+        include_directories: causallm_layer_inc,
+        dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
+        install: true,
+        install_dir: application_install_dir
+    )
+    causallm_moe_layer_dep = declare_dependency(
+        link_with: causallm_moe_layer,
+        include_directories: causallm_layer_inc
+    )
+
+else
+    causallm_layers_dir = meson.current_build_dir() / 'libs' / 'arm64-v8a'
+    run_command('mkdir', '-p', causallm_layers_dir, check: true)
+    run_command('cp', '-r', meson.current_source_dir() / 'res', meson.current_build_dir(), check: true)
+    subdir('jni')
+endif

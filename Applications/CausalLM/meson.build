@@ -1,10 +1,10 @@
-causallm_src = [
+causallm_src_abs = [
     meson.current_source_dir() / 'causal_lm.cpp',
     meson.current_source_dir() / 'huggingface_tokenizer.cpp',
     meson.current_source_dir() / 'llm_util.cpp',
 ]
 
-causallm_src += [
+causallm_src_abs += [
     meson.current_source_dir() / 'qwen3_causallm.cpp',
     meson.current_source_dir() / 'qwen3_moe_causallm.cpp'
 ]
@@ -18,6 +18,8 @@ causallm_inc = [include_directories('.')]
 
 # Build layer dependency
 subdir('layers')
+
+if get_option('platform') != 'android'
 
 # causallm_layer_dependencies
 causallm_layer_dependencies = [
@@ -34,7 +36,7 @@ tokenizer_dependencies = []
 tokenizer_path = meson.current_source_dir() / 'lib' / 'libtokenizers_c.a'
 
 causallm = shared_library('causallm',
-    causallm_src,
+    causallm_src_abs,
     dependencies: [
         nntrainer_dep,
         nntrainer_ccapi_dep,
@@ -59,3 +61,9 @@ e = executable('nntr_causallm',
     include_directories: causallm_inc,
     dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
 )
+
+else
+    causallm_dir = meson.current_build_dir() / 'libs' / 'causallm'
+    run_command('mkdir', '-p', causallm_dir, check: true)
+
+endif
