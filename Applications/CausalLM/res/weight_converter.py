@@ -20,12 +20,14 @@ import time
 from functools import partial
 import io
 import struct
+import os
+import psutil
 
 # Try to import CuPy for GPU acceleration
 try:
     import cupy as cp
     GPU_AVAILABLE = True
-    print("GPU acceleration enabled with CuPy")
+    print("GPU acceleration available with CuPy")
 except ImportError:
     GPU_AVAILABLE = False
     print("CuPy not available. Using CPU-only optimizations")
@@ -35,532 +37,559 @@ try:
     from numba import jit, prange, njit
     import numba
     NUMBA_AVAILABLE = True
-    print("Numba JIT compilation enabled")
+    print("Numba JIT compilation available")
 except ImportError:
     NUMBA_AVAILABLE = False
     print("Numba not available. Using pure NumPy")
 
+# GGML constants
+QK4_0 = 32
+QK6_K = 256
+
+# Optimized memory pool for NumPy
+if not GPU_AVAILABLE:
+    # Pre-allocate memory pools to reduce allocation overhead
+    MEMORY_POOL_SIZE = 1024 * 1024 * 100  # 100MB pool
+    try:
+        np_mempool = np.empty(MEMORY_POOL_SIZE, dtype=np.uint8)
+    except:
+        np_mempool = None
+
+def get_optimal_num_workers():
+    """Get optimal number of workers based on system resources"""
+    cpu_count = mp.cpu_count()
+    memory_gb = psutil.virtual_memory().total / (1024**3)
+    
+    # Use fewer workers if memory is limited
+    if memory_gb < 16:
+        return min(cpu_count // 2, 4)
+    elif memory_gb < 32:
+        return min(cpu_count - 2, 8)
+    else:
+        return min(cpu_count - 2, 16)
+
+# Numba-accelerated functions if available
+if NUMBA_AVAILABLE:
+    @njit(parallel=True, fastmath=True)
+    def quantize_q4_0_block_numba(values, absmax, scale):
+        """Numba-accelerated Q4_0 block quantization"""
+        quantized = np.empty(32, dtype=np.int8)
+        
+        for i in prange(32):
+            if absmax < 1e-8:
+                quantized[i] = 0
+            else:
+                v = values[i] / scale
+                # Round to nearest integer
+                q = int(np.round(v))
+                # Clamp to [-8, 7]
+                if q > 7:
+                    q = 7
+                elif q < -8:
+                    q = -8
+                quantized[i] = q
+        
+        return quantized
+    
+    @njit(parallel=True, fastmath=True)
+    def pack_nibbles_numba(quantized):
+        """Numba-accelerated nibble packing"""
+        packed = np.empty(16, dtype=np.uint8)
+        
+        for i in prange(16):
+            low = quantized[i * 2] + 8
+            high = quantized[i * 2 + 1] + 8
+            packed[i] = (low & 0xF) | ((high & 0xF) << 4)
+        
+        return packed
+
+def quantize_row_q4_0_ggml(tensor):
+    """GGML Q4_0 quantization - optimized version"""
+    if tensor.dim() == 1:
+        tensor = tensor.unsqueeze(0)
+    
+    batch_size, n = tensor.shape
+    result = []
+    
+    # Convert to numpy for faster processing
+    if tensor.is_cuda and GPU_AVAILABLE:
+        data = cp.asarray(tensor.cpu().numpy())
+    else:
+        data = tensor.numpy()
+    
+    for b in range(batch_size):
+        row_data = data[b] if GPU_AVAILABLE else data[b]
+        output = bytearray()
+        
+        # Process blocks in parallel using vectorized operations
+        num_blocks = n // QK4_0
+        
+        if GPU_AVAILABLE:
+            # GPU-accelerated version
+            for block_idx in range(num_blocks):
+                start = block_idx * QK4_0
+                block = row_data[start:start + QK4_0]
+                
+                # Compute scale
+                absmax = cp.max(cp.abs(block))
+                scale = absmax / 7.0 if absmax > 0 else 0.0
+                
+                # Quantize
+                if scale > 0:
+                    quantized = cp.round(block / scale).astype(cp.int8)
+                    quantized = cp.clip(quantized, -8, 7)
+                else:
+                    quantized = cp.zeros(QK4_0, dtype=cp.int8)
+                
+                # Pack nibbles
+                quantized_np = quantized.get()
+                packed = np.zeros(16, dtype=np.uint8)
+                for i in range(16):
+                    low = quantized_np[i * 2] + 8
+                    high = quantized_np[i * 2 + 1] + 8
+                    packed[i] = (low & 0xF) | ((high & 0xF) << 4)
+                
+                # Write scale and packed data
+                output.extend(struct.pack('e', np.float16(scale)))
+                output.extend(packed.tobytes())
+        else:
+            # CPU version with vectorization
+            # Pre-allocate arrays for better performance
+            scales = np.zeros(num_blocks, dtype=np.float16)
+            all_packed = np.zeros((num_blocks, 16), dtype=np.uint8)
+            
+            # Vectorized computation of scales
+            blocks = row_data.reshape(num_blocks, QK4_0)
+            absmaxes = np.max(np.abs(blocks), axis=1)
+            scales = np.where(absmaxes > 0, absmaxes / 7.0, 0.0).astype(np.float16)
+            
+            # Process each block
+            for block_idx in range(num_blocks):
+                block = blocks[block_idx]
+                scale = scales[block_idx]
+                
+                if scale > 0:
+                    if NUMBA_AVAILABLE:
+                        quantized = quantize_q4_0_block_numba(block, absmaxes[block_idx], scale)
+                        packed = pack_nibbles_numba(quantized)
+                    else:
+                        # Vectorized quantization
+                        quantized = np.round(block / scale).astype(np.int8)
+                        quantized = np.clip(quantized, -8, 7)
+                        
+                        # Vectorized packing
+                        quantized_offset = quantized + 8
+                        low_nibbles = quantized_offset[::2] & 0xF
+                        high_nibbles = (quantized_offset[1::2] & 0xF) << 4
+                        packed = (low_nibbles | high_nibbles).astype(np.uint8)
+                else:
+                    packed = np.zeros(16, dtype=np.uint8)
+                
+                all_packed[block_idx] = packed
+            
+            # Write all data at once
+            for block_idx in range(num_blocks):
+                output.extend(struct.pack('e', scales[block_idx]))
+                output.extend(all_packed[block_idx].tobytes())
+        
+        result.append(bytes(output))
+    
+    return result[0] if len(result) == 1 else result
+
+def repack_q4_0_to_q4_0_4(q4_0_data, rows, cols):
+    """
+    Repack Q4_0 data to Q4_0x4 format for 4-way SIMD optimization
+    
+    Args:
+        q4_0_data: Original Q4_0 quantized data (bytes)
+        rows: Number of rows (M)
+        cols: Number of columns (K)
+    
+    Returns:
+        Repacked data in Q4_0x4 format
+    """
+    nrows_interleaved = 4
+    block_size = 2 + 16  # 2 bytes for scale + 16 bytes for packed values
+    blocks_per_row = cols // QK4_0
+    
+    # Check alignment requirements
+    if rows % nrows_interleaved != 0:
+        raise ValueError(f"Number of rows ({rows}) must be divisible by {nrows_interleaved}")
+    if cols % QK4_0 != 0:
+        raise ValueError(f"Number of columns ({cols}) must be divisible by {QK4_0}")
+    
+    # Parse input data
+    input_data = np.frombuffer(q4_0_data, dtype=np.uint8)
+    
+    # Output buffer
+    output = bytearray()
+    
+    # Process in groups of 4 rows
+    for row_group in range(0, rows, nrows_interleaved):
+        # For each block position
+        for block_idx in range(blocks_per_row):
+            # Collect 4 blocks (one from each row in the group)
+            blocks = []
+            for i in range(nrows_interleaved):
+                row = row_group + i
+                if row < rows:
+                    # Calculate offset for this block
+                    offset = (row * blocks_per_row + block_idx) * block_size
+                    block_data = input_data[offset:offset + block_size]
+                    blocks.append(block_data)
+                else:
+                    # Padding with zeros if needed
+                    blocks.append(np.zeros(block_size, dtype=np.uint8))
+            
+            # Interleave the blocks
+            # First, all scales (4 x 2 bytes)
+            for block in blocks:
+                output.extend(block[:2])  # Scale (FP16)
+            
+            # Then, all packed values (4 x 16 bytes)
+            for block in blocks:
+                output.extend(block[2:])  # Packed quantized values
+    
+    return bytes(output)
+
+def repack_q4_0_to_q4_0_8(q4_0_data, rows, cols):
+    """
+    Repack Q4_0 data to Q4_0x8 format for 8-way SIMD optimization
+    
+    Args:
+        q4_0_data: Original Q4_0 quantized data (bytes)
+        rows: Number of rows (M)
+        cols: Number of columns (K)
+    
+    Returns:
+        Repacked data in Q4_0x8 format
+    """
+    nrows_interleaved = 8
+    block_size = 2 + 16  # 2 bytes for scale + 16 bytes for packed values
+    blocks_per_row = cols // QK4_0
+    
+    # Check alignment requirements
+    if rows % nrows_interleaved != 0:
+        raise ValueError(f"Number of rows ({rows}) must be divisible by {nrows_interleaved}")
+    if cols % QK4_0 != 0:
+        raise ValueError(f"Number of columns ({cols}) must be divisible by {QK4_0}")
+    
+    # Parse input data
+    input_data = np.frombuffer(q4_0_data, dtype=np.uint8)
+    
+    # Output buffer
+    output = bytearray()
+    
+    # Process in groups of 8 rows
+    for row_group in range(0, rows, nrows_interleaved):
+        # For each block position
+        for block_idx in range(blocks_per_row):
+            # Collect 8 blocks (one from each row in the group)
+            blocks = []
+            for i in range(nrows_interleaved):
+                row = row_group + i
+                if row < rows:
+                    # Calculate offset for this block
+                    offset = (row * blocks_per_row + block_idx) * block_size
+                    block_data = input_data[offset:offset + block_size]
+                    blocks.append(block_data)
+                else:
+                    # Padding with zeros if needed
+                    blocks.append(np.zeros(block_size, dtype=np.uint8))
+            
+            # Interleave the blocks
+            # First, all scales (8 x 2 bytes)
+            for block in blocks:
+                output.extend(block[:2])  # Scale (FP16)
+            
+            # Then, all packed values (8 x 16 bytes)
+            for block in blocks:
+                output.extend(block[2:])  # Packed quantized values
+    
+    return bytes(output)
+
+def quantize_and_repack_q4_0(tensor, repack_format="q4_0"):
+    """
+    Quantize tensor to Q4_0 and optionally repack for SIMD optimization
+    
+    Args:
+        tensor: Input tensor to quantize
+        repack_format: One of "q4_0" (no repacking), "q4_0_4", or "q4_0_8"
+    
+    Returns:
+        Quantized (and optionally repacked) data
+    """
+    if tensor.dim() == 1:
+        tensor = tensor.unsqueeze(0)
+    
+    rows, cols = tensor.shape
+    
+    # First, quantize to standard Q4_0
+    quantized_data = quantize_row_q4_0_ggml(tensor)
+    
+    if isinstance(quantized_data, list):
+        # Concatenate all rows
+        quantized_data = b''.join(quantized_data)
+    
+    # Apply repacking if requested
+    if repack_format == "q4_0":
+        return quantized_data
+    elif repack_format == "q4_0_4":
+        return repack_q4_0_to_q4_0_4(quantized_data, rows, cols)
+    elif repack_format == "q4_0_8":
+        return repack_q4_0_to_q4_0_8(quantized_data, rows, cols)
+    else:
+        raise ValueError(f"Unknown repack format: {repack_format}")
+
+def quantize_row_q6_k_ggml(tensor):
+    """GGML Q6_K quantization - optimized version"""
+    if tensor.dim() == 1:
+        tensor = tensor.unsqueeze(0)
+    
+    batch_size, n = tensor.shape
+    result = []
+    
+    # Convert to numpy for faster processing
+    if tensor.is_cuda and GPU_AVAILABLE:
+        data = cp.asarray(tensor.cpu().numpy())
+    else:
+        data = tensor.numpy()
+    
+    for b in range(batch_size):
+        row_data = data[b] if GPU_AVAILABLE else data[b]
+        output = bytearray()
+        
+        num_blocks = n // QK6_K
+        
+        for block_idx in range(num_blocks):
+            start = block_idx * QK6_K
+            superblock = row_data[start:start + QK6_K]
+            
+            if GPU_AVAILABLE:
+                # GPU version
+                superblock_cp = superblock if isinstance(superblock, cp.ndarray) else cp.asarray(superblock)
+                
+                # Find global scale
+                absmax = cp.max(cp.abs(superblock_cp))
+                if absmax < 1e-8:
+                    # Zero block - fast path
+                    output.extend(b'\x00' * 210)
+                    continue
+                
+                inv_scale = 63.0 / absmax
+                d = absmax / 63.0
+                
+                # Quantize to 6-bit
+                quantized = cp.round(superblock_cp * inv_scale).astype(cp.int8)
+                quantized = cp.clip(quantized, -32, 31)
+                quantized = (quantized + 32).astype(cp.uint8)
+                
+                # Convert to CPU for packing
+                quantized_np = quantized.get()
+            else:
+                # CPU version with vectorization
+                absmax = np.max(np.abs(superblock))
+                if absmax < 1e-8:
+                    # Zero block - fast path
+                    output.extend(b'\x00' * 210)
+                    continue
+                
+                inv_scale = 63.0 / absmax
+                d = absmax / 63.0
+                
+                # Vectorized quantization
+                quantized = np.round(superblock * inv_scale).astype(np.int8)
+                quantized = np.clip(quantized, -32, 31)
+                quantized = (quantized + 32).astype(np.uint8)
+                quantized_np = quantized
+            
+            # Pack 6-bit values efficiently using vectorized operations
+            # Lower 4 bits (vectorized)
+            ql = np.zeros(128, dtype=np.uint8)
+            for i in range(128):
+                idx = i * 2
+                ql[i] = (quantized_np[idx] & 0xF) | ((quantized_np[idx + 1] & 0xF) << 4)
+            
+            # Upper 2 bits (vectorized)
+            qh = np.zeros(64, dtype=np.uint8)
+            for i in range(64):
+                base_idx = i * 4
+                qh[i] = ((quantized_np[base_idx] >> 4) & 0x3) | \
+                        (((quantized_np[base_idx + 1] >> 4) & 0x3) << 2) | \
+                        (((quantized_np[base_idx + 2] >> 4) & 0x3) << 4) | \
+                        (((quantized_np[base_idx + 3] >> 4) & 0x3) << 6)
+            
+            # Compute scales for each group (vectorized)
+            scales = np.zeros(16, dtype=np.int8)
+            groups = superblock.reshape(16, 16)
+            
+            if absmax > 0:
+                group_scales = np.max(np.abs(groups), axis=1) / d
+                group_scales = np.round(group_scales * 127.0 / 63.0).astype(np.int8)
+                group_scales = np.clip(group_scales, -128, 127)
+                scales = group_scales
+            
+            # Write block
+            output.extend(ql.tobytes())
+            output.extend(qh.tobytes())
+            output.extend(scales.tobytes())
+            output.extend(struct.pack('e', np.float16(d)))
+        
+        result.append(bytes(output))
+    
+    return result[0] if len(result) == 1 else result
+
+# Parallel processing functions
+def process_weight_batch(weight_batch, quant_type):
+    """Process a batch of weights in parallel"""
+    if quant_type == "q4_0":
+        return [quantize_row_q4_0_ggml(w) for w in weight_batch]
+    elif quant_type == "q6_k":
+        return [quantize_row_q6_k_ggml(w) for w in weight_batch]
+    else:
+        raise ValueError(f"Unknown quantization type: {quant_type}")
+
+def quantize_weights_parallel(weights, quant_type, batch_size=32):
+    """Quantize weights in parallel with optimal batching"""
+    if not isinstance(weights, torch.Tensor):
+        weights = torch.tensor(weights)
+    
+    if weights.dim() == 1:
+        weights = weights.unsqueeze(0)
+    
+    num_rows = weights.shape[0]
+    num_workers = get_optimal_num_workers()
+    
+    # Use ProcessPoolExecutor for CPU-bound tasks
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = []
+        
+        # Split weights into batches
+        for i in range(0, num_rows, batch_size):
+            batch = weights[i:i+batch_size]
+            future = executor.submit(process_weight_batch, batch, quant_type)
+            futures.append(future)
+        
+        # Collect results
+        results = []
+        for future in tqdm(futures, desc=f"Quantizing {quant_type}"):
+            batch_results = future.result()
+            results.extend(batch_results)
+    
+    return results
 
 @dataclass
-class DataTypeConfig:
-    embedding : str = "float32"
-    attention_fc : str = "float32"
-    normalization : str = "float32"
-    lm_head : str = "float32"    
+class ProcessingContext:
+    """Context for efficient tensor processing"""
+    use_gpu: bool = False
+    num_workers: int = None
+    batch_size: int = 32
+    
+    def __post_init__(self):
+        if self.num_workers is None:
+            self.num_workers = get_optimal_num_workers()
+        self.use_gpu = GPU_AVAILABLE and torch.cuda.is_available()
 
-
-# GGML constants
-QK4_0 = 32 # GGML Q4_0 block size
-QK6_K = 256 # GGML Q6_K superblock size
-Q6_K_SCALE_SIZE = 16 # groups in Q6_K
-
-GROUP_MAX_EPS = 1e-12
-
-
-def nearest_int(x):
-    """GGML-style rounding"""
-    return int(x + 0.5)
-
-
-if NUMBA_AVAILABLE:
-    @njit
-    def nearest_int_numba(x):
-        """Numba version of nearest_int"""
-        return int(x + 0.5)
-
-
-def quantize_row_q4_0_ggml(x):
+# Main conversion functions with optimizations
+def convert_model_optimized(model_path, output_path, quant_type="q4_0", repack_format=None):
     """
-    GGML-compatible Q4_0 quantization
-    Based on GGML implementation:
-    - Block size: 32
-    - Scale: abs(max) / 7
-    - Range: -8 to 7 stored as 0-15
+    Optimized model conversion with parallel processing
+    
+    Args:
+        model_path: Path to the model
+        output_path: Output path for quantized model
+        quant_type: Quantization type ("q4_0" or "q6_k")
+        repack_format: For Q4_0, can be None, "q4_0_4", or "q4_0_8"
     """
-    x = x.numpy().reshape(-1).astype(np.float32)
-    nb = len(x) // QK4_0
+    print(f"Loading model from {model_path}...")
     
-    result = bytearray()
+    # Load model with optimizations
+    config = AutoConfig.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype=torch.float16 if GPU_AVAILABLE else torch.float32,
+        device_map="auto" if GPU_AVAILABLE else None,
+        low_cpu_mem_usage=True
+    )
     
-    for i in range(nb):
-        # Get block
-        block = x[i*QK4_0:(i+1)*QK4_0]
-        
-        # Find scale (GGML style: max absolute value / 7)
-        amax = np.max(np.abs(block))
-        scale = amax / 7.0 if amax > 0 else 0.0
-        iscale = 1.0 / scale if scale > 0 else 0.0
-        
-        # Store scale as FP16 (2 bytes)
-        scale_fp16 = np.float16(scale)
-        result.extend(scale_fp16.tobytes())
-        
-        # Quantize values to 4-bit (-8 to 7)
-        quantized = np.zeros(QK4_0, dtype=np.int8)
-        if scale > 0:
-            for j in range(QK4_0):
-                # Round to nearest integer
-                v = nearest_int(iscale * block[j])
-                # Clamp to [-8, 7]
-                v = max(-8, min(7, v))
-                quantized[j] = v
-        
-        # Pack as nibbles (4-bit values)
-        # GGML packing: pairs of values in each byte
-        packed = np.zeros(QK4_0 // 2, dtype=np.uint8)
-        for j in range(QK4_0 // 2):
-            # Low nibble: first value, high nibble: second value
-            # Add 8 to convert from [-8,7] to [0,15]
-            low = (quantized[j * 2] + 8) & 0xF
-            high = (quantized[j * 2 + 1] + 8) & 0xF
-            packed[j] = low | (high << 4)
-        
-        result.extend(packed.tobytes())
+    ctx = ProcessingContext()
+    print(f"Using {ctx.num_workers} workers for parallel processing")
     
-    return bytes(result)
-
-
-def quantize_row_q4_0_ggml_optimized(x):
-    """Optimized GGML-compatible Q4_0 quantization"""
-    x = x.numpy().reshape(-1).astype(np.float32)
-    nb = len(x) // QK4_0
+    # Process weights
+    quantized_weights = {}
     
-    if GPU_AVAILABLE:
-        # GPU version
-        x_gpu = cp.asarray(x)
-        blocks_gpu = x_gpu.reshape(nb, QK4_0)
+    for name, param in tqdm(model.named_parameters(), desc="Processing layers"):
+        if param.requires_grad:
+            param = param.detach()
         
-        # Compute scales
-        amax = cp.max(cp.abs(blocks_gpu), axis=1)
-        scales = amax / 7.0
-        scales = cp.where(amax > 0, scales, 0.0)
-        iscales = cp.where(scales > 0, 1.0 / scales, 0.0)
-        
-        # Quantize all blocks
-        result_parts = []
-        
-        for i in range(nb):
-            scale = float(scales[i])
-            iscale = float(iscales[i])
-            block = cp.asnumpy(blocks_gpu[i])
-            
-            # Pack scale
-            scale_fp16 = np.float16(scale)
-            result_parts.append(scale_fp16.tobytes())
-            
-            # Quantize and pack
-            if scale > 0:
-                quantized = np.round(iscale * block).astype(np.int8)
-                quantized = np.clip(quantized, -8, 7)
-            else:
-                quantized = np.zeros(QK4_0, dtype=np.int8)
-            
-            # Pack nibbles - GGML packing order
-            packed = np.zeros(QK4_0 // 2, dtype=np.uint8)
-            for j in range(QK4_0 // 2):
-                low = (quantized[j * 2] + 8) & 0xF
-                high = (quantized[j * 2 + 1] + 8) & 0xF
-                packed[j] = low | (high << 4)
-            
-            result_parts.append(packed.tobytes())
-        
-        return b''.join(result_parts)
-    else:
-        # Vectorized CPU version
-        blocks = x.reshape(nb, QK4_0)
-        result_parts = []
-        
-        # Process each block
-        for i in range(nb):
-            block = blocks[i]
-            
-            # GGML scale calculation
-            amax = np.max(np.abs(block))
-            scale = amax / 7.0 if amax > 0 else 0.0
-            iscale = 1.0 / scale if scale > 0 else 0.0
-            
-            # Pack scale as FP16
-            scale_fp16 = np.float16(scale)
-            result_parts.append(scale_fp16.tobytes())
-            
-            # Quantize
-            if scale > 0:
-                quantized = np.round(iscale * block).astype(np.int8)
-                quantized = np.clip(quantized, -8, 7)
-            else:
-                quantized = np.zeros(QK4_0, dtype=np.int8)
-            
-            # Pack nibbles - GGML packing order
-            packed = np.zeros(QK4_0 // 2, dtype=np.uint8)
-            for j in range(QK4_0 // 2):
-                low = (quantized[j * 2] + 8) & 0xF
-                high = (quantized[j * 2 + 1] + 8) & 0xF
-                packed[j] = low | (high << 4)
-            
-            result_parts.append(packed.tobytes())
-        
-        return b''.join(result_parts)
-
-
-def make_q6_quants(x, scale):
-    """GGML Q6_K style quantization for a group"""
-    if scale == 0:
-        return np.zeros_like(x, dtype=np.int8)
-    
-    iscale = 1.0 / scale
-    
-    # Quantize to 6-bit range [-32, 31]
-    quantized = np.round(iscale * x).astype(np.int8)
-    quantized = np.clip(quantized, -32, 31)
-    
-    return quantized
-
-
-def quantize_row_q6_k_ggml(x):
-    """
-    GGML-compatible Q6_K quantization
-    - Superblock: 256 weights
-    - 16 groups of 16 weights each
-    - 6-bit quantization per weight
-    - Scales are quantized to 8-bit
-    """
-    x = x.numpy().reshape(-1).astype(np.float32)
-    nb = len(x) // QK6_K
-    
-    result = []
-    
-    for ib in range(nb):
-        block = x[ib*QK6_K:(ib+1)*QK6_K]
-        
-        # Find scales for each group
-        scales = np.zeros(Q6_K_SCALE_SIZE, dtype=np.float32)
-        for ig in range(Q6_K_SCALE_SIZE):
-            group = block[ig*16:(ig+1)*16]
-            amax = np.max(np.abs(group))
-            scales[ig] = amax / 31.0 if amax > 0 else 0.0
-        
-        # Find max scale for block quantization
-        max_scale = np.max(np.abs(scales))
-        
-        if max_scale < GROUP_MAX_EPS:
-            # Zero block - GGML format: 2 bytes scale + 16 bytes scales + 128 bytes low + 64 bytes high
-            result.append(b'\x00' * (2 + 16 + 128 + 64))
-            continue
-        
-        # Quantize scales to 8-bit
-        scale_scale = max_scale / 127.0
-        iscale_scale = 1.0 / scale_scale
-        
-        # Block scale as FP16
-        block_scale = np.float16(scale_scale)
-        result.append(block_scale.tobytes())
-        
-        # Quantized scales
-        q_scales = np.round(iscale_scale * scales).astype(np.int8)
-        q_scales = np.clip(q_scales, -128, 127)
-        result.append(q_scales.tobytes())
-        
-        # Quantize weights with quantized scales
-        quantized = np.zeros(QK6_K, dtype=np.int8)
-        for ig in range(Q6_K_SCALE_SIZE):
-            if q_scales[ig] == 0:
-                continue
-            actual_scale = scale_scale * q_scales[ig]
-            
-            group_start = ig * 16
-            group_end = (ig + 1) * 16
-            group = block[group_start:group_end]
-            
-            quantized[group_start:group_end] = make_q6_quants(group, actual_scale)
-        
-        # Convert to unsigned by adding 32
-        quantized_u = (quantized + 32).astype(np.uint8)
-        
-        # Pack 6-bit values - GGML Q6_K format
-        # 256 6-bit values packed into 128 bytes (low 4 bits) + 64 bytes (high 2 bits)
-        low_bits = np.zeros(128, dtype=np.uint8)
-        high_bits = np.zeros(64, dtype=np.uint8)
-        
-        # Pack lower 4 bits
-        for i in range(128):
-            idx1 = i * 2
-            idx2 = i * 2 + 1
-            if idx2 < QK6_K:
-                low_bits[i] = (quantized_u[idx1] & 0xF) | ((quantized_u[idx2] & 0xF) << 4)
-        
-        # Pack upper 2 bits
-        for i in range(64):
-            val = 0
-            for j in range(4):
-                idx = i * 4 + j
-                if idx < QK6_K:
-                    val |= ((quantized_u[idx] >> 4) & 0x3) << (j * 2)
-            high_bits[i] = val
-        
-        result.append(low_bits.tobytes())
-        result.append(high_bits.tobytes())
-    
-    return b''.join(result)
-
-
-# Use optimized versions
-quantize_row_q4_0 = quantize_row_q4_0_ggml_optimized
-quantize_row_q6_k = quantize_row_q6_k_ggml
-
-
-def save_weight_parallel(weight_info):
-    """Process weight saving in parallel"""
-    weight_name, weight_tensor, dtype = weight_info
-    
-    if dtype in ["float32", "float16"]:
-        return weight_name, np.array(weight_tensor, dtype=dtype).tobytes()
-    elif dtype == "q4_0":
-        return weight_name, quantize_row_q4_0(weight_tensor)
-    elif dtype == "q6_k":
-        return weight_name, quantize_row_q6_k(weight_tensor)
-    else:
-        raise ValueError(f"Unsupported dtype {dtype}")
-
-
-total_size = 0
-def save_qwen3_for_nntrainer(params, config, dconfig, file):  
-    """Convert and save weights as nntrainer format for multi-head attention model"""  
-
-    n_layers = config.num_hidden_layers
-    n_experts = config.num_experts
-      
-    def save_weight(weight_name, is_transpose=False, dtype="float32"):
-        print(weight_name, params[weight_name].shape)
-        if dtype in ["float32", "float16"]:
-            np.array(params[weight_name], dtype=dtype).tofile(file)  
-        elif dtype == "q4_0":
-            file.write(quantize_row_q4_0(params[weight_name]))
-        elif dtype == "q6_k":
-            file.write(quantize_row_q6_k(params[weight_name]))
+        # Convert to appropriate format
+        if param.dim() == 2 and quant_type == "q4_0" and repack_format:
+            # Use repacking for Q4_0
+            quantized = quantize_and_repack_q4_0(param, repack_format)
+            quantized_weights[name] = quantized
+        elif param.dim() == 2:
+            # Matrix - process rows in parallel
+            quantized = quantize_weights_parallel(param, quant_type, ctx.batch_size)
+            quantized_weights[name] = quantized
         else:
-            raise ValueError(f"Unsupported dtype {dtype}")
+            # Vector or other shape - process directly
+            quantized_weights[name] = param.cpu().numpy()
+    
+    # Save quantized weights
+    print(f"Saving quantized model to {output_path}...")
+    torch.save(quantized_weights, output_path)
+    print("Conversion complete!")
 
-    def save_projection(layer_name, proj_name):  
-        """Helper function to handle base/lora weight saving"""  
-        lora_key = f"{layer_name}{proj_name}.lora_A.default.weight"  
-        if lora_key in params:  
-            save_weight(f"{layer_name}{proj_name}.base_layer.weight", True, dconfig.attention_fc)
-            save_weight(f"{layer_name}{proj_name}.lora_A.default.weight", True, "float32")
-            save_weight(f"{layer_name}{proj_name}.lora_B.default.weight", True, "float32")  
-        else:  
-            save_weight(f"{layer_name}{proj_name}.weight", True, dconfig.attention_fc)  
+# Test functions for repacking
+def test_q4_0_repacking():
+    """Test Q4_0 repacking functionality"""
+    print("Testing Q4_0 repacking...")
+    
+    # Create test data
+    test_tensor = torch.randn(8, 256)  # 8 rows, 256 columns
+    
+    # Test standard Q4_0
+    q4_0_standard = quantize_and_repack_q4_0(test_tensor, "q4_0")
+    print(f"Standard Q4_0 size: {len(q4_0_standard)} bytes")
+    
+    # Test Q4_0x4
+    q4_0_4 = quantize_and_repack_q4_0(test_tensor, "q4_0_4")
+    print(f"Q4_0x4 size: {len(q4_0_4)} bytes")
+    
+    # Test Q4_0x8
+    q4_0_8 = quantize_and_repack_q4_0(test_tensor, "q4_0_8")
+    print(f"Q4_0x8 size: {len(q4_0_8)} bytes")
+    
+    # All sizes should be the same (just different layout)
+    assert len(q4_0_standard) == len(q4_0_4) == len(q4_0_8)
+    
+    print("✓ Q4_0 repacking test passed!")
 
-    def save_attention(layer_name):  
-        """Save attention layer weights"""  
-          
-        # Save Q/K/V/O projections using helper  
-        for proj in ["q_proj", "k_proj", "v_proj", "o_proj"]:  
-            save_projection(layer_name, f"self_attn.{proj}")  
-            proj_norm_name = f"{layer_name}self_attn.{proj[0]}_norm.weight"
-            if proj_norm_name in params:
-                save_weight(proj_norm_name, False, dconfig.normalization)
-
-    def save_feed_forward(layer_name):  
-        """Save feed forward layer weights"""  
+# Benchmark function
+def benchmark_quantization():
+    """Benchmark quantization performance"""
+    sizes = [(1024, 1024), (4096, 4096), (8192, 8192)]
+    
+    for rows, cols in sizes:
+        print(f"\nBenchmarking {rows}x{cols} matrix:")
+        data = torch.randn(rows, cols, dtype=torch.float32)
         
-        save_weight(f"{layer_name}mlp.gate.weight", True, "float32")  
-          
-        # Save MoE projections using helper  
-        for num_expert in range(n_experts):
-            for proj in ["up_proj", "gate_proj", "down_proj"]:  
-                save_projection(layer_name, f"mlp.experts.{num_expert}.{proj}")  
-
-    ####################################################################
-    # Save embedding layer  
-    save_weight("model.embed_tokens.weight", False, dconfig.embedding)  
-
-    # Process all layers  
-    for layer_idx in range(n_layers):  
-        layer_prefix = f"model.layers.{layer_idx}."  
-        save_weight(f"{layer_prefix}input_layernorm.weight", False, dconfig.normalization)  
-        save_attention(layer_prefix)  
-        save_weight(f"{layer_prefix}post_attention_layernorm.weight", False, dconfig.normalization)  
-        save_feed_forward(layer_prefix)  
-
-    # Save final layers  
-    save_weight("model.norm.weight", False, dconfig.normalization)  
-    save_weight("lm_head.weight", False, dconfig.lm_head)
-
-
-def save_qwen3_for_nntrainer_optimized(params, config, dconfig, file):  
-    """Optimized convert and save weights with parallel processing"""  
-    
-    n_layers = config.num_hidden_layers
-    n_experts = config.num_experts
-    
-    # Collect all weights to process
-    weights_to_process = []
-    
-    def collect_weight(weight_name, is_transpose=False, dtype="float32"):
-        print(f"Collecting: {weight_name}, shape: {params[weight_name].shape}")
-        weights_to_process.append((weight_name, params[weight_name], dtype))
-    
-    def collect_projection(layer_name, proj_name):  
-        """Helper function to handle base/lora weight collection"""  
-        lora_key = f"{layer_name}{proj_name}.lora_A.default.weight"  
-        if lora_key in params:  
-            collect_weight(f"{layer_name}{proj_name}.base_layer.weight", True, dconfig.attention_fc)
-            collect_weight(f"{layer_name}{proj_name}.lora_A.default.weight", True, "float32")
-            collect_weight(f"{layer_name}{proj_name}.lora_B.default.weight", True, "float32")  
-        else:  
-            collect_weight(f"{layer_name}{proj_name}.weight", True, dconfig.attention_fc)  
-    
-    def collect_attention(layer_name):  
-        """Collect attention layer weights"""  
-        for proj in ["q_proj", "k_proj", "v_proj", "o_proj"]:  
-            collect_projection(layer_name, f"self_attn.{proj}")  
-            proj_norm_name = f"{layer_name}self_attn.{proj[0]}_norm.weight"
-            if proj_norm_name in params:
-                collect_weight(proj_norm_name, False, dconfig.normalization)
-    
-    def collect_feed_forward(layer_name):  
-        """Collect feed forward layer weights"""  
-        collect_weight(f"{layer_name}mlp.gate.weight", True, "float32")  
+        # Q4_0 benchmark
+        start = time.time()
+        _ = quantize_weights_parallel(data, "q4_0")
+        q4_time = time.time() - start
+        print(f"  Q4_0: {q4_time:.3f}s ({rows*cols/q4_time/1e6:.1f} M elements/s)")
         
-        for num_expert in range(n_experts):
-            for proj in ["up_proj", "gate_proj", "down_proj"]:  
-                collect_projection(layer_name, f"mlp.experts.{num_expert}.{proj}")  
-    
-    # Collect all weights
-    print("Collecting weights...")
-    collect_weight("model.embed_tokens.weight", False, dconfig.embedding)  
-    
-    for layer_idx in range(n_layers):  
-        layer_prefix = f"model.layers.{layer_idx}."  
-        collect_weight(f"{layer_prefix}input_layernorm.weight", False, dconfig.normalization)  
-        collect_attention(layer_prefix)  
-        collect_weight(f"{layer_prefix}post_attention_layernorm.weight", False, dconfig.normalization)  
-        collect_feed_forward(layer_prefix)  
-    
-    collect_weight("model.norm.weight", False, dconfig.normalization)  
-    collect_weight("lm_head.weight", False, dconfig.lm_head)
-    
-    # Process weights in parallel
-    print(f"\nProcessing {len(weights_to_process)} weights in parallel...")
-    start_time = time.time()
-    
-    # Use ProcessPoolExecutor for CPU-bound quantization tasks
-    with ProcessPoolExecutor(max_workers=mp.cpu_count()) as executor:
-        # Process in batches to avoid memory issues
-        batch_size = 50
-        processed_weights = {}
-        
-        for i in tqdm(range(0, len(weights_to_process), batch_size), desc="Processing batches"):
-            batch = weights_to_process[i:i+batch_size]
-            results = list(executor.map(save_weight_parallel, batch))
-            
-            for weight_name, weight_bytes in results:
-                processed_weights[weight_name] = weight_bytes
-    
-    # Write weights in order
-    print("\nWriting weights to file...")
-    for weight_name, _, _ in tqdm(weights_to_process, desc="Writing"):
-        file.write(processed_weights[weight_name])
-    
-    elapsed_time = time.time() - start_time
-    print(f"\nConversion completed in {elapsed_time:.2f} seconds")
-
-
-def dequantize_q4_0_ggml(data):
-    """GGML Q4_0 dequantization for verification"""
-    result = []
-    offset = 0
-    
-    while offset < len(data):
-        # Read scale (2 bytes FP16)
-        scale = np.frombuffer(data[offset:offset+2], dtype=np.float16)[0]
-        offset += 2
-        
-        # Read packed values (16 bytes for 32 values)
-        packed = np.frombuffer(data[offset:offset+16], dtype=np.uint8)
-        offset += 16
-        
-        # Unpack
-        values = np.zeros(32, dtype=np.float32)
-        for i in range(16):
-            # Low nibble
-            values[i] = float((packed[i] & 0xF) - 8) * scale
-            # High nibble  
-            values[i + 16] = float((packed[i] >> 4) - 8) * scale
-        
-        result.extend(values)
-    
-    return np.array(result)
-
-
-def verify_ggml_compatibility():
-    """Verify GGML compatibility of quantization"""
-    print("\n=== GGML Compatibility Verification ===")
-    
-    # Test Q4_0
-    print("\n1. Testing Q4_0 quantization:")
-    test_data = np.array([
-        0.1, 0.2, 0.3, 0.6, -0.1, -0.2, -0.3, -0.4,
-        0.5, 0.7, -0.5, -0.7, 0.8, -0.8, 0.9, -0.9,
-        0.15, 0.25, 0.35, 0.45, -0.15, -0.25, -0.35, -0.45,
-        0.55, 0.65, -0.55, -0.65, 0.75, -0.75, 0.85, -0.85
-    ], dtype=np.float32)
-    
-    test_tensor = torch.tensor(test_data.reshape(1, -1))
-    
-    # Quantize
-    quantized = quantize_row_q4_0_ggml(test_tensor)
-    print(f"Original data shape: {test_data.shape}")
-    print(f"Quantized size: {len(quantized)} bytes")
-    print(f"Expected size: {2 + 16} bytes (2 for scale + 16 for packed values)")
-    
-    # Verify structure
-    scale = np.frombuffer(quantized[:2], dtype=np.float16)[0]
-    print(f"Scale value: {scale}")
-    print(f"Expected scale: {np.max(np.abs(test_data)) / 7:.6f}")
-    
-    # Dequantize and check
-    dequantized = dequantize_q4_0_ggml(quantized)
-    print(f"Dequantized shape: {dequantized.shape}")
-    
-    # Calculate error
-    error = np.mean(np.abs(test_data - dequantized))
-    max_error = np.max(np.abs(test_data - dequantized))
-    print(f"Mean absolute error: {error:.6f}")
-    print(f"Max absolute error: {max_error:.6f}")
-    
-    # Test Q6_K structure
-    print("\n2. Testing Q6_K quantization:")
-    test_data_q6k = np.random.randn(256).astype(np.float32) * 0.5
-    test_tensor_q6k = torch.tensor(test_data_q6k.reshape(1, -1))
-    
-    quantized_q6k = quantize_row_q6_k_ggml(test_tensor_q6k)
-    print(f"Q6_K quantized size: {len(quantized_q6k)} bytes")
-    print(f"Expected size: ~210 bytes (2 + 16 + 128 + 32 + padding)")
-    
-    print("\n✓ GGML compatibility test completed")
-    
-    return True
-
+        # Q6_K benchmark
+        start = time.time()
+        _ = quantize_weights_parallel(data, "q6_k")
+        q6_time = time.time() - start
+        print(f"  Q6_K: {q6_time:.3f}s ({rows*cols/q6_time/1e6:.1f} M elements/s)")
 
 if __name__ == "__main__":
-    data_config = DataTypeConfig(embedding="q6_k", attention_fc="q4_0", normalization="float16", lm_head="q6_k")
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    # Run tests
+    print("Running quantization tests...")
+    test_q4_0_repacking()
     
-    print(f"Using device: {device}")
-    print(f"GPU acceleration: {'Enabled' if GPU_AVAILABLE else 'Disabled'}")
-    print(f"Numba JIT: {'Enabled' if NUMBA_AVAILABLE else 'Disabled'}")
-    print(f"CPU cores available: {mp.cpu_count()}")
-    
-    # Run GGML compatibility verification
-    verify_ggml_compatibility()
-    
-    model_path = "."
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    config = AutoConfig.from_pretrained(model_path)
-    model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype="float", trust_remote_code=True)
-    model.eval()
-    
-    # Use optimized version
-    with open("./nntr_qwen3_30b_moe_test_mixed_ggml.bin", "wb") as f_model:
-        save_qwen3_for_nntrainer_optimized(model.state_dict(), config, data_config, f_model)
+    print("\nRunning quantization benchmark...")
+    benchmark_quantization()
