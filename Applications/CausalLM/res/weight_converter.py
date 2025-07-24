@@ -105,13 +105,14 @@ def quantize_row_q4_0_ggml(x):
                 v = max(-8, min(7, v))
                 quantized[j] = v
         
-        # Pack as nibbles (4-bit values), add 8 to make unsigned
-        # GGML packing: first half in low nibbles, second half in high nibbles
+        # Pack as nibbles (4-bit values)
+        # GGML packing: pairs of values in each byte
         packed = np.zeros(QK4_0 // 2, dtype=np.uint8)
         for j in range(QK4_0 // 2):
+            # Low nibble: first value, high nibble: second value
             # Add 8 to convert from [-8,7] to [0,15]
-            low = (quantized[j] + 8) & 0xF
-            high = (quantized[j + QK4_0//2] + 8) & 0xF
+            low = (quantized[j * 2] + 8) & 0xF
+            high = (quantized[j * 2 + 1] + 8) & 0xF
             packed[j] = low | (high << 4)
         
         result.extend(packed.tobytes())
@@ -154,11 +155,11 @@ def quantize_row_q4_0_ggml_optimized(x):
             else:
                 quantized = np.zeros(QK4_0, dtype=np.int8)
             
-            # Pack nibbles
+            # Pack nibbles - GGML packing order
             packed = np.zeros(QK4_0 // 2, dtype=np.uint8)
             for j in range(QK4_0 // 2):
-                low = (quantized[j] + 8) & 0xF
-                high = (quantized[j + QK4_0//2] + 8) & 0xF
+                low = (quantized[j * 2] + 8) & 0xF
+                high = (quantized[j * 2 + 1] + 8) & 0xF
                 packed[j] = low | (high << 4)
             
             result_parts.append(packed.tobytes())
@@ -189,11 +190,11 @@ def quantize_row_q4_0_ggml_optimized(x):
             else:
                 quantized = np.zeros(QK4_0, dtype=np.int8)
             
-            # Pack nibbles
+            # Pack nibbles - GGML packing order
             packed = np.zeros(QK4_0 // 2, dtype=np.uint8)
             for j in range(QK4_0 // 2):
-                low = (quantized[j] + 8) & 0xF
-                high = (quantized[j + QK4_0//2] + 8) & 0xF
+                low = (quantized[j * 2] + 8) & 0xF
+                high = (quantized[j * 2 + 1] + 8) & 0xF
                 packed[j] = low | (high << 4)
             
             result_parts.append(packed.tobytes())
@@ -201,21 +202,18 @@ def quantize_row_q4_0_ggml_optimized(x):
         return b''.join(result_parts)
 
 
-def make_q6_quants(x, nmax=63):
+def make_q6_quants(x, scale):
     """GGML Q6_K style quantization for a group"""
-    amax = np.max(np.abs(x))
+    if scale == 0:
+        return np.zeros_like(x, dtype=np.int8)
     
-    if amax < GROUP_MAX_EPS:
-        return 0.0, np.zeros_like(x, dtype=np.int8)
-    
-    scale = amax / nmax
     iscale = 1.0 / scale
     
-    # Quantize
+    # Quantize to 6-bit range [-32, 31]
     quantized = np.round(iscale * x).astype(np.int8)
-    quantized = np.clip(quantized, -nmax, nmax)
+    quantized = np.clip(quantized, -32, 31)
     
-    return scale, quantized
+    return quantized
 
 
 def quantize_row_q6_k_ggml(x):
@@ -224,6 +222,7 @@ def quantize_row_q6_k_ggml(x):
     - Superblock: 256 weights
     - 16 groups of 16 weights each
     - 6-bit quantization per weight
+    - Scales are quantized to 8-bit
     """
     x = x.numpy().reshape(-1).astype(np.float32)
     nb = len(x) // QK6_K
@@ -233,26 +232,23 @@ def quantize_row_q6_k_ggml(x):
     for ib in range(nb):
         block = x[ib*QK6_K:(ib+1)*QK6_K]
         
-        # Quantize each group
+        # Find scales for each group
         scales = np.zeros(Q6_K_SCALE_SIZE, dtype=np.float32)
-        quantized = np.zeros(QK6_K, dtype=np.int8)
-        
         for ig in range(Q6_K_SCALE_SIZE):
             group = block[ig*16:(ig+1)*16]
-            scale, q = make_q6_quants(group, 31) # 6-bit: -31 to 31
-            scales[ig] = scale
-            quantized[ig*16:(ig+1)*16] = q
+            amax = np.max(np.abs(group))
+            scales[ig] = amax / 31.0 if amax > 0 else 0.0
         
         # Find max scale for block quantization
         max_scale = np.max(np.abs(scales))
         
         if max_scale < GROUP_MAX_EPS:
-            # Zero block
-            result.append(b'\x00' * (2 + 16 + 128 + 32))
+            # Zero block - GGML format: 2 bytes scale + 16 bytes scales + 128 bytes low + 64 bytes high
+            result.append(b'\x00' * (2 + 16 + 128 + 64))
             continue
         
         # Quantize scales to 8-bit
-        scale_scale = max_scale / 127
+        scale_scale = max_scale / 127.0
         iscale_scale = 1.0 / scale_scale
         
         # Block scale as FP16
@@ -264,39 +260,36 @@ def quantize_row_q6_k_ggml(x):
         q_scales = np.clip(q_scales, -128, 127)
         result.append(q_scales.tobytes())
         
-        # Requantize weights with quantized scales
+        # Quantize weights with quantized scales
+        quantized = np.zeros(QK6_K, dtype=np.int8)
         for ig in range(Q6_K_SCALE_SIZE):
             if q_scales[ig] == 0:
                 continue
             actual_scale = scale_scale * q_scales[ig]
-            iscale = 1.0 / actual_scale
             
             group_start = ig * 16
             group_end = (ig + 1) * 16
             group = block[group_start:group_end]
             
-            q = np.round(iscale * group).astype(np.int8)
-            q = np.clip(q, -32, 31)
-            quantized[group_start:group_end] = q
+            quantized[group_start:group_end] = make_q6_quants(group, actual_scale)
         
         # Convert to unsigned by adding 32
         quantized_u = (quantized + 32).astype(np.uint8)
         
-        # Pack 6-bit values
-        # GGML Q6_K packing is complex, simplified version here
-        # Lower 4 bits and upper 2 bits are packed separately
+        # Pack 6-bit values - GGML Q6_K format
+        # 256 6-bit values packed into 128 bytes (low 4 bits) + 64 bytes (high 2 bits)
         low_bits = np.zeros(128, dtype=np.uint8)
-        high_bits = np.zeros(32, dtype=np.uint8)
+        high_bits = np.zeros(64, dtype=np.uint8)
         
-        # Pack lower 4 bits (simplified)
+        # Pack lower 4 bits
         for i in range(128):
             idx1 = i * 2
             idx2 = i * 2 + 1
             if idx2 < QK6_K:
                 low_bits[i] = (quantized_u[idx1] & 0xF) | ((quantized_u[idx2] & 0xF) << 4)
         
-        # Pack upper 2 bits (simplified)
-        for i in range(32):
+        # Pack upper 2 bits
+        for i in range(64):
             val = 0
             for j in range(4):
                 idx = i * 4 + j
