@@ -586,10 +586,182 @@ def benchmark_quantization():
         q6_time = time.time() - start
         print(f"  Q6_K: {q6_time:.3f}s ({rows*cols/q6_time/1e6:.1f} M elements/s)")
 
-if __name__ == "__main__":
-    # Run tests
-    print("Running quantization tests...")
-    test_q4_0_repacking()
+def save_model_for_nntrainer(model_path, output_path, quant_type="q4_0", repack_format=None):
+    """
+    Convert and save a model in nntrainer format
     
-    print("\nRunning quantization benchmark...")
-    benchmark_quantization()
+    Args:
+        model_path: Path to the input model
+        output_path: Path for the output file
+        quant_type: Quantization type ("q4_0" or "q6_k")
+        repack_format: For Q4_0, can be None, "q4_0_4", or "q4_0_8"
+    """
+    print(f"Loading model from {model_path}...")
+    
+    # Load model
+    config = AutoConfig.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path,
+        torch_dtype=torch.float16 if GPU_AVAILABLE else torch.float32,
+        device_map="auto" if GPU_AVAILABLE else None,
+        low_cpu_mem_usage=True
+    )
+    
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    
+    # Get model configuration
+    model_config = {
+        "vocab_size": config.vocab_size,
+        "hidden_size": config.hidden_size,
+        "intermediate_size": config.intermediate_size,
+        "num_hidden_layers": config.num_hidden_layers,
+        "num_attention_heads": config.num_attention_heads,
+        "num_key_value_heads": getattr(config, "num_key_value_heads", config.num_attention_heads),
+        "max_position_embeddings": config.max_position_embeddings,
+        "rms_norm_eps": getattr(config, "rms_norm_eps", 1e-6),
+        "rope_theta": getattr(config, "rope_theta", 10000.0),
+        "quantization_type": quant_type,
+        "repack_format": repack_format if quant_type == "q4_0" else None
+    }
+    
+    print(f"Model configuration:")
+    for key, value in model_config.items():
+        print(f"  {key}: {value}")
+    
+    print(f"\nConverting weights to {quant_type} format...")
+    if repack_format:
+        print(f"  with repacking to {repack_format}")
+    
+    # Open output file
+    with open(output_path, "wb") as f:
+        # Write magic number
+        f.write(struct.pack("I", 0x4E4E5452))  # "NNTR"
+        
+        # Write version
+        f.write(struct.pack("I", 1))
+        
+        # Write model configuration
+        f.write(struct.pack("I", len(model_config)))
+        for key, value in model_config.items():
+            # Write key
+            key_bytes = key.encode('utf-8')
+            f.write(struct.pack("I", len(key_bytes)))
+            f.write(key_bytes)
+            
+            # Write value
+            if isinstance(value, int):
+                f.write(struct.pack("B", 0))  # Type: int
+                f.write(struct.pack("I", value))
+            elif isinstance(value, float):
+                f.write(struct.pack("B", 1))  # Type: float
+                f.write(struct.pack("f", value))
+            elif isinstance(value, str) or value is None:
+                f.write(struct.pack("B", 2))  # Type: string
+                value_str = str(value) if value is not None else ""
+                value_bytes = value_str.encode('utf-8')
+                f.write(struct.pack("I", len(value_bytes)))
+                f.write(value_bytes)
+        
+        # Write weights
+        ctx = ProcessingContext()
+        total_params = sum(p.numel() for p in model.parameters())
+        print(f"\nTotal parameters: {total_params/1e6:.2f}M")
+        
+        # Count number of weight tensors
+        weight_count = len(list(model.named_parameters()))
+        f.write(struct.pack("I", weight_count))
+        
+        # Process and write each weight
+        with tqdm(total=weight_count, desc="Converting weights") as pbar:
+            for name, param in model.named_parameters():
+                if param.requires_grad:
+                    param = param.detach()
+                
+                # Write tensor name
+                name_bytes = name.encode('utf-8')
+                f.write(struct.pack("I", len(name_bytes)))
+                f.write(name_bytes)
+                
+                # Write tensor shape
+                shape = list(param.shape)
+                f.write(struct.pack("I", len(shape)))
+                for dim in shape:
+                    f.write(struct.pack("I", dim))
+                
+                # Convert and write tensor data
+                if param.dim() == 2 and quant_type in ["q4_0", "q6_k"]:
+                    # Quantize matrix weights
+                    if quant_type == "q4_0" and repack_format:
+                        # Use repacking for Q4_0
+                        quantized = quantize_and_repack_q4_0(param, repack_format)
+                        f.write(struct.pack("B", 3))  # Type: Q4_0 repacked
+                        f.write(struct.pack("I", len(quantized)))
+                        f.write(quantized)
+                    else:
+                        # Standard quantization
+                        quantized = quantize_weights_parallel(param, quant_type, ctx.batch_size)
+                        if isinstance(quantized, list):
+                            quantized_data = b''.join(quantized)
+                        else:
+                            quantized_data = quantized
+                        
+                        type_id = 4 if quant_type == "q4_0" else 5  # Q4_0 or Q6_K
+                        f.write(struct.pack("B", type_id))
+                        f.write(struct.pack("I", len(quantized_data)))
+                        f.write(quantized_data)
+                else:
+                    # Store as float32 (vectors, biases, etc.)
+                    data = param.cpu().numpy().astype(np.float32)
+                    f.write(struct.pack("B", 6))  # Type: float32
+                    f.write(struct.pack("I", data.nbytes))
+                    f.write(data.tobytes())
+                
+                pbar.update(1)
+    
+    file_size = os.path.getsize(output_path)
+    print(f"\nConversion complete!")
+    print(f"Output file: {output_path}")
+    print(f"File size: {file_size/1024/1024:.2f} MB")
+    print(f"Compression ratio: {total_params * 4 / file_size:.2f}x")
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Convert model weights to nntrainer format")
+    parser.add_argument("model_path", type=str, help="Path to the input model")
+    parser.add_argument("output_path", type=str, help="Path for the output file")
+    parser.add_argument("--quant-type", type=str, default="q4_0", 
+                       choices=["q4_0", "q6_k"],
+                       help="Quantization type (default: q4_0)")
+    parser.add_argument("--repack-format", type=str, default=None,
+                       choices=[None, "q4_0_4", "q4_0_8"],
+                       help="Repacking format for Q4_0 (default: None)")
+    parser.add_argument("--test", action="store_true",
+                       help="Run tests instead of conversion")
+    parser.add_argument("--benchmark", action="store_true",
+                       help="Run benchmark instead of conversion")
+    
+    args = parser.parse_args()
+    
+    if args.test:
+        # Run tests
+        print("Running quantization tests...")
+        test_q4_0_repacking()
+        print("\nAll tests passed!")
+    elif args.benchmark:
+        # Run benchmark
+        print("Running quantization benchmark...")
+        benchmark_quantization()
+    else:
+        # Perform conversion
+        if args.repack_format and args.quant_type != "q4_0":
+            print("Warning: Repacking is only supported for Q4_0 quantization")
+            args.repack_format = None
+        
+        save_model_for_nntrainer(
+            args.model_path,
+            args.output_path,
+            args.quant_type,
+            args.repack_format
+        )
