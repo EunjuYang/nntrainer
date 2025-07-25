@@ -152,6 +152,11 @@ private:
   unsigned int router_logits_idx;
   unsigned int expert_mask_idx;
 
+  // Optimization-related members
+  std::vector<std::vector<std::pair<unsigned, float>>> cached_expert_assignments; /**< cached expert assignments to avoid repeated allocation */
+  std::vector<unsigned int> active_experts; /**< list of active expert indices for current batch */
+  std::vector<unsigned int> expert_workload; /**< workload count per expert for load balancing */
+
   /**
    * @brief expert forward computation without memory copies
    * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
@@ -168,6 +173,99 @@ private:
     const std::vector<std::pair<unsigned, float>> &token_assignments,
     const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
     const nntrainer::Tensor &down_proj, unsigned int hidden_size);
+
+  /**
+   * @brief optimized expert forward computation with better cache locality
+   * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
+   * @param output Output tensor to accumulate results
+   * @param token_assignments Vector of (token_index, weight) pairs for this expert
+   * @param gate_proj Gate projection weight tensor
+   * @param up_proj Up projection weight tensor
+   * @param down_proj Down projection weight tensor
+   * @param hidden_size Hidden dimension size
+   * @note Maintains exact same behavior as compute_expert_forward but with performance optimizations
+   */
+  inline void compute_expert_forward_fast(
+    const nntrainer::Tensor &input, nntrainer::Tensor &output,
+    const std::vector<std::pair<unsigned, float>> &token_assignments,
+    const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
+    const nntrainer::Tensor &down_proj, unsigned int hidden_size);
+
+  /**
+   * @brief optimized expert mask clearing with minimal memory bandwidth
+   * @param expert_mask Expert mask tensor to clear
+   * @param total_tokens Total number of tokens
+   * @param topk Number of experts per token
+   * @note Only clears the portion of mask that will be used
+   */
+  inline void optimize_expert_mask_clear(nntrainer::Tensor &expert_mask,
+                                        unsigned int total_tokens, 
+                                        unsigned int topk);
+
+  /**
+   * @brief optimized expert mask setting and assignment building
+   * @param expert_mask Expert mask tensor to set
+   * @param expert_assignments Expert assignment vectors to build
+   * @param indices_data TopK indices data
+   * @param values_data TopK values data  
+   * @param total_tokens Total number of tokens
+   * @param topk Number of experts per token
+   * @param num_experts Total number of experts
+   * @note Uses cache-friendly access patterns and specialized paths for different token counts
+   */
+  /**
+   * @brief optimized expert mask setting and assignment building
+   * @param expert_mask Expert mask tensor to set
+   * @param expert_assignments Expert assignment vectors to build
+   * @param indices_data TopK indices data
+   * @param values_data TopK values data  
+   * @param total_tokens Total number of tokens
+   * @param topk Number of experts per token
+   * @param num_experts Total number of experts
+   * @note Uses cache-friendly access patterns and specialized paths for different token counts
+   */
+  inline void optimize_expert_mask_and_assignments(
+    nntrainer::Tensor &expert_mask,
+    std::vector<std::vector<std::pair<unsigned, float>>> &expert_assignments,
+    const uint32_t *indices_data, const float *values_data,
+    unsigned int total_tokens, unsigned int topk, unsigned int num_experts);
+
+  /**
+   * @brief optimized expert mask setting and assignment building for 8-expert case
+   * @param expert_mask Expert mask tensor to set
+   * @param expert_assignments Expert assignment vectors to build
+   * @param active_experts List to store active expert indices
+   * @param indices_data TopK indices data
+   * @param values_data TopK values data  
+   * @param total_tokens Total number of tokens
+   * @param topk Number of experts per token
+   * @param num_experts Total number of experts
+   * @note Specialized for typical 8-expert incremental inference pattern
+   */
+  inline void optimize_expert_mask_and_assignments_8expert(
+    nntrainer::Tensor &expert_mask,
+    std::vector<std::vector<std::pair<unsigned, float>>> &expert_assignments,
+    std::vector<unsigned int> &active_experts,
+    const uint32_t *indices_data, const float *values_data,
+    unsigned int total_tokens, unsigned int topk, unsigned int num_experts);
+
+  /**
+   * @brief process experts with adaptive parallel execution strategy
+   * @param input Input tensor
+   * @param output Output tensor  
+   * @param context Run layer context
+   * @param hidden_size Hidden dimension size
+   * @param active_count Number of active experts
+   * @note Uses different scheduling strategies based on expert count:
+   *       - 1 expert: sequential execution
+   *       - 2-4 experts: static scheduling  
+   *       - 5-12 experts: dynamic scheduling (includes typical 8-expert case)
+   *       - >12 experts: dynamic scheduling with larger chunks
+   */
+  inline void process_experts_optimized(
+    const nntrainer::Tensor &input, nntrainer::Tensor &output,
+    nntrainer::RunLayerContext &context, unsigned int hidden_size,
+    unsigned int active_count);
 };
 } // namespace causallm
 
