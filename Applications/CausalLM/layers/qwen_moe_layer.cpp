@@ -83,6 +83,12 @@ void MoELayer::finalize(nntrainer::InitLayerContext &context) {
     acti_func.setActiFunc<float>(
       std::get<props::MoEActivation>(moe_props).get());
     break;
+  case ml::train::TensorDim::DataType::FP16:
+#ifdef ENABLE_FP16
+    acti_func.setActiFunc<_FP16>(
+      std::get<props::MoEActivation>(moe_props).get());
+    break;
+#endif
   default:
     throw std::runtime_error("Unsupported activation data type for MoE layer");
   }

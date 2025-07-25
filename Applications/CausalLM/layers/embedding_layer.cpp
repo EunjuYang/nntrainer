@@ -38,9 +38,9 @@ void EmbeddingLayer::finalize(nntrainer::InitLayerContext &context) {
   NNTR_THROW_IF(input_dim.channel() != 1, std::invalid_argument)
     << "Embedding layer takes only one for channel size";
 
-  NNTR_THROW_IF(input_dim.getDataType() != nntrainer::TensorDim::DataType::FP32,
-                std::invalid_argument)
-    << "Embedding layer takes only FP32 input data";
+  // NNTR_THROW_IF(input_dim.getDataType() != nntrainer::TensorDim::DataType::FP32,
+                // std::invalid_argument)
+    // << "Embedding layer takes only FP32 input data";
 
   auto &weight_regularizer =
     std::get<nntrainer::props::WeightRegularizer>(*layer_impl_props);
@@ -110,15 +110,32 @@ void EmbeddingLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
     nntrainer::TensorDim({1, 1, 1, out_dim}, hidden_.getTensorType());
 
   unsigned int b_size = input_.batch();
+  void *in_data;
+  nntrainer::Tensor batchsliced_hidden;
 
   for (unsigned int b = 0; b < b_size; ++b) {
-    float *in_data =
-      input_.getAddress<float>(b * input_.getDim().getFeatureLen());
-    nntrainer::Tensor batchsliced_hidden = hidden_.getBatchSlice(b, 1);
+    if(input_.getDataType() == nntrainer::TensorDim::DataType::FP32) {
+      in_data =
+        input_.getAddress<float>(b * input_.getDim().getFeatureLen());
+      batchsliced_hidden = hidden_.getBatchSlice(b, 1);
+    } else if(input_.getDataType() == nntrainer::TensorDim::DataType::FP16) {
+#ifdef ENABLE_FP16
+      in_data =
+        input_.getAddress<_FP16>(b * input_.getDim().getFeatureLen());
+      batchsliced_hidden = hidden_.getBatchSlice(b, 1);
+#endif
+    }
 
 #pragma omp parallel for
     for (unsigned int i = from; i < to; ++i) {
-      size_t embed_idx = static_cast<size_t>(in_data[i]);
+      size_t embed_idx;
+      if (input_.getDataType() == nntrainer::TensorDim::DataType::FP32) {
+        embed_idx = static_cast<size_t>(((float*)in_data)[i]);
+      } else if (input_.getDataType() == nntrainer::TensorDim::DataType::FP16) {
+        #ifdef ENABLE_FP16
+        embed_idx = static_cast<size_t>(((_FP16*)in_data)[i]);
+        #endif
+      }
       if (embed_idx >= in_dim) {
         throw std::invalid_argument("input word index is greater than in_dim");
       }

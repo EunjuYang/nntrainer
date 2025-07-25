@@ -72,7 +72,8 @@ void RMSNormLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
     nntrainer::Tensor out_step =
       out.getSharedDataTensor(out_step_dim, b * out_dim.getFeatureLen(), true);
 
-    if (in_step.getDataType() == ml::train::TensorDim::DataType::FP32) {
+    if (in_step.getDataType() == ml::train::TensorDim::DataType::FP32 ||
+        in_step.getDataType() == ml::train::TensorDim::DataType::FP16) {
       auto t = in_step.multiply(in_step).average(3).add(epsilon);
       t.inv_sqrt_i();
       in_step.multiply(t, out_step);
