@@ -614,6 +614,16 @@ void NeuralNetwork::save(const std::string &file_path,
       file_path, std::ios::out | std::ios::binary | std::ios::trunc);
 
     for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); iter++) {
+      // DO NOT SAVE
+      // std::cout << (*iter)->getName() << std::endl;
+      /**
+      if((*iter)->getName() == "embedding0" ||
+         (*iter)->getName() == "output_norm" ||
+         (*iter)->getName() == "output_of_causallm"){
+        std::cout << "[SKIP]" << (*iter)->getName() << std::endl;
+        continue;
+      }
+      */
       (*iter)->save(model_file, false, exec_mode);
     }
 
@@ -674,7 +684,14 @@ void NeuralNetwork::load(const std::string &file_path,
   for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); iter++) {
     auto weights = (*iter)->getRunContext().getWeights();
     for (auto weight : weights) {
-      size_t size = weight->getVariable().getMemoryBytes();
+      // size_t size = weight->getVariable().getMemoryBytes();
+      size_t size = 0;
+      if (weight->getVariable().getDataType() == TensorDim::DataType::Q4_0) {
+        size =
+          weight->getVariable().height() * weight->getVariable().width() * 4;
+      } else {
+        size = weight->getVariable().getMemoryBytes();
+      }
       auto tensor_data_type = weight->getDim().getDataType();
       weight->getVariableRef().setFileOffset(start_from);
       ///@todo instead of checking the data type,
@@ -685,7 +702,8 @@ void NeuralNetwork::load(const std::string &file_path,
       if (tensor_data_type != TensorDim::DataType::FP32 &&
           tensor_data_type != TensorDim::DataType::FP16 &&
           tensor_data_type != TensorDim::DataType::Q6_K &&
-          tensor_data_type != TensorDim::DataType::Q4_0) {
+          tensor_data_type != TensorDim::DataType::Q4_0 &&
+          tensor_data_type != TensorDim::DataType::Q4_K) {
         // for tensor with qparam
         size += sizeof(uint16_t);
       }
@@ -708,6 +726,7 @@ void NeuralNetwork::load(const std::string &file_path,
     auto model_file = checkedOpenStream<std::ifstream>(
       (v.size() == 2) ? v[1] : v[0], std::ios::in | std::ios::binary);
 
+    /**
     if (exec_mode == ml::train::ExecutionMode::INFERENCE) {
       std::vector<std::future<void>> futures;
       for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
@@ -723,11 +742,11 @@ void NeuralNetwork::load(const std::string &file_path,
       for (auto &f : futures)
         f.get();
     } else {
-      for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
-           ++iter) {
-        (*iter)->read(model_file, false, exec_mode, fsu_mode);
-      }
+     */
+    for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); ++iter) {
+      (*iter)->read(model_file, false, exec_mode, fsu_mode);
     }
+    // }
     try {
       /// this is assuming that the failure is allowed at the end of the file
       /// read. so, after this line, additional read shouldn't be called

@@ -101,6 +101,8 @@ int main(int argc, char *argv[]) {
     model->run(input_text, generation_cfg["do_sample"]);
 #endif
 
+    model->save_weight("qwen3-30b-moe-q40-fp32.bin");
+
   } catch (const std::exception &e) {
     std::cerr << "\n[!] FATAL ERROR: " << e.what() << "\n";
     return EXIT_FAILURE;
