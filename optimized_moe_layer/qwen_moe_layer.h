@@ -137,12 +137,14 @@ public:
 
 private:
   /**
-   * @brief Thread-local buffer for intermediate computations
+   * @brief Thread-local tensors for intermediate computations
    */
-  struct ThreadLocalBuffer {
-    std::vector<float> gate_out;
-    std::vector<float> up_out;
-    std::vector<float> intermediate;
+  struct ThreadLocalTensors {
+    nntrainer::Tensor gate_out;
+    nntrainer::Tensor up_out;
+    nntrainer::Tensor acti_out;
+    nntrainer::Tensor token_input;
+    nntrainer::Tensor token_output;
   };
 
   unsigned int num_experts;      /**< number of experts */
@@ -162,8 +164,12 @@ private:
   unsigned int router_logits_idx;
   unsigned int expert_mask_idx;
 
-  // Thread-local buffers for parallel processing
-  std::vector<ThreadLocalBuffer> thread_local_buffers;
+  // Thread-local tensors for parallel processing
+  std::vector<ThreadLocalTensors> thread_local_tensors;
+  
+  // Tensor dimensions for thread-local tensors
+  nntrainer::TensorDim intermediate_dim;
+  nntrainer::TensorDim hidden_dim;
 
   /**
    * @brief expert forward computation without memory copies
@@ -183,7 +189,7 @@ private:
     const nntrainer::Tensor &down_proj, unsigned int hidden_size);
 
   /**
-   * @brief Optimized expert forward computation using SIMD and thread-local buffers
+   * @brief Optimized expert forward computation using thread-local tensors
    * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
    * @param output Output tensor to accumulate results
    * @param token_assignments Vector of (token_index, weight) pairs for this expert
@@ -191,48 +197,14 @@ private:
    * @param up_proj Up projection weight tensor
    * @param down_proj Down projection weight tensor
    * @param hidden_size Hidden dimension size
-   * @param buffer Thread-local buffer for intermediate computations
+   * @param tensors Thread-local tensors for intermediate computations
    */
   inline void compute_expert_forward_optimized(
     const nntrainer::Tensor &input, nntrainer::Tensor &output,
     const std::vector<std::pair<unsigned, float>> &token_assignments,
     const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
     const nntrainer::Tensor &down_proj, unsigned int hidden_size,
-    ThreadLocalBuffer &buffer);
-
-  /**
-   * @brief Optimized matrix-vector multiplication
-   * @param matrix_row Input vector
-   * @param matrix Matrix data (row-major)
-   * @param result Output vector
-   * @param in_dim Input dimension
-   * @param out_dim Output dimension
-   */
-  inline void optimized_gemv(const float *matrix_row, const float *matrix,
-                             float *result, size_t in_dim, size_t out_dim);
-
-  /**
-   * @brief Optimized matrix-vector multiplication with accumulation
-   * @param matrix_row Input vector
-   * @param matrix Matrix data (row-major)
-   * @param result Output vector (accumulated)
-   * @param in_dim Input dimension
-   * @param out_dim Output dimension
-   * @param scale Scaling factor
-   */
-  inline void optimized_gemv_accumulate(const float *matrix_row, const float *matrix,
-                                        float *result, size_t in_dim, size_t out_dim,
-                                        float scale);
-
-  /**
-   * @brief Apply SiLU activation and element-wise multiplication
-   * @param gate_out Gate output
-   * @param up_out Up projection output
-   * @param result Result of silu(gate_out) * up_out
-   * @param size Vector size
-   */
-  inline void apply_silu_and_multiply(const float *gate_out, const float *up_out,
-                                      float *result, size_t size);
+    ThreadLocalTensors &tensors);
 };
 } // namespace causallm
 

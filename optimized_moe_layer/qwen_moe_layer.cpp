@@ -27,14 +27,11 @@
 #include <omp.h>
 #include <qwen_moe_layer.h>
 #include <stdexcept>
-#include <immintrin.h>  // For SIMD optimizations
 #include <algorithm>
 
 namespace causallm {
 
 static constexpr size_t SINGLE_INOUT_IDX = 0;
-// Cache line size for optimal memory access
-static constexpr size_t CACHE_LINE_SIZE = 64;
 
 MoELayer::MoELayer() :
   LayerImpl(),
@@ -159,14 +156,17 @@ void MoELayer::finalize(nntrainer::InitLayerContext &context) {
                           nntrainer::Initializer::ZEROS, false,
                           nntrainer::TensorLifespan::FORWARD_FUNC_LIFESPAN);
   
-  // Pre-allocate thread-local intermediate buffers for better performance
+  // Pre-allocate thread-local intermediate tensors for better performance
   unsigned int max_threads = omp_get_max_threads();
-  thread_local_buffers.resize(max_threads);
-  for (unsigned int i = 0; i < max_threads; ++i) {
-    thread_local_buffers[i].gate_out.resize(intermediate_size);
-    thread_local_buffers[i].up_out.resize(intermediate_size);
-    thread_local_buffers[i].intermediate.resize(intermediate_size);
-  }
+  thread_local_tensors.resize(max_threads);
+  
+  // Initialize tensor dimensions for thread-local tensors
+  intermediate_dim = nntrainer::TensorDim({1, 1, 1, intermediate_size}, 
+                                          nntrainer::TensorDim::TensorType(context.getFormat(),
+                                                                           context.getWeightDataType()));
+  hidden_dim = nntrainer::TensorDim({1, 1, 1, hidden_size},
+                                    nntrainer::TensorDim::TensorType(context.getFormat(),
+                                                                     context.getWeightDataType()));
 }
 
 void MoELayer::forwarding(nntrainer::RunLayerContext &context, bool training) {
@@ -219,11 +219,20 @@ void MoELayer::forwarding(nntrainer::RunLayerContext &context, bool training) {
     }
   }
 
-// expert forwarding with optimized memory access and SIMD
+// expert forwarding with optimized memory access
 #pragma omp parallel
   {
     int thread_id = omp_get_thread_num();
-    auto &buffer = thread_local_buffers[thread_id];
+    auto &tensors = thread_local_tensors[thread_id];
+    
+    // Ensure thread-local tensors are initialized
+    if (tensors.gate_out.empty()) {
+      tensors.gate_out = nntrainer::Tensor(intermediate_dim);
+      tensors.up_out = nntrainer::Tensor(intermediate_dim);
+      tensors.acti_out = nntrainer::Tensor(intermediate_dim);
+      tensors.token_input = nntrainer::Tensor(hidden_dim);
+      tensors.token_output = nntrainer::Tensor(hidden_dim);
+    }
     
 #pragma omp for schedule(dynamic, 1)
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
@@ -232,13 +241,13 @@ void MoELayer::forwarding(nntrainer::RunLayerContext &context, bool training) {
       if (assignments.empty())
         continue;
 
-      // Use optimized expert forward computation with thread-local buffers
+      // Use optimized expert forward computation with thread-local tensors
       compute_expert_forward_optimized(
         input, output, assignments,
         context.getWeight(expert_gate_proj_indices[expert_idx]),
         context.getWeight(expert_up_proj_indices[expert_idx]),
         context.getWeight(expert_down_proj_indices[expert_idx]), 
-        hidden_size, buffer);
+        hidden_size, tensors);
     }
   }
 
@@ -246,23 +255,19 @@ void MoELayer::forwarding(nntrainer::RunLayerContext &context, bool training) {
   output.reshape({batch_size, 1, seq_len, hidden_size});
 }
 
-// Optimized compute function using SIMD and better memory patterns
+// Optimized compute function using tensor operations with better memory patterns
 inline void MoELayer::compute_expert_forward_optimized(
   const nntrainer::Tensor &input, nntrainer::Tensor &output,
   const std::vector<std::pair<unsigned, float>> &token_assignments,
   const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
   const nntrainer::Tensor &down_proj, unsigned int hidden_size,
-  ThreadLocalBuffer &buffer) {
+  ThreadLocalTensors &tensors) {
 
   const unsigned intermediate_size = gate_proj.width();
   const unsigned num_tokens = token_assignments.size();
 
   if (num_tokens == 0)
     return;
-
-  const float *gate_data = gate_proj.getData<float>();
-  const float *up_data = up_proj.getData<float>();
-  const float *down_data = down_proj.getData<float>();
 
   // Process tokens in batches for better cache utilization
   constexpr size_t BATCH_SIZE = 4;
@@ -274,104 +279,35 @@ inline void MoELayer::compute_expert_forward_optimized(
       const unsigned token_idx = token_assignments[i].first;
       const float weight = token_assignments[i].second;
       
-      const float *input_ptr = input.getData<float>() + token_idx * hidden_size;
-      float *output_ptr = output.getData<float>() + token_idx * hidden_size;
+      // Create shared tensor for input token (no memory copy)
+      size_t token_offset = token_idx * hidden_size;
+      nntrainer::Tensor token_input =
+        input.getSharedDataTensor(hidden_dim, token_offset, true);
       
-      // Reset buffers
-      std::fill(buffer.gate_out.begin(), buffer.gate_out.end(), 0.0f);
-      std::fill(buffer.up_out.begin(), buffer.up_out.end(), 0.0f);
+      // Gate projection using tensor dot operation
+      token_input.dot(gate_proj, tensors.gate_out);
       
-      // Optimized matrix multiplication using SIMD when possible
-      // Gate projection: input @ gate_proj^T
-      optimized_gemv(input_ptr, gate_data, buffer.gate_out.data(), 
-                     hidden_size, intermediate_size);
+      // Apply activation (silu)
+      acti_func.run_fn(tensors.gate_out, tensors.acti_out);
       
-      // Up projection: input @ up_proj^T
-      optimized_gemv(input_ptr, up_data, buffer.up_out.data(), 
-                     hidden_size, intermediate_size);
+      // Up projection using tensor dot operation
+      token_input.dot(up_proj, tensors.up_out);
       
-      // Apply activation (silu) and multiply with up_out
-      apply_silu_and_multiply(buffer.gate_out.data(), buffer.up_out.data(), 
-                              buffer.intermediate.data(), intermediate_size);
+      // Element-wise multiply: silu(gate_out) * up_out
+      tensors.acti_out.multiply_i(tensors.up_out);
       
-      // Down projection and accumulate: intermediate @ down_proj^T
-      optimized_gemv_accumulate(buffer.intermediate.data(), down_data, 
-                                output_ptr, intermediate_size, hidden_size, weight);
+      // Down projection using tensor dot operation
+      tensors.acti_out.dot(down_proj, tensors.token_output);
+      
+      // Apply weight and accumulate to final output using shared tensor
+      size_t output_offset = token_idx * hidden_size;
+      nntrainer::Tensor token_output =
+        output.getSharedDataTensor(hidden_dim, output_offset, true);
+      
+      // Scale by weight and accumulate
+      tensors.token_output.multiply_i(weight);
+      token_output.add_i(tensors.token_output);
     }
-  }
-}
-
-// Optimized matrix-vector multiplication
-inline void MoELayer::optimized_gemv(const float *matrix_row, const float *matrix,
-                                     float *result, size_t in_dim, size_t out_dim) {
-  // Use SIMD instructions for better performance
-  #pragma omp simd aligned(matrix_row, matrix, result : CACHE_LINE_SIZE)
-  for (size_t i = 0; i < out_dim; ++i) {
-    float sum = 0.0f;
-    const float *mat_ptr = matrix + i * in_dim;
-    
-    // Unroll loop for better performance
-    size_t j = 0;
-    for (; j + 7 < in_dim; j += 8) {
-      sum += matrix_row[j] * mat_ptr[j];
-      sum += matrix_row[j+1] * mat_ptr[j+1];
-      sum += matrix_row[j+2] * mat_ptr[j+2];
-      sum += matrix_row[j+3] * mat_ptr[j+3];
-      sum += matrix_row[j+4] * mat_ptr[j+4];
-      sum += matrix_row[j+5] * mat_ptr[j+5];
-      sum += matrix_row[j+6] * mat_ptr[j+6];
-      sum += matrix_row[j+7] * mat_ptr[j+7];
-    }
-    
-    // Handle remaining elements
-    for (; j < in_dim; ++j) {
-      sum += matrix_row[j] * mat_ptr[j];
-    }
-    
-    result[i] = sum;
-  }
-}
-
-// Optimized matrix-vector multiplication with accumulation
-inline void MoELayer::optimized_gemv_accumulate(const float *matrix_row, const float *matrix,
-                                                float *result, size_t in_dim, size_t out_dim,
-                                                float scale) {
-  #pragma omp simd aligned(matrix_row, matrix, result : CACHE_LINE_SIZE)
-  for (size_t i = 0; i < out_dim; ++i) {
-    float sum = 0.0f;
-    const float *mat_ptr = matrix + i * in_dim;
-    
-    // Unroll loop for better performance
-    size_t j = 0;
-    for (; j + 7 < in_dim; j += 8) {
-      sum += matrix_row[j] * mat_ptr[j];
-      sum += matrix_row[j+1] * mat_ptr[j+1];
-      sum += matrix_row[j+2] * mat_ptr[j+2];
-      sum += matrix_row[j+3] * mat_ptr[j+3];
-      sum += matrix_row[j+4] * mat_ptr[j+4];
-      sum += matrix_row[j+5] * mat_ptr[j+5];
-      sum += matrix_row[j+6] * mat_ptr[j+6];
-      sum += matrix_row[j+7] * mat_ptr[j+7];
-    }
-    
-    // Handle remaining elements
-    for (; j < in_dim; ++j) {
-      sum += matrix_row[j] * mat_ptr[j];
-    }
-    
-    result[i] += sum * scale;
-  }
-}
-
-// Apply SiLU activation and element-wise multiplication
-inline void MoELayer::apply_silu_and_multiply(const float *gate_out, const float *up_out,
-                                              float *result, size_t size) {
-  #pragma omp simd aligned(gate_out, up_out, result : CACHE_LINE_SIZE)
-  for (size_t i = 0; i < size; ++i) {
-    // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
-    float x = gate_out[i];
-    float sigmoid = 1.0f / (1.0f + expf(-x));
-    result[i] = x * sigmoid * up_out[i];
   }
 }
 
@@ -402,8 +338,17 @@ void MoELayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   input_step_dim.height(to - from);
   output_step_dim.height(to - from);
 
-  // Get thread-local buffer for single-threaded incremental processing
-  auto &buffer = thread_local_buffers[0];
+  // Get thread-local tensors for single-threaded incremental processing
+  auto &tensors = thread_local_tensors[0];
+  
+  // Ensure tensors are initialized
+  if (tensors.gate_out.empty()) {
+    tensors.gate_out = nntrainer::Tensor(intermediate_dim);
+    tensors.up_out = nntrainer::Tensor(intermediate_dim);
+    tensors.acti_out = nntrainer::Tensor(intermediate_dim);
+    tensors.token_input = nntrainer::Tensor(hidden_dim);
+    tensors.token_output = nntrainer::Tensor(hidden_dim);
+  }
 
   for (unsigned int b = 0; b < input_.batch(); ++b) {
 
@@ -426,76 +371,61 @@ void MoELayer::incremental_forwarding(nntrainer::RunLayerContext &context,
       output.setZero();
       expert_mask.setZero();
 
-      // Routing - optimized for single token
+      // Routing - use tensor operations
       nntrainer::Tensor &gate_weights = context.getWeight(gate_idx);
-      const float *input_data = input.getData<float>();
-      float *logits_data = router_logits.getData<float>();
+      input.dot(gate_weights, router_logits);
       
-      // Direct matrix-vector multiplication for routing
-      optimized_gemv(input_data, gate_weights.getData<float>(), 
-                     logits_data, hidden_size, num_experts);
+      // Apply softmax
+      router_logits.apply(nntrainer::ActiFunc::softmax<float>, router_logits);
       
-      // Apply softmax in-place
-      float max_val = *std::max_element(logits_data, logits_data + num_experts);
-      float sum = 0.0f;
-      for (unsigned i = 0; i < num_experts; ++i) {
-        logits_data[i] = expf(logits_data[i] - max_val);
-        sum += logits_data[i];
-      }
-      float inv_sum = 1.0f / sum;
-      for (unsigned i = 0; i < num_experts; ++i) {
-        logits_data[i] *= inv_sum;
-      }
-      
-      // Find top-k experts efficiently for single token
-      std::vector<std::pair<float, unsigned>> expert_scores;
-      expert_scores.reserve(num_experts);
-      for (unsigned i = 0; i < num_experts; ++i) {
-        expert_scores.emplace_back(logits_data[i], i);
-      }
-      
-      // Partial sort to get top-k
-      std::partial_sort(expert_scores.begin(), expert_scores.begin() + topk,
-                        expert_scores.end(), std::greater<std::pair<float, unsigned>>());
+      // Get top-k using tensor operations
+      auto topk_result = router_logits.topK(topk);
+      auto topk_values = std::get<0>(topk_result);
+      auto topk_indices = std::get<1>(topk_result);
       
       // Normalize top-k weights
-      float topk_sum = 0.0f;
-      for (unsigned k = 0; k < topk; ++k) {
-        topk_sum += expert_scores[k].first;
-      }
-      float norm_factor = 1.0f / topk_sum;
+      topk_values.divide_i(topk_values.sum(3));
+      
+      const uint32_t *indices_data = topk_indices.getData<uint32_t>();
+      const float *values_data = topk_values.getData<float>();
       
       // Process selected experts directly
-      float *output_data = output.getData<float>();
       for (unsigned k = 0; k < topk; ++k) {
-        unsigned expert_idx = expert_scores[k].second;
-        float weight = expert_scores[k].first * norm_factor;
+        unsigned expert_idx = indices_data[k];
+        float weight = values_data[k];
         
         // Set expert mask
         expert_mask.setValue(expert_idx, 0, k, 0, 1.0f);
         
-        // Process this expert
-        const float *gate_data = context.getWeight(expert_gate_proj_indices[expert_idx]).getData<float>();
-        const float *up_data = context.getWeight(expert_up_proj_indices[expert_idx]).getData<float>();
-        const float *down_data = context.getWeight(expert_down_proj_indices[expert_idx]).getData<float>();
-        
-        const unsigned intermediate_size = context.getWeight(expert_gate_proj_indices[expert_idx]).width();
+        // Process this expert using tensor operations
+        const auto &gate_proj = context.getWeight(expert_gate_proj_indices[expert_idx]);
+        const auto &up_proj = context.getWeight(expert_up_proj_indices[expert_idx]);
+        const auto &down_proj = context.getWeight(expert_down_proj_indices[expert_idx]);
         
         // Gate projection
-        optimized_gemv(input_data, gate_data, buffer.gate_out.data(), 
-                       hidden_size, intermediate_size);
+        input.dot(gate_proj, tensors.gate_out);
+        
+        // Apply activation (silu)
+        acti_func.run_fn(tensors.gate_out, tensors.acti_out);
         
         // Up projection
-        optimized_gemv(input_data, up_data, buffer.up_out.data(), 
-                       hidden_size, intermediate_size);
+        input.dot(up_proj, tensors.up_out);
         
-        // Apply activation and multiply
-        apply_silu_and_multiply(buffer.gate_out.data(), buffer.up_out.data(),
-                                buffer.intermediate.data(), intermediate_size);
+        // Element-wise multiply
+        tensors.acti_out.multiply_i(tensors.up_out);
         
-        // Down projection with accumulation
-        optimized_gemv_accumulate(buffer.intermediate.data(), down_data,
-                                  output_data, intermediate_size, hidden_size, weight);
+        // Down projection
+        nntrainer::Tensor token_expert_output(hidden_dim);
+        tensors.acti_out.dot(down_proj, token_expert_output);
+
+        // Apply weight and accumulate to final output using shared tensor
+        size_t output_offset = k * hidden_size; // Corrected offset for single token
+        nntrainer::Tensor token_output =
+          output.getSharedDataTensor(hidden_dim, output_offset, true);
+
+        // Scale by weight and accumulate
+        token_expert_output.multiply_i(weight);
+        token_output.add_i(token_expert_output);
       }
       
       continue; // Skip the general path
@@ -549,7 +479,7 @@ void MoELayer::incremental_forwarding(nntrainer::RunLayerContext &context,
         context.getWeight(expert_gate_proj_indices[expert_idx]),
         context.getWeight(expert_up_proj_indices[expert_idx]),
         context.getWeight(expert_down_proj_indices[expert_idx]), 
-        hidden_size, buffer);
+        hidden_size, tensors);
     }
 
     // reshape output: [B*S,1,1,H] -> [B,1,S,H]
@@ -564,10 +494,60 @@ inline void MoELayer::compute_expert_forward(
   const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
   const nntrainer::Tensor &down_proj, unsigned int hidden_size) {
 
-  // Use thread-local buffer 0 for backward compatibility
-  compute_expert_forward_optimized(input, output, token_assignments,
-                                   gate_proj, up_proj, down_proj,
-                                   hidden_size, thread_local_buffers[0]);
+  const unsigned intermediate_size = gate_proj.width();
+  const unsigned num_tokens = token_assignments.size();
+
+  if (num_tokens == 0)
+    return;
+
+  // Create tensor dimensions for single token processing
+  nntrainer::TensorDim token_input_dim({1, 1, 1, hidden_size},
+                                       input.getTensorType());
+  nntrainer::TensorDim intermediate_dim({1, 1, 1, intermediate_size},
+                                        input.getTensorType());
+  nntrainer::TensorDim token_output_dim({1, 1, 1, hidden_size},
+                                        input.getTensorType());
+
+  // Process each token individually to avoid memory copies
+  for (size_t i = 0; i < num_tokens; ++i) {
+    const unsigned token_idx = token_assignments[i].first;
+    const float weight = token_assignments[i].second;
+
+    // Create shared tensor for input token (no memory copy)
+    size_t token_offset = token_idx * hidden_size;
+    nntrainer::Tensor token_input =
+      input.getSharedDataTensor(token_input_dim, token_offset, true);
+
+    // Create intermediate tensors for this token
+    nntrainer::Tensor gate_out(intermediate_dim);
+    nntrainer::Tensor acti_out(intermediate_dim);
+    nntrainer::Tensor up_out(intermediate_dim);
+
+    // Gate projection using optimized dot operation
+    token_input.dot(gate_proj, gate_out);
+
+    // Apply activation (silu)
+    acti_func.run_fn(gate_out, acti_out);
+
+    // Up projection using optimized dot operation
+    token_input.dot(up_proj, up_out);
+
+    // Element-wise multiply: silu(gate_out) * up_out
+    acti_out.multiply_i(up_out);
+
+    // Down projection using optimized dot operation
+    nntrainer::Tensor token_expert_output(token_output_dim);
+    acti_out.dot(down_proj, token_expert_output);
+
+    // Apply weight and accumulate to final output using shared tensor
+    size_t output_offset = token_idx * hidden_size;
+    nntrainer::Tensor token_output =
+      output.getSharedDataTensor(token_output_dim, output_offset, true);
+
+    // Scale by weight and accumulate
+    token_expert_output.multiply_i(weight);
+    token_output.add_i(token_expert_output);
+  }
 }
 
 void MoELayer::setProperty(const std::vector<std::string> &values) {

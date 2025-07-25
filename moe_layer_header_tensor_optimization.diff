@@ -1,0 +1,67 @@
+--- qwen_moe_layer_original.h	2025-07-25 12:46:23.540233798 +0000
++++ optimized_moe_layer/qwen_moe_layer.h	2025-07-25 12:49:22.124907771 +0000
+@@ -23,6 +23,7 @@
+ #include <acti_func.h>
+ #include <common_properties.h>
+ #include <layer_impl.h>
++#include <vector>
+ 
+ namespace causallm {
+ 
+@@ -135,6 +136,17 @@
+   static constexpr const char *type = "qwen_moe"; /**< type of the layer */
+ 
+ private:
++  /**
++   * @brief Thread-local tensors for intermediate computations
++   */
++  struct ThreadLocalTensors {
++    nntrainer::Tensor gate_out;
++    nntrainer::Tensor up_out;
++    nntrainer::Tensor acti_out;
++    nntrainer::Tensor token_input;
++    nntrainer::Tensor token_output;
++  };
++
+   unsigned int num_experts;      /**< number of experts */
+   unsigned int topk;             /**< number of experts per token, i.e., topk */
+   nntrainer::ActiFunc acti_func; /**< activation function for the expert */
+@@ -152,6 +164,13 @@
+   unsigned int router_logits_idx;
+   unsigned int expert_mask_idx;
+ 
++  // Thread-local tensors for parallel processing
++  std::vector<ThreadLocalTensors> thread_local_tensors;
++  
++  // Tensor dimensions for thread-local tensors
++  nntrainer::TensorDim intermediate_dim;
++  nntrainer::TensorDim hidden_dim;
++
+   /**
+    * @brief expert forward computation without memory copies
+    * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
+@@ -168,6 +187,24 @@
+     const std::vector<std::pair<unsigned, float>> &token_assignments,
+     const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
+     const nntrainer::Tensor &down_proj, unsigned int hidden_size);
++
++  /**
++   * @brief Optimized expert forward computation using thread-local tensors
++   * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
++   * @param output Output tensor to accumulate results
++   * @param token_assignments Vector of (token_index, weight) pairs for this expert
++   * @param gate_proj Gate projection weight tensor
++   * @param up_proj Up projection weight tensor
++   * @param down_proj Down projection weight tensor
++   * @param hidden_size Hidden dimension size
++   * @param tensors Thread-local tensors for intermediate computations
++   */
++  inline void compute_expert_forward_optimized(
++    const nntrainer::Tensor &input, nntrainer::Tensor &output,
++    const std::vector<std::pair<unsigned, float>> &token_assignments,
++    const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
++    const nntrainer::Tensor &down_proj, unsigned int hidden_size,
++    ThreadLocalTensors &tensors);
+ };
+ } // namespace causallm
+ 
