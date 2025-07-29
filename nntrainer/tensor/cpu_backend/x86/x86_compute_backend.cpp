@@ -79,7 +79,6 @@ void copy_fp32_s8(const unsigned int N, const float *X, int8_t *Y) {
   __fallback_copy_fp32_s8(N, X, Y);
 }
 
-
 /**
  * @brief     copy function : Y = X
  * @param[in] N number of elements in X
@@ -424,8 +423,17 @@ void repack_q4_0_to_q4_0_8(void *W, void *repacked_W, size_t data_size,
 #endif
 }
 
-void repack_q4_K(void *W, void *repacked_W, size_t data_size,
+void repack_q4_0_to_q4_0_4(void *W, void *repacked_W, size_t data_size,
                            const unsigned int M, const unsigned int N) {
+#ifdef ENABLE_GGML
+  __ggml_repack_q4_0_to_q4_0_4(W, repacked_W, data_size, M, N);
+#else
+  __fallback_repack_q4_0_to_q4_0_4(W, repacked_W, data_size, M, N);
+#endif
+}
+
+void repack_q4_K(void *W, void *repacked_W, size_t data_size,
+                 const unsigned int M, const unsigned int N) {
 #ifdef ENABLE_GGML
   __ggml_repack_q4_K_to_q4_K_8(W, repacked_W, data_size, M, N);
 #else
