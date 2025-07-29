@@ -437,8 +437,12 @@ public:
 
               nntrainer::quantize_q4_0(src_ptr, (void *)dst_ptr, N, K, nullptr);
 
-              nntrainer::repack_q4_0(W_q40.getData<uint8_t>(), dst_ptr,
-                                     W_q40.size(), N, K);
+              // arm
+              nntrainer::repack_q4_0_to_q4_0_8(W_q40.getData<uint8_t>(),
+                                               dst_ptr, W_q40.size(), N, K);
+              // x86
+              // nntrainer::repack_q4_0(W_q40.getData<uint8_t>(), dst_ptr,
+              //  W_q40.size(), N, K);
               std::cout << "Name:" << run_context.getWeight(i).getName()
                         << std::endl;
             } else {

@@ -667,10 +667,9 @@ void gemm_q4_0(const unsigned int M, const unsigned int N, const unsigned int K,
                const unsigned int ldb, T *C, const unsigned int ldc);
 
 void gemm_q4_0(const unsigned int M, std::vector<unsigned int> Ns,
-                        const unsigned int K, const float *A,
-                        const unsigned int lda, std::vector<void *>Bs,
-                        std::vector<unsigned int> ldbs, std::vector<float *>Cs,
-                        std::vector<unsigned int> ldc);
+               const unsigned int K, const float *A, const unsigned int lda,
+               std::vector<void *> Bs, std::vector<unsigned int> ldbs,
+               std::vector<float *> Cs, std::vector<unsigned int> ldc);
 /**
  * @brief q4_K GEMM : A (M,K) * W.T (N,K) = O (M,N)
  *
@@ -687,12 +686,11 @@ void gemm_q4_0(const unsigned int M, std::vector<unsigned int> Ns,
 void gemm_q4_K(const unsigned int M, const unsigned int N, const unsigned int K,
                const float *A, const unsigned int lda, const void *B,
                const unsigned int ldb, float *C, const unsigned int ldc);
-               
+
 void gemm_q4_K(const unsigned int M, std::vector<unsigned int> Ns,
-                        const unsigned int K, const float *A,
-                        const unsigned int lda, std::vector<void *>Bs,
-                        std::vector<unsigned int> ldbs, std::vector<float *>Cs,
-                        std::vector<unsigned int> ldc);
+               const unsigned int K, const float *A, const unsigned int lda,
+               std::vector<void *> Bs, std::vector<unsigned int> ldbs,
+               std::vector<float *> Cs, std::vector<unsigned int> ldc);
 /**
  * @brief q6_K GEMM : A (M,K) * W.T (N,K) = O (M,N)
  *
@@ -829,6 +827,12 @@ void quantize_row_q8_K(const T *src, void *dst, int64_t k);
 void repack_q4_0(void *W, void *repacked_W, size_t data_size,
                  const unsigned int M, const unsigned int N);
 
+void repack_q4_0_to_q4_0_8(void *W, void *repacked_W, size_t data_size,
+                           const unsigned int M, const unsigned int N);
+
+void repack_q4_0_to_q4_0_4(void *W, void *repacked_W, size_t data_size,
+                           const unsigned int M, const unsigned int N);
+
 /**
  * @brief repack q4K to q4Kx8
  *
@@ -922,9 +926,9 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
  * @param[in] tile_size size of tile
  */
 template <typename BType>
-void compute_kcaches(const float *A, const BType *B, float *output,
-                     int num_rows, int N, int chunk_size, int group_size,
-                     int tile_size);
+extern void compute_kcaches(const float *A, const BType *B, float *output,
+                            int num_rows, int N, int chunk_size, int group_size,
+                            int tile_size);
 
 /**
  * @brief Compute rotary embedding value
