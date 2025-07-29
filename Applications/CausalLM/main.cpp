@@ -208,7 +208,8 @@ int main(int argc, char *argv[]) {
     stop_and_print_peak();
 #endif
     // printMemoryUsage();
-    model->save_weight("qwen3-30b-moe-q6k-q40-q40-fp32-qkv-parallel-x86.bin");
+    // model->save_weight("qwen3-30b-moe-q6k-q40-q40-fp32-qkv-parallel-x86.bin");
+    model->save_weight("qwen3-30b-moe-q6k-q40-q40-fp32-qkv-parallel-arm.bin");
 
   } catch (const std::exception &e) {
     std::cerr << "\n[!] FATAL ERROR: " << e.what() << "\n";

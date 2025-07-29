@@ -1015,6 +1015,12 @@ extern void quantize_row_q8_K(const T *src, void *dst, int64_t k);
 extern void repack_q4_0(void *W, void *repacked_W, size_t data_size,
                         const unsigned int M, const unsigned int N);
 
+extern void repack_q4_0_to_q4_0_8(void *W, void *repacked_W, size_t data_size,
+                                  const unsigned int M, const unsigned int N);
+
+extern void repack_q4_0_to_q4_0_4(void *W, void *repacked_W, size_t data_size,
+                                  const unsigned int M, const unsigned int N);
+
 /**
  * @brief repack q4K to q4Kx8
  *
