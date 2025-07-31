@@ -305,13 +305,7 @@ void TieWordEmbedding::incremental_forwarding_lmhead(
                   std::invalid_argument)
       << "weight type is not supported for custom tie word embedding layer";
 
-    if (weight.getDataType() == nntrainer::TensorDim::DataType::Q6_K) {
-      // Q6_K/Q4_K weight is already supported transposed dot internally.
-      input_step.dot(weight, hidden_step);
-    } else {
-      // dot with Transposed
-      input_step.dot(weight, hidden_step, false, true);
-    }
+    input_step.dot(weight, hidden_step, false, true);
     if (auto &disable_bias =
           std::get<nntrainer::props::DisableBias>(*layer_impl_props);
         disable_bias.empty() || disable_bias.get() == false) {
@@ -365,7 +359,22 @@ void TieWordEmbedding::read(
     for (unsigned int i = 0; i < context.getNumWeights(); ++i) {
       /// @note shared weights are only be read at the first acecss
       if (context.isGradientFirstAccess(i)) {
-        context.getWeight(i).read(file);
+        // context.getWeight(i).read(file);
+        if (context.getWeight(i).getDataType() == nntrainer::Tdatatype::Q6_K) {
+          nntrainer::Tensor W_q6k = context.getWeight(i);
+          uint32_t N = W_q6k.height();
+          uint32_t K = W_q6k.width();
+
+          nntrainer::Tensor W_fp32(1, 1, N, K,
+                                   {ml::train::TensorDim::Format::NCHW,
+                                    ml::train::TensorDim::DataType::FP32});
+          W_fp32.read(file, start_offset, read_from_offset);
+          nntrainer::quantize_q6_K(W_fp32.getData<float>(),
+                                   (void *)W_q6k.getData<uint8_t>(), N, K,
+                                   nullptr);
+        } else {
+          context.getWeight(i).read(file, start_offset, read_from_offset);
+        }
         if (context.isMixedPrecision(i) && trainable &&
             !context.getWeightFP32(i).empty()) {
           context.getWeightFP32(i).copyData(context.getWeight(i));
