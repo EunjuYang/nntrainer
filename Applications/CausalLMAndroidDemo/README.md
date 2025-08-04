@@ -5,10 +5,12 @@ This is an Android demo application that runs CausalLM models directly on the de
 ## Features
 
 - **On-Device Execution**: Runs models directly on Android device without server
-- **Model Selection**: Choose from available models via dropdown menu
+- **Model Preloading**: Models are loaded when selected from dropdown for faster generation
+- **Model Status Display**: Shows current model loading status
 - **Text Input**: Enter prompts for the model to process
-- **Real-time Generation**: Generate text locally on device
+- **Real-time Generation**: Generate text locally on device with preloaded models
 - **Modern UI**: Material Design 3 interface with cards and smooth interactions
+- **Smart Memory Management**: Automatically unloads previous model when switching
 
 ## Architecture
 
@@ -91,8 +93,12 @@ Place your models in the following structure on your Android device:
    - `/sdcard/Download/models/`
    - App's private storage
 3. **Select Model**: Choose a model from the dropdown
+   - Model will be automatically loaded when selected
+   - Loading progress and status will be displayed
+   - Generate button will be enabled once model is loaded
 4. **Enter Prompt**: Type your prompt in the text field
-5. **Generate**: Tap "Generate" to run the model
+5. **Generate**: Tap "Generate" to run the preloaded model
+   - Text generation will be faster since model is already loaded
 
 ## Technical Details
 
@@ -111,9 +117,11 @@ object CausalLMNative {
 
 ### Memory Management
 
-- Models are loaded on-demand
+- Models are preloaded when selected from dropdown
 - Only one model is kept in memory at a time
-- Models are automatically unloaded when app is destroyed
+- Previous model is automatically unloaded when switching to a new model
+- All models are automatically unloaded when app is destroyed
+- Generate button is disabled until a model is successfully loaded
 
 ### Build Configuration
 

@@ -21,6 +21,7 @@ import java.io.File
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var selectedModel: String? = null
+    private var currentLoadedModel: String? = null
     private val availableModels = mutableListOf<String>()
     private val modelPaths = mutableMapOf<String, String>()
     
@@ -59,11 +60,22 @@ class MainActivity : AppCompatActivity() {
         // Setup spinner
         binding.modelSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                selectedModel = if (position > 0) availableModels[position - 1] else null
+                if (position > 0) {
+                    val newModel = availableModels[position - 1]
+                    if (selectedModel != newModel) {
+                        selectedModel = newModel
+                        // Preload model when selected
+                        preloadModel(newModel)
+                    }
+                } else {
+                    selectedModel = null
+                    updateModelStatus("No model selected")
+                }
             }
 
             override fun onNothingSelected(parent: AdapterView<*>?) {
                 selectedModel = null
+                updateModelStatus("No model selected")
             }
         }
 
@@ -71,12 +83,15 @@ class MainActivity : AppCompatActivity() {
         binding.generateButton.setOnClickListener {
             generateText()
         }
+        
+        // Initially disable generate button
+        binding.generateButton.isEnabled = false
     }
 
     private fun scanForModels() {
         lifecycleScope.launch {
             try {
-                showLoading(true)
+                showLoading(true, "Scanning for models...")
                 
                 withContext(Dispatchers.IO) {
                     // Scan for models in the Downloads directory
@@ -122,9 +137,13 @@ class MainActivity : AppCompatActivity() {
                 
                 if (availableModels.isEmpty()) {
                     showError("No models found. Please place model files in Downloads/models/")
+                    updateModelStatus("No models found")
+                } else {
+                    updateModelStatus("${availableModels.size} models found")
                 }
             } catch (e: Exception) {
                 showError("Error scanning for models: ${e.message}")
+                updateModelStatus("Error scanning models")
             } finally {
                 showLoading(false)
             }
@@ -132,12 +151,60 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateModelSpinner() {
-        val spinnerItems = mutableListOf("Select a model...")
+        val spinnerItems = mutableListOf("Select a model to load...")
         spinnerItems.addAll(availableModels)
         
         val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, spinnerItems)
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         binding.modelSpinner.adapter = adapter
+    }
+
+    private fun preloadModel(modelName: String) {
+        lifecycleScope.launch {
+            try {
+                showLoading(true, "Loading model: $modelName")
+                binding.generateButton.isEnabled = false
+                
+                val success = withContext(Dispatchers.IO) {
+                    // Check if we need to unload previous model
+                    if (currentLoadedModel != null && currentLoadedModel != modelName) {
+                        val modelType = detectModelType(currentLoadedModel!!)
+                        CausalLMNative.unloadModel(modelType)
+                        currentLoadedModel = null
+                    }
+                    
+                    // Check if model is already loaded
+                    val loadedModels = CausalLMNative.getLoadedModels()
+                    val modelType = detectModelType(modelName)
+                    
+                    if (!loadedModels.contains(modelType)) {
+                        // Load the model
+                        val modelPath = modelPaths[modelName] ?: throw Exception("Model path not found")
+                        
+                        if (!CausalLMNative.loadModel(modelType, modelPath)) {
+                            throw Exception("Failed to load model")
+                        }
+                    }
+                    
+                    currentLoadedModel = modelName
+                    true
+                }
+                
+                if (success) {
+                    updateModelStatus("Model loaded: $modelName")
+                    binding.generateButton.isEnabled = true
+                    showToast("Model loaded successfully!")
+                }
+            } catch (e: Exception) {
+                showError("Failed to load model: ${e.message}")
+                updateModelStatus("Failed to load model")
+                binding.generateButton.isEnabled = false
+                selectedModel = null
+                binding.modelSpinner.setSelection(0)
+            } finally {
+                showLoading(false)
+            }
+        }
     }
 
     private fun generateText() {
@@ -148,36 +215,25 @@ class MainActivity : AppCompatActivity() {
             return
         }
         
-        if (selectedModel == null) {
-            showError("Please select a model")
+        if (selectedModel == null || currentLoadedModel == null) {
+            showError("Please select and load a model first")
             return
         }
 
         lifecycleScope.launch {
             try {
-                showLoading(true)
+                showLoading(true, "Generating text...")
                 binding.outputCard.visibility = View.GONE
                 
                 val result = withContext(Dispatchers.IO) {
-                    // Check if model is already loaded
-                    val loadedModels = CausalLMNative.getLoadedModels()
-                    if (!loadedModels.contains(selectedModel)) {
-                        // Load the model
-                        val modelPath = modelPaths[selectedModel!!] ?: throw Exception("Model path not found")
-                        val modelType = detectModelType(selectedModel!!)
-                        
-                        if (!CausalLMNative.loadModel(modelType, modelPath)) {
-                            throw Exception("Failed to load model")
-                        }
-                    }
-                    
-                    // Generate text
-                    CausalLMNative.generateText(detectModelType(selectedModel!!), prompt, false)
+                    // Generate text using the preloaded model
+                    val modelType = detectModelType(currentLoadedModel!!)
+                    CausalLMNative.generateText(modelType, prompt, false)
                 }
                 
                 displayOutput(result)
             } catch (e: Exception) {
-                showError("Error: ${e.message}")
+                showError("Error generating text: ${e.message}")
             } finally {
                 showLoading(false)
             }
@@ -200,13 +256,24 @@ class MainActivity : AppCompatActivity() {
         binding.outputText.text = text
     }
 
-    private fun showLoading(show: Boolean) {
+    private fun showLoading(show: Boolean, message: String = "Loading...") {
         binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
-        binding.generateButton.isEnabled = !show
+        binding.loadingText.visibility = if (show) View.VISIBLE else View.GONE
+        binding.loadingText.text = message
+        binding.generateButton.isEnabled = !show && currentLoadedModel != null
+        binding.modelSpinner.isEnabled = !show
+    }
+
+    private fun updateModelStatus(status: String) {
+        binding.modelStatusText.text = status
     }
 
     private fun showError(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    }
+    
+    private fun showToast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() {
