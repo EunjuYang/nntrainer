@@ -61,3 +61,15 @@ e = executable('nntr_causallm',
     include_directories: causallm_inc,
     dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
 )
+
+server_src = [
+    meson.current_source_dir() / 'server.cpp',
+]
+
+server = executable('nntr_causallm_server',
+    server_src,
+    include_directories: causallm_inc,
+    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
+    cpp_args: '-pthread',
+    link_args: '-pthread'
+)
