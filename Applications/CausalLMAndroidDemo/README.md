@@ -1,129 +1,154 @@
 # CausalLM Android Demo App
 
-This is an Android demo application that interfaces with the CausalLM backend server to provide a user-friendly interface for text generation using various language models.
+This is an Android demo application that runs CausalLM models directly on the device using JNI (Java Native Interface). The app allows users to select models, input prompts, and generate text using various language models.
 
 ## Features
 
-- **Model Selection**: Choose from available language models via dropdown menu
+- **On-Device Execution**: Runs models directly on Android device without server
+- **Model Selection**: Choose from available models via dropdown menu
 - **Text Input**: Enter prompts for the model to process
-- **Real-time Generation**: Send requests to the backend and display generated text
+- **Real-time Generation**: Generate text locally on device
 - **Modern UI**: Material Design 3 interface with cards and smooth interactions
 
 ## Architecture
 
-### Backend (C++ HTTP Server)
-- Located in `/workspace/Applications/CausalLM/server.cpp`
-- Provides REST API endpoints:
-  - `GET /models` - List available models
-  - `POST /models/load` - Load a new model
-  - `POST /generate` - Generate text from prompt
-  - `GET /health` - Health check
+- **Native Layer**: C++ code using JNI to integrate CausalLM
+- **Android Layer**: Kotlin-based Android app
+- **Model Loading**: Dynamically loads models from device storage
+- **Memory Management**: Efficient model loading and unloading
 
-### Android App
-- **Language**: Kotlin
-- **UI**: Material Design Components
-- **Networking**: Retrofit2 with Coroutines
-- **Architecture**: Simple MVVM pattern
+## Prerequisites
 
-## Setup Instructions
+1. **Android NDK**: Required for building native code
+2. **CMake**: Version 3.18.1 or higher
+3. **Android Studio**: Latest version recommended
+4. **Model Files**: CausalLM model files in proper format
 
-### 1. Build and Run the Backend Server
+## Build Instructions
+
+### 1. Prepare the Environment
 
 ```bash
-cd /workspace/Applications/CausalLM
+# Ensure Android NDK is installed
+# In Android Studio: Tools -> SDK Manager -> SDK Tools -> NDK
 
-# Build the server (assuming meson build system is configured)
-meson build
-cd build
-ninja
-
-# Run the server
-./nntr_causallm_server [port] [model_name model_path ...]
-
-# Example:
-./nntr_causallm_server 8080 "Qwen3ForCausalLM" "/path/to/qwen3/model"
+# Clone the repository
+cd /workspace/Applications/CausalLMAndroidDemo
 ```
 
-### 2. Configure Android App
+### 2. Build nntrainer for Android
 
-1. **Update Server URL** (if not using emulator):
-   - Edit `/app/src/main/java/com/samsung/causallmdemo/network/ApiClient.kt`
-   - Change `BASE_URL` from `http://10.0.2.2:8080/` to your server's IP address
+Before building the app, you need to build nntrainer libraries for Android:
 
-2. **Build the Android App**:
-   ```bash
-   cd /workspace/Applications/CausalLMAndroidDemo
-   ./gradlew assembleDebug
-   ```
+```bash
+cd /workspace
+# Build nntrainer for Android using appropriate toolchain
+# This step requires Android NDK cross-compilation setup
+```
 
-3. **Install on Device/Emulator**:
-   ```bash
-   adb install app/build/outputs/apk/debug/app-debug.apk
-   ```
+### 3. Build the Android App
+
+```bash
+cd /workspace/Applications/CausalLMAndroidDemo
+
+# Build debug APK
+./gradlew assembleDebug
+
+# Or build in Android Studio
+```
+
+## Model Setup
+
+### Model Directory Structure
+
+Place your models in the following structure on your Android device:
+
+```
+/sdcard/Download/models/
+├── model_name_1/
+│   ├── config.json
+│   ├── generation_config.json
+│   ├── nntr_config.json
+│   └── model_weights.bin
+└── model_name_2/
+    ├── config.json
+    ├── generation_config.json
+    ├── nntr_config.json
+    └── model_weights.bin
+```
+
+### Supported Model Types
+
+- LlamaForCausalLM
+- Qwen3ForCausalLM
+- Qwen3MoeForCausalLM
+- Qwen3SlimMoeForCausalLM
 
 ## Usage
 
-1. Start the backend server with desired models loaded
-2. Launch the Android app
-3. Select a model from the dropdown
-4. Enter your prompt in the text field
-5. Tap "Generate" to get the model's response
+1. **Grant Permissions**: App will request storage permissions on first launch
+2. **Model Scanning**: App automatically scans for models in:
+   - `/sdcard/Download/models/`
+   - App's private storage
+3. **Select Model**: Choose a model from the dropdown
+4. **Enter Prompt**: Type your prompt in the text field
+5. **Generate**: Tap "Generate" to run the model
 
-## Network Configuration
+## Technical Details
 
-### For Android Emulator
-- Default configuration uses `10.0.2.2:8080` (host machine's localhost)
-- No changes needed if running server on the same machine
+### JNI Interface
 
-### For Physical Device
-1. Ensure device and server are on the same network
-2. Update `BASE_URL` in `ApiClient.kt` to server's IP address
-3. Server must be accessible from the device's network
+The app uses JNI to bridge between Kotlin/Java and C++ code:
 
-## API Endpoints
-
-### Get Available Models
-```
-GET /models
-Response: {"models": ["LlamaForCausalLM", "Qwen3ForCausalLM", ...]}
-```
-
-### Generate Text
-```
-POST /generate
-Body: {
-  "model": "Qwen3ForCausalLM",
-  "prompt": "Hello, world!",
-  "do_sample": false
-}
-Response: {
-  "status": "success",
-  "generated_text": "Generated response...",
-  "model": "Qwen3ForCausalLM"
+```kotlin
+object CausalLMNative {
+    external fun loadModel(modelName: String, modelPath: String): Boolean
+    external fun generateText(modelName: String, prompt: String, doSample: Boolean): String
+    external fun getLoadedModels(): Array<String>
+    external fun unloadModel(modelName: String)
 }
 ```
+
+### Memory Management
+
+- Models are loaded on-demand
+- Only one model is kept in memory at a time
+- Models are automatically unloaded when app is destroyed
+
+### Build Configuration
+
+The app uses CMake for native code compilation:
+- C++17 standard
+- Supports ARM64 and ARMv7 architectures
+- Links against nntrainer and tokenizer libraries
 
 ## Troubleshooting
 
-### Connection Issues
-- Check if server is running and accessible
-- Verify firewall settings allow connections on the server port
-- For physical devices, ensure correct IP address is configured
+### Build Issues
+- Ensure NDK is properly installed
+- Check CMakeLists.txt paths are correct
+- Verify nntrainer libraries are built for Android
+
+### Runtime Issues
+- Check model files are in correct location
+- Verify storage permissions are granted
+- Monitor logcat for native layer errors
 
 ### Model Loading Issues
-- Verify model files exist at specified paths
-- Check server logs for detailed error messages
-- Ensure sufficient memory for model loading
+- Ensure all required config files are present
+- Check model compatibility with app
+- Verify sufficient device memory
 
-### Build Issues
-- Ensure Android SDK is properly installed
-- Check Gradle version compatibility
-- Verify all dependencies are available
+## Performance Considerations
+
+- Model loading can take significant time
+- Text generation speed depends on device capabilities
+- Consider model size vs device memory limitations
 
 ## Future Improvements
 
-- Add model configuration options
-- Implement streaming responses
-- Add conversation history
-- Support for multiple concurrent requests
-- Model performance metrics display
+- Model download functionality
+- Quantization support for smaller models
+- Streaming text generation
+- Model caching and optimization
+- Support for more model architectures
