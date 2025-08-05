@@ -319,21 +319,15 @@ inline void SlimMoELayer::compute_expert_forward_no_critical(
   const nntrainer::Tensor &input, nntrainer::Tensor &expert_output,
   const std::vector<std::pair<unsigned, float>> &token_assignments,
   const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
-  const nntrainer::Tensor &down_proj, unsigned int hidden_size) {
+  const nntrainer::Tensor &down_proj, unsigned int hidden_size,
+  const nntrainer::TensorDim &token_input_dim,
+  const nntrainer::TensorDim &intermediate_dim,
+  const nntrainer::TensorDim &token_output_dim) {
 
-  const unsigned intermediate_size = gate_proj.width();
   const unsigned num_tokens = token_assignments.size();
 
   if (num_tokens == 0)
     return;
-
-  // Create tensor dimensions for single token processing
-  nntrainer::TensorDim token_input_dim({1, 1, 1, hidden_size},
-                                       input.getTensorType());
-  nntrainer::TensorDim intermediate_dim({1, 1, 1, intermediate_size},
-                                        input.getTensorType());
-  nntrainer::TensorDim token_output_dim({1, 1, 1, hidden_size},
-                                        input.getTensorType());
 
   // Process each token individually to avoid memory copies
   for (size_t i = 0; i < num_tokens; ++i) {
@@ -437,42 +431,67 @@ void SlimMoELayer::incremental_forwarding(nntrainer::RunLayerContext &context,
     // norm_topk_prob
     topk_values.divide_i(topk_values.sum(3));
 
-    const uint32_t *indices_data = topk_indices.getData<uint32_t>();
-    // Set expert mask
-    for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
-      for (int k = 0; k < static_cast<int>(topk); ++k) {
-        expert_mask.setValue(indices_data[i * topk + k], 0, k, i, 1.0f);
-      }
-    }
-
-    // Pre-compute expert token assignments for better performance
+    // Pre-compute expert token assignments with optimized allocation
     std::vector<std::vector<std::pair<unsigned, float>>> expert_assignments(
       num_experts);
+    
+    // Optimize for common case: single token (sequence length = 1)
+    if (total_tokens == 1) {
+      // For single token, each expert gets at most 1 assignment
+      for (auto& assignments : expert_assignments) {
+        assignments.reserve(1);
+      }
+    } else {
+      // Reserve space for assignments to avoid frequent reallocations
+      // Each expert typically gets assigned to topk tokens on average
+      const size_t expected_assignments_per_expert = 
+        (total_tokens * topk + num_experts - 1) / num_experts; // Ceiling division
+      for (auto& assignments : expert_assignments) {
+        assignments.reserve(expected_assignments_per_expert);
+      }
+    }
+    
+    // Combined loop: create expert assignments and set expert mask in one pass
+    const uint32_t *indices_data = topk_indices.getData<uint32_t>();
     for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
       for (int k = 0; k < static_cast<int>(topk); ++k) {
         unsigned expert_idx = indices_data[i * topk + k];
         float weight = topk_values.getValue<float>(i, 0, 0, k);
         expert_assignments[expert_idx].emplace_back(i, weight);
+        // Set expert mask only if needed (expert_mask might be used elsewhere)
+        expert_mask.setValue(expert_idx, 0, k, i, 1.0f);
       }
     }
 
-    // Parallel processing for multiple tokens with many active experts
-    std::vector<nntrainer::Tensor> expert_outputs(num_experts);
+    // Collect active experts and optimize memory allocation
+    std::vector<int> active_experts;
+    active_experts.reserve(num_experts); // Reserve space to avoid reallocations
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
          ++expert_idx) {
       if (!expert_assignments[expert_idx].empty()) {
-        expert_outputs[expert_idx] = nntrainer::Tensor(
-          total_tokens, 1, 1, hidden_size, output.getTensorType());
-        expert_outputs[expert_idx].setZero();
+        active_experts.push_back(expert_idx);
       }
     }
+    
+    // Only allocate tensors for active experts (memory optimization)
+    std::vector<nntrainer::Tensor> expert_outputs;
+    expert_outputs.reserve(active_experts.size());
+    for (size_t i = 0; i < active_experts.size(); ++i) {
+      expert_outputs.emplace_back(total_tokens, 1, 1, hidden_size, 
+                                  output.getTensorType());
+      expert_outputs.back().setZero();
+    }
+    
+    // Pre-create tensor dimensions for reuse (optimization)
+    const nntrainer::TensorDim token_input_dim({1, 1, 1, hidden_size},
+                                               input.getTensorType());
+    const nntrainer::TensorDim token_output_dim({1, 1, 1, hidden_size},
+                                                input.getTensorType());
 
 #pragma omp parallel for schedule(dynamic)
-    for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
-         ++expert_idx) {
+    for (int i = 0; i < static_cast<int>(active_experts.size()); ++i) {
+      const int expert_idx = active_experts[i];
       const auto &assignments = expert_assignments[expert_idx];
-      if (assignments.empty())
-        continue;
 
       ///@note load expert layer for the expert_idx
       nntrainer::Tensor expert_gate_proj =
@@ -491,9 +510,15 @@ void SlimMoELayer::incremental_forwarding(nntrainer::RunLayerContext &context,
       expert_up_proj.activate();
       expert_down_proj.activate();
 
+      // Create intermediate dimension for this expert (done once per expert)
+      const unsigned intermediate_size = expert_gate_proj.width();
+      const nntrainer::TensorDim local_intermediate_dim({1, 1, 1, intermediate_size},
+                                                        input.getTensorType());
+
       compute_expert_forward_no_critical(
-        input, expert_outputs[expert_idx], assignments, expert_gate_proj,
-        expert_up_proj, expert_down_proj, hidden_size);
+        input, expert_outputs[i], assignments, expert_gate_proj,
+        expert_up_proj, expert_down_proj, hidden_size,
+        token_input_dim, local_intermediate_dim, token_output_dim);
 
       ////@note Please note that the virtual tensor is deactivated after usage
       ////      This will allocate and load data from the storage on-the-fly
@@ -503,12 +528,9 @@ void SlimMoELayer::incremental_forwarding(nntrainer::RunLayerContext &context,
       expert_down_proj.deactivate();
     }
 
-    // Combine expert outputs
-    for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
-         ++expert_idx) {
-      if (!expert_assignments[expert_idx].empty()) {
-        output.add_i(expert_outputs[expert_idx]);
-      }
+    // Combine expert outputs (only active experts)
+    for (size_t i = 0; i < active_experts.size(); ++i) {
+      output.add_i(expert_outputs[i]);
     }
 
     // reshape output: [B*S,1,1,H] -> [B,1,S,H]
