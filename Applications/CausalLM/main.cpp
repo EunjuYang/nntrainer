@@ -199,15 +199,16 @@ int main(int argc, char *argv[]) {
 #ifdef PROFILE
     start_peak_tracker();
 #endif
-#if defined(_WIN32)
-    model->run(input_text.c_str(), generation_cfg["do_sample"]);
-#else
-    model->run(input_text, generation_cfg["do_sample"]);
-#endif
+// #if defined(_WIN32)
+// model->run(input_text.c_str(), generation_cfg["do_sample"]);
+// #else
+// model->run(input_text, generation_cfg["do_sample"]);
+// #endif
 #ifdef PROFILE
     stop_and_print_peak();
 #endif
-    printMemoryUsage();
+    // printMemoryUsage();
+    model->save_weight("qwen3-30b-moe-q6k-q40-q40-fp32-qkv-parallel-x86.bin");
 
   } catch (const std::exception &e) {
     std::cerr << "\n[!] FATAL ERROR: " << e.what() << "\n";

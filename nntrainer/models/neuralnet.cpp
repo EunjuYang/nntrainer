@@ -690,7 +690,15 @@ void NeuralNetwork::load(const std::string &file_path,
   for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); iter++) {
     auto weights = (*iter)->getRunContext().getWeights();
     for (auto weight : weights) {
-      size_t size = weight->getVariable().getMemoryBytes();
+      // size_t size = weight->getVariable().getMemoryBytes();
+      size_t size = 0;
+      if (weight->getVariable().getDataType() == TensorDim::DataType::Q4_0 ||
+          weight->getVariable().getDataType() == TensorDim::DataType::Q6_K) {
+        size =
+          weight->getVariable().height() * weight->getVariable().width() * 4;
+      } else {
+        size = weight->getVariable().getMemoryBytes();
+      }
       auto tensor_data_type = weight->getDim().getDataType();
       weight->getVariableRef().setFileOffset(start_from);
       ///@todo instead of checking the data type,
@@ -720,19 +728,14 @@ void NeuralNetwork::load(const std::string &file_path,
     NNTR_THROW_IF(!initialized, std::runtime_error)
       << "Cannot load if not initialized yet, path: " << file_path
       << " format: " << static_cast<unsigned>(format);
-    auto f_path = (v.size() == 2) ? v[1] : v[0];
 
-    auto model_file =
-      checkedOpenStream<std::ifstream>(f_path, std::ios::in | std::ios::binary);
-    char *mmaped = nullptr;
-    size_t f_size = 0;
-    struct stat st {};
-    model_file_fd = -1;
+    auto model_file_name = (v.size() == 2) ? v[1] : v[0];
+    auto model_file = checkedOpenStream<std::ifstream>(
+      model_file_name, std::ios::in | std::ios::binary);
+    model_file_fd = open(model_file_name.c_str(), O_RDONLY | O_DIRECT);
 
-#if defined(_WIN32)
-    HANDLE hFile, hMap;
-#endif
 
+    /**
     if (exec_mode == ml::train::ExecutionMode::INFERENCE) {
       if (MMAP_READ) {
 #if defined(_WIN32)
@@ -795,26 +798,25 @@ void NeuralNetwork::load(const std::string &file_path,
       }
 
     } else {
-      for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
-           ++iter) {
-        (*iter)->read(model_file, false, exec_mode, fsu_mode);
-      }
-
-      try {
-        /// this is assuming that the failure is allowed at the end of the file
-        /// read. so, after this line, additional read shouldn't be called
-        if (opt && istrequal(opt->getType(), "adam")) {
-          std::string opt_type;
-          opt_type.resize(4);
-          model_file.read((char *)&opt_type[0], 4);
-
-          if (istrequal(opt_type, "adam")) {
-            for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
-                 iter++) {
-              (*iter)->read(model_file, true, exec_mode);
-            }
+     */
+    for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); ++iter) {
+      (*iter)->read(model_file, false, exec_mode, fsu_mode);
+    }
+    // }
+    try {
+      /// this is assuming that the failure is allowed at the end of the file
+      /// read. so, after this line, additional read shouldn't be called
+      if (opt && istrequal(opt->getType(), "adam")) {
+        std::string opt_type;
+        opt_type.resize(4);
+        model_file.read((char *)&opt_type[0], 4);
+        if (istrequal(opt_type, "adam")) {
+          for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
+               iter++) {
+            (*iter)->read(model_file, true, exec_mode);
           }
         }
+      }
 
         if (!fsu_mode && exec_mode == ml::train::ExecutionMode::TRAIN) {
 

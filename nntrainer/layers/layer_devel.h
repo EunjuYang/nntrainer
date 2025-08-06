@@ -372,6 +372,8 @@ public:
       for (unsigned int i = 0; i < run_context.getNumWeights(); ++i) {
         if (run_context.isGradientFirstAccess(i)) {
           run_context.getWeight(i).save(file);
+          std::cout << "[SAVE] " << run_context.getWeight(i).getName()
+                    << std::endl;
         }
       }
     }
@@ -415,8 +417,34 @@ public:
         for (unsigned int i = 0; i < run_context.getNumWeights(); ++i) {
           /// @note shared weights are only be read at the first acecss
           if (run_context.isGradientFirstAccess(i)) {
-            run_context.getWeight(i).read(file, start_offset, read_from_offset,
-                                          file_fd);
+            // run_context.getWeight(i).read(file, start_offset,
+            // read_from_offset, file_fd);
+            if (run_context.getWeight(i).getDataType() == Tdatatype::Q4_0) {
+
+              Tensor W_q40 = run_context.getWeight(i);
+              uint32_t K = W_q40.height();
+              uint32_t N = W_q40.width();
+
+              Tensor W_fp32(1, 1, K, N,
+                            {ml::train::TensorDim::Format::NCHW,
+                             ml::train::TensorDim::DataType::FP32});
+              W_fp32.read(file, start_offset, read_from_offset, file_fd);
+              Tensor W_fp32_t = W_fp32.transpose("0:2:1");
+
+              const float *src_ptr = W_fp32_t.getData<float>();
+              std::vector<char> dst_vector = std::vector<char>(W_q40.size());
+              char *dst_ptr = (char *)dst_vector.data();
+
+              nntrainer::quantize_q4_0(src_ptr, (void *)dst_ptr, N, K, nullptr);
+
+              nntrainer::repack_q4_0(W_q40.getData<uint8_t>(), dst_ptr,
+                                     W_q40.size(), N, K);
+              std::cout << "Name:" << run_context.getWeight(i).getName()
+                        << std::endl;
+            } else {
+              run_context.getWeight(i).read(file, start_offset,
+                                            read_from_offset, file_fd);
+            }
             if (run_context.isMixedPrecision(i) && trainable &&
                 !run_context.getWeightFP32(i).empty()) {
               run_context.getWeightFP32(i).copyData(run_context.getWeight(i));
