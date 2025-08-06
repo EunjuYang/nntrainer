@@ -114,6 +114,17 @@ public:
    */
   WIN_EXPORT void setProperty(const std::vector<std::string> &values) override;
 
+  /**
+   * @copydoc Layer::read()
+   */
+  WIN_EXPORT void read(std::ifstream &file, nntrainer::RunLayerContext &context,
+                       bool opt_var, ml::train::ExecutionMode mode,
+                       bool trainable,
+                       nntrainer::TensorDim::DataType definedWeightDataType,
+                       bool fsu = false, size_t start_offset = 0,
+                       bool read_from_offset = false,
+                       int file_fd = -1) override;
+
   inline static const std::string type = "embedding_layer";
 
 private:

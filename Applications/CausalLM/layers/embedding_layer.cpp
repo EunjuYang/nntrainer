@@ -148,6 +148,54 @@ void EmbeddingLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   }
 }
 
+void EmbeddingLayer::read(std::ifstream &file,
+                          nntrainer::RunLayerContext &context, bool opt_var,
+                          ml::train::ExecutionMode mode, bool trainable,
+                          nntrainer::TensorDim::DataType definedWeightDataType,
+                          bool fsu, size_t start_offset, bool read_from_offset,
+                          int file_fd) {
+
+  // Only read when mode is embedding
+  if (opt_var) {
+    for (unsigned int i = 0; i < context.getNumWeights(); ++i) {
+      if (context.isGradientLastAccess(i) && trainable) {
+        /// @note read optimizer variables
+        for (unsigned int j = 0; j < context.getNumWeightOptVar(i); ++j) {
+          context.getWeightOptVar(i, j).read(file, start_offset,
+                                             read_from_offset, file_fd);
+        }
+      }
+    }
+  } else {
+    for (unsigned int i = 0; i < context.getNumWeights(); ++i) {
+      /// @note shared weights are only be read at the first acecss
+      if (context.isGradientFirstAccess(i)) {
+        // context.getWeight(i).read(file);
+        if (context.getWeight(i).getDataType() == nntrainer::Tdatatype::Q6_K) {
+          std::cout << "[Q6_K]" << std::endl;
+          nntrainer::Tensor W_q6k = context.getWeight(i);
+          uint32_t N = W_q6k.height();
+          uint32_t K = W_q6k.width();
+
+          nntrainer::Tensor W_fp32(1, 1, N, K,
+                                   {ml::train::TensorDim::Format::NCHW,
+                                    ml::train::TensorDim::DataType::FP32});
+          W_fp32.read(file, start_offset, read_from_offset, file_fd);
+          nntrainer::quantize_q6_K(W_fp32.getData<float>(),
+                                   (void *)W_q6k.getData<uint8_t>(), N, K,
+                                   nullptr);
+        } else {
+          context.getWeight(i).read(file);
+        }
+        if (context.isMixedPrecision(i) && trainable &&
+            !context.getWeightFP32(i).empty()) {
+          context.getWeightFP32(i).copyData(context.getWeight(i));
+        }
+      }
+    }
+  }
+}
+
 void EmbeddingLayer::calcDerivative(nntrainer::RunLayerContext &context) {
   throw nntrainer::exception::not_supported(
     "calcDerivative for Embedding layer is not supported");
