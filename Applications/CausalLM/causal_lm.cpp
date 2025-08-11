@@ -30,6 +30,10 @@
 #include <llm_util.hpp>
 #include <tokenizers_cpp.h>
 
+#ifdef __ANDROID__
+#include "android_memory_optimizer.h"
+#endif
+
 #include <embedding_layer.h>
 #include <mha_core.h>
 #include <rms_norm.h>
@@ -117,6 +121,19 @@ void CausalLM::initialize() {
 
   // RegisterCustomLayers
   registerCustomLayers();
+
+#ifdef __ANDROID__
+  // Configure Android-specific memory optimizations
+  size_t model_size = 3ULL * 1024 * 1024 * 1024; // Approximately 3GB for qwen3-30b-a3b-slim-cached
+  AndroidMemoryOptimizer::configureMemoryHints(model_size);
+  AndroidMemoryOptimizer::setHighPriority();
+  AndroidMemoryOptimizer::enableMemoryCompression();
+  
+  // Log available memory
+  size_t available = AndroidMemoryOptimizer::getAvailableMemory();
+  std::cout << "[Android] Available memory: " << (available / (1024 * 1024)) << " MB" << std::endl;
+  std::cout << "[Android] Optimal chunk size: " << (AndroidMemoryOptimizer::getOptimalChunkSize() / (1024 * 1024)) << " MB" << std::endl;
+#endif
 
   // construct causalLM model
   constructModel();

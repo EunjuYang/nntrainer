@@ -36,6 +36,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef __ANDROID__
+#include <unistd.h>
+#endif
+
 namespace nntrainer {
 
 Tensor::Tensor(
@@ -1604,7 +1608,15 @@ void Tensor::activate() {
     << "non-virtual tensor cannot call activate()";
 
   auto file_offset = getFileOffset();
-  size_t off = (file_offset / 4096) * 4096;
+  
+#ifdef __ANDROID__
+  // Get actual page size for Android
+  static const size_t page_size = sysconf(_SC_PAGESIZE);
+#else
+  static const size_t page_size = 4096;
+#endif
+  
+  size_t off = (file_offset / page_size) * page_size;
   size_t diff = file_offset - off;
   size_t len = getMemoryBytes() + diff;
 
@@ -1625,7 +1637,15 @@ void Tensor::deactivate() {
   };
 
   auto file_offset = getFileOffset();
-  size_t off = (file_offset / 4096) * 4096;
+  
+#ifdef __ANDROID__
+  // Get actual page size for Android
+  static const size_t page_size = sysconf(_SC_PAGESIZE);
+#else
+  static const size_t page_size = 4096;
+#endif
+  
+  size_t off = (file_offset / page_size) * page_size;
   size_t diff = file_offset - off;
   size_t len = getMemoryBytes() + diff;
 

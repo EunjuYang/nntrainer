@@ -60,6 +60,7 @@ LOCAL_SRC_FILES := ../main.cpp \
     ../nntr_qwen3_moe_causallm.cpp \
     ../huggingface_tokenizer.cpp \
     ../llm_util.cpp \
+    ../android_memory_optimizer.cpp \
     ../layers/embedding_layer.cpp \
     ../layers/mha_core.cpp \
     ../layers/qwen_moe_layer.cpp \
