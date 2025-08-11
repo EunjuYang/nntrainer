@@ -40,6 +40,8 @@
 #include <unistd.h>
 #endif
 
+#include "mmap_pool.h"
+
 namespace nntrainer {
 
 Tensor::Tensor(
@@ -1612,15 +1614,37 @@ void Tensor::activate() {
 #ifdef __ANDROID__
   // Get actual page size for Android
   static const size_t page_size = sysconf(_SC_PAGESIZE);
-#else
-  static const size_t page_size = 4096;
-#endif
   
+  // Use MMapPool for better performance
   size_t off = (file_offset / page_size) * page_size;
   size_t diff = file_offset - off;
   size_t len = getMemoryBytes() + diff;
-
+  
+  // Try to get from pool first
+  mapped_ptr = MMapPool::getInstance().requestMapping(this->fd, off, len);
+  
+  if (mapped_ptr == MAP_FAILED) {
+    // Fallback to direct mmap if pool fails
+    mapped_ptr = mmap(NULL, len, PROT_READ, MAP_PRIVATE | MAP_POPULATE, this->fd, off);
+    
+    if (mapped_ptr != MAP_FAILED) {
+      madvise(mapped_ptr, len, MADV_SEQUENTIAL);
+      madvise(mapped_ptr, len, MADV_WILLNEED);
+      
+      if (len < 16 * 1024 * 1024) {
+        mlock(mapped_ptr, len);
+      }
+    }
+  }
+#else
+  static const size_t page_size = 4096;
+  size_t off = (file_offset / page_size) * page_size;
+  size_t diff = file_offset - off;
+  size_t len = getMemoryBytes() + diff;
+  
   mapped_ptr = mmap(NULL, len, PROT_READ, MAP_PRIVATE, this->fd, off);
+#endif
+
   if (mapped_ptr == MAP_FAILED) {
     std::cerr << "[activate] mmap failed: " << strerror(errno) << std::endl;
   }
@@ -1641,20 +1665,24 @@ void Tensor::deactivate() {
 #ifdef __ANDROID__
   // Get actual page size for Android
   static const size_t page_size = sysconf(_SC_PAGESIZE);
+  
+  // Release to pool instead of unmapping immediately
+  // Pool will decide whether to keep it cached
+  MMapPool::getInstance().releaseMapping(mapped_ptr, true);
+  
 #else
   static const size_t page_size = 4096;
-#endif
-  
   size_t off = (file_offset / page_size) * page_size;
   size_t diff = file_offset - off;
   size_t len = getMemoryBytes() + diff;
-
+  
   auto ret_munmap = munmap((void *)mapped_ptr, len);
   const size_t error_buflen = 100;
   char error_buf[error_buflen];
   NNTR_THROW_IF(ret_munmap == -1, std::runtime_error)
     << "[deactivate] munmap failed: "
     << SAFE_STRERROR(errno, error_buf, error_buflen);
+#endif
 
   mapped_ptr = nullptr;
   itensor_->deactivate();
