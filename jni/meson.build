@@ -41,9 +41,31 @@ if ruy_dep.found()
   and_conf.set('MESON_RUY_ROOT', ruy_root)
 endif
 
-if clblast_dep.found()
-  and_conf.set('MESON_CLBLAST_ROOT', clblast_root)
-  and_conf.set('MESON_CL_ROOT', opencl_root)
+if get_option('enable-opencl')
+  if clblast_dep.found()
+    and_conf.set('MESON_CLBLAST_ROOT', clblast_root)
+    and_conf.set('MESON_CL_ROOT', opencl_root)
+  endif
+  # Set OpenCL block markers to include the OpenCL sections
+  and_conf.set('MESON_OPENCL_BLOCK_START', '')
+  and_conf.set('MESON_OPENCL_BLOCK_END', '')
+  and_conf.set('MESON_CLBLAST_BLOCK_START', '')
+  and_conf.set('MESON_CLBLAST_BLOCK_END', '')
+  # Set library dependencies
+  and_conf.set('MESON_OPENCL_SHARED_LIBS', 'LOCAL_SHARED_LIBRARIES := OpenCL')
+  and_conf.set('MESON_OPENCL_STATIC_LIBS', 'clblast')
+else
+  # Comment out OpenCL sections when OpenCL is disabled
+  and_conf.set('MESON_OPENCL_BLOCK_START', '# OpenCL disabled - start')
+  and_conf.set('MESON_OPENCL_BLOCK_END', '# OpenCL disabled - end')
+  and_conf.set('MESON_CLBLAST_BLOCK_START', '# CLBlast disabled - start')
+  and_conf.set('MESON_CLBLAST_BLOCK_END', '# CLBlast disabled - end')
+  # No OpenCL libraries needed
+  and_conf.set('MESON_OPENCL_SHARED_LIBS', '# OpenCL disabled - no shared libs')
+  and_conf.set('MESON_OPENCL_STATIC_LIBS', '')
+  # Set dummy paths to avoid undefined variables
+  and_conf.set('MESON_CLBLAST_ROOT', '')
+  and_conf.set('MESON_CL_ROOT', '')
 endif
 
 if tflite_dep.found()
