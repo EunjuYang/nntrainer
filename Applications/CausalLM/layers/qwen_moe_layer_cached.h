@@ -129,6 +129,10 @@ private:
   std::vector<bool> need_load;
 
   unsigned int gate_idx;
+  
+  // Add configurable cache size and prefetch flag
+  unsigned int max_cached_experts = 16;
+  bool enable_prefetch = false;
 
   // Intermediate tensor indices
   unsigned int router_logits_idx;

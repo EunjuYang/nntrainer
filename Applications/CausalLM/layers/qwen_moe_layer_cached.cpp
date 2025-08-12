@@ -31,6 +31,12 @@
 #include <qwen_moe_layer_cached.h>
 #include <stdexcept>
 
+#ifdef __ANDROID__
+#include <sys/mman.h>
+#include <unistd.h>
+#include <cstdlib>
+#endif
+
 namespace causallm {
 
 static constexpr size_t SINGLE_INOUT_IDX = 0;
@@ -48,7 +54,24 @@ CachedSlimMoELayer::CachedSlimMoELayer() :
   need_load({}),
   gate_idx(std::numeric_limits<unsigned>::max()),
   router_logits_idx(std::numeric_limits<unsigned>::max()),
-  expert_mask_idx(std::numeric_limits<unsigned>::max()) {}
+  expert_mask_idx(std::numeric_limits<unsigned>::max()) {
+#ifdef __ANDROID__
+  // Android에서 캐시 크기를 환경 변수로 설정 가능하게 함
+  const char* cache_size_env = std::getenv("NNTRAINER_MOE_CACHE_SIZE");
+  if (cache_size_env) {
+    max_cached_experts = std::stoi(cache_size_env);
+  } else {
+    max_cached_experts = 16; // 기본값
+  }
+  
+  // Prefetch 활성화 여부
+  const char* prefetch_env = std::getenv("NNTRAINER_MOE_PREFETCH");
+  enable_prefetch = prefetch_env && std::string(prefetch_env) == "1";
+#else
+  max_cached_experts = 16;
+  enable_prefetch = false;
+#endif
+}
 
 void CachedSlimMoELayer::finalize(nntrainer::InitLayerContext &context) {
 
@@ -535,7 +558,7 @@ void CachedSlimMoELayer::incremental_forwarding(
         context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
     }
 
-    while (loaded_expert_deque.size() > 16) {
+    while (loaded_expert_deque.size() > max_cached_experts) {
       // auto it = loaded_expert_deque.begin();
       // while ( it != loaded_expert_deque.end()) {
       //   int target_idx = *it;
