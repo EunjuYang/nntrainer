@@ -607,19 +607,27 @@ void CachedSlimMoELayer::incremental_forwarding(
               #pragma omp task shared(context)
               {
                 // Non-blocking prefetch
-                context.getWeight(expert_gate_proj_indices[candidate]).activate();
-                context.getWeight(expert_up_proj_indices[candidate]).activate();
-                context.getWeight(expert_down_proj_indices[candidate]).activate();
+                bool should_load = false;
                 
                 #pragma omp critical
                 {
-                  if (!need_load[candidate]) {
-                    // Already loaded by another thread
-                    return;
+                  if (need_load[candidate]) {
+                    should_load = true;
+                    need_load[candidate] = false;  // Mark as being loaded
                   }
-                  loaded_expert_deque.push_back(candidate);
-                  iteration_map[candidate] = --loaded_expert_deque.end();
-                  need_load[candidate] = false;
+                }
+                
+                if (should_load) {
+                  // Actually perform the loading
+                  context.getWeight(expert_gate_proj_indices[candidate]).activate();
+                  context.getWeight(expert_up_proj_indices[candidate]).activate();
+                  context.getWeight(expert_down_proj_indices[candidate]).activate();
+                  
+                  #pragma omp critical
+                  {
+                    loaded_expert_deque.push_back(candidate);
+                    iteration_map[candidate] = --loaded_expert_deque.end();
+                  }
                 }
               }
               prefetch_count++;
