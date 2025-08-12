@@ -1608,10 +1608,42 @@ void Tensor::activate() {
   size_t diff = file_offset - off;
   size_t len = getMemoryBytes() + diff;
 
+#ifdef __ANDROID__
+  // Android-specific optimizations for mmap
+  int mmap_flags = MAP_PRIVATE;
+  
+  // Use MAP_POPULATE to pre-fault pages if available
+  #ifdef MAP_POPULATE
+  const char* populate_env = std::getenv("NNTRAINER_MMAP_POPULATE");
+  if (populate_env && std::string(populate_env) == "1") {
+    mmap_flags |= MAP_POPULATE;
+  }
+  #endif
+  
+  mapped_ptr = mmap(NULL, len, PROT_READ, mmap_flags, this->fd, off);
+#else
   mapped_ptr = mmap(NULL, len, PROT_READ, MAP_PRIVATE, this->fd, off);
+#endif
+  
   if (mapped_ptr == MAP_FAILED) {
     std::cerr << "[activate] mmap failed: " << strerror(errno) << std::endl;
   }
+  
+#ifdef __ANDROID__
+  // Android에서 madvise 사용 가능
+  const char* madvise_env = std::getenv("NNTRAINER_USE_MADVISE");
+  if (madvise_env && std::string(madvise_env) == "1" && mapped_ptr != MAP_FAILED) {
+    // Sequential access pattern for better read-ahead
+    madvise(mapped_ptr, len, MADV_SEQUENTIAL);
+    
+    // Optionally use MADV_WILLNEED to prefetch
+    const char* willneed_env = std::getenv("NNTRAINER_MADVISE_WILLNEED");
+    if (willneed_env && std::string(willneed_env) == "1") {
+      madvise(mapped_ptr, len, MADV_WILLNEED);
+    }
+  }
+#endif
+  
   itensor_->activate((void *)&((uint8_t *)mapped_ptr)[diff]);
 }
 

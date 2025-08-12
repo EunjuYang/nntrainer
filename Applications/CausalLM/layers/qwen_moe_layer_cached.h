@@ -2,18 +2,12 @@
 /**
  * Copyright (C) 2025 Eunju Yang <ej.yang@samsung.com>
  *
- * @file   qwen_moe_layer_fsu.h
+ * @file   qwen_moe_layer_cached.h
  * @date   09 June 2025
  * @brief  This is Mixture of Expert Layer Class of Neural Network
  * @see    https://github.com/nnstreamer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
- * @note   This file is part of the Mixture of Expert Layer implementation.
- *         It does not support shared experts.
- *         This layer is implemented based on the LLama-MoE.
- *         For more information, please refer to the following link:
- *         https://arxiv.org/pdf/2406.16554
- * @todo   This layer does not support backwarding yet.
  */
 
 #ifndef __MOE_LAYER_H__
@@ -24,13 +18,12 @@
 #include <causallm_common_properties.h>
 #include <common_properties.h>
 #include <layer_impl.h>
-#include <list>
 
 namespace causallm {
 
 /**
- * @class   SlimMoELayer
- * @brief   Mixture of Expert Layer
+ * @class   CachedSlimMoELayer
+ * @brief   Mixture of Expert Layer with efficient caching
  */
 class CachedSlimMoELayer : public nntrainer::LayerImpl {
 public:
@@ -45,16 +38,24 @@ public:
   ~CachedSlimMoELayer() = default;
 
   /**
-   * @brief  Move constructor.
-   *  @param[in] CachedSlimMoELayer &&
+   * @brief  Move constructor - deleted due to atomic members
    */
-  CachedSlimMoELayer(CachedSlimMoELayer &&rhs) noexcept = default;
+  CachedSlimMoELayer(CachedSlimMoELayer &&rhs) noexcept = delete;
 
   /**
-   * @brief  Move assignment operator.
-   * @param[in] rhs CachedSlimMoELayer to be moved.
+   * @brief  Move assignment operator - deleted due to atomic members
    */
-  CachedSlimMoELayer &operator=(CachedSlimMoELayer &&rhs) = default;
+  CachedSlimMoELayer &operator=(CachedSlimMoELayer &&rhs) = delete;
+
+  /**
+   * @brief  Copy constructor - deleted
+   */
+  CachedSlimMoELayer(const CachedSlimMoELayer &) = delete;
+
+  /**
+   * @brief  Copy assignment operator - deleted
+   */
+  CachedSlimMoELayer &operator=(const CachedSlimMoELayer &) = delete;
 
   /**
    * @copydoc Layer::finalize(InitLayerContext &context)
@@ -64,7 +65,8 @@ public:
   /**
    * @copydoc Layer::forwarding(RunLayerContext &context, bool training)
    */
-  void forwarding(nntrainer::RunLayerContext &context, bool training) override;
+  void forwarding(nntrainer::RunLayerContext &context,
+                  bool training) override;
 
   /**
    * @copydoc Layer::incremental_forwarding(RunLayerContext &context, unsigned)
@@ -107,65 +109,63 @@ public:
    */
   bool supportBackwarding() const override { return false; }
 
-  static constexpr const char *type =
-    "moe_cached_slim"; /**< type of the layer */
+  static constexpr const char *type = "moe_cached_slim";
 
 private:
   unsigned int num_experts;      /**< number of experts */
-  unsigned int topk;             /**< number of experts per token, i.e., topk */
-  nntrainer::ActiFunc acti_func; /**< activation function for the expert */
+  unsigned int topk;             /**< number of experts per token */
+  nntrainer::ActiFunc acti_func; /**< activation function */
   std::tuple<props::NumExperts, props::NumExpertsPerToken,
              nntrainer::props::Unit, props::MoEActivation>
     moe_props;
 
-  // weight indeices
+  // Weight indices
   std::vector<unsigned int> expert_gate_proj_indices;
   std::vector<unsigned int> expert_up_proj_indices;
   std::vector<unsigned int> expert_down_proj_indices;
 
-  std::list<int> loaded_expert_deque;
-  std::unordered_map<int, std::list<int>::iterator> iteration_map;
-  std::unordered_map<int, double> expert_predict_scores;
-  std::vector<bool> need_load;
+  // Simplified cache management - minimal overhead
+  std::vector<bool> is_cached;   /**< O(1) lookup for cached status */
+  unsigned int cache_head = 0;   /**< Circular buffer head for LRU */
+  unsigned int cache_count = 0;  /**< Current number of cached experts */
+  std::vector<int> cache_ring;   /**< Circular buffer for cached experts */
+  std::vector<int> cache_position; /**< Position in cache ring (-1 if not cached) */
+  
+  // Dynamic cache sizing
+  unsigned int base_cache_size = 16;
+  unsigned int current_cache_size = 16;
+  
+  // Simple statistics (no atomic needed in single-threaded context)
+  unsigned int cache_hits = 0;
+  unsigned int cache_misses = 0;
 
   unsigned int gate_idx;
-
-  // Intermediate tensor indices
   unsigned int router_logits_idx;
   unsigned int expert_mask_idx;
-  /**
-   * @brief expert forward computation without memory copies
-   * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
-   * @param output Output tensor to accumulate results
-   * @param token_assignments Vector of (token_index, weight) pairs for this
-   * expert
-   * @param gate_proj Gate projection weight tensor
-   * @param up_proj Up projection weight tensor
-   * @param down_proj Down projection weight tensor
-   * @param hidden_size Hidden dimension size
-   */
-  inline void compute_expert_forward(
-    const nntrainer::Tensor &input, nntrainer::Tensor &output,
-    const std::vector<std::pair<unsigned, float>> &token_assignments,
-    const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
-    const nntrainer::Tensor &down_proj, unsigned int hidden_size);
 
   /**
-   * @brief expert forward computation without critical section
-   * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
-   * @param expert_output Expert-specific output tensor
-   * @param token_assignments Vector of (token_index, weight) pairs for this
-   * expert
-   * @param gate_proj Gate projection weight tensor
-   * @param up_proj Up projection weight tensor
-   * @param down_proj Down projection weight tensor
-   * @param hidden_size Hidden dimension size
+   * @brief Expert forward computation
    */
   inline void compute_expert_forward_no_critical(
     const nntrainer::Tensor &input, nntrainer::Tensor &expert_output,
     const std::vector<std::pair<unsigned, float>> &token_assignments,
     const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
     const nntrainer::Tensor &down_proj, unsigned int hidden_size);
+    
+  /**
+   * @brief Update cache size based on expert diversity
+   */
+  void updateCacheSize(int unique_experts, int total_requests);
+  
+  /**
+   * @brief Add expert to cache (handles eviction if needed)
+   */
+  void addToCache(int expert_idx, nntrainer::RunLayerContext &context);
+  
+  /**
+   * @brief Update LRU position for cached expert
+   */
+  void updateCacheLRU(int expert_idx);
 };
 } // namespace causallm
 
