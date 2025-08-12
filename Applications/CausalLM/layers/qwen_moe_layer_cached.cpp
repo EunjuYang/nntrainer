@@ -139,6 +139,7 @@ void CachedSlimMoELayer::finalize(nntrainer::InitLayerContext &context) {
 
   // Initialize cache management
   is_cached.resize(num_experts, false);
+  last_token_position.resize(num_experts, -1);
   cache_order.reserve(max_cached_experts);
 
   // 6. Request intermediate tensors
@@ -218,20 +219,41 @@ void CachedSlimMoELayer::incremental_forwarding(
     std::vector<std::vector<std::pair<unsigned, float>>> expert_assignments(
       num_experts);
 
+    // Track max token position for each expert (for sequence-aware caching)
+    std::vector<int> expert_max_token_pos(num_experts, -1);
+    
     for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
       for (int k = 0; k < static_cast<int>(topk); ++k) {
         unsigned expert_idx = indices_data[i * topk + k];
         float weight = topk_values.getValue<float>(i, 0, 0, k);
         expert_assignments[expert_idx].emplace_back(i, weight);
+        // Update max token position for this expert
+        expert_max_token_pos[expert_idx] = i;
       }
     }
 
+    // Determine if this is batch processing or incremental
+    bool is_batch_processing = (total_tokens > 1);
+    
     // Process each active expert
+    std::vector<std::pair<int, int>> expert_priority; // (expert_idx, max_token_pos)
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
          ++expert_idx) {
+      if (!expert_assignments[expert_idx].empty()) {
+        expert_priority.emplace_back(expert_idx, expert_max_token_pos[expert_idx]);
+      }
+    }
+    
+    // Sort experts by token position (process later tokens first for better cache reuse)
+    if (is_batch_processing) {
+      std::sort(expert_priority.begin(), expert_priority.end(),
+                [](const auto &a, const auto &b) {
+                  return a.second > b.second; // Higher position first
+                });
+    }
+
+    for (const auto &[expert_idx, max_pos] : expert_priority) {
       const auto &assignments = expert_assignments[expert_idx];
-      if (assignments.empty())
-        continue;
 
       // Load expert if not cached
       if (!is_cached[expert_idx]) {
@@ -240,22 +262,42 @@ void CachedSlimMoELayer::incremental_forwarding(
         context.getWeight(expert_down_proj_indices[expert_idx]).activate();
         
         is_cached[expert_idx] = true;
+        last_token_position[expert_idx] = max_pos;
         cache_order.push_back(expert_idx);
         
-        // Simple cache eviction - remove oldest if cache is full
+        // Cache eviction with sequence awareness
         while (cache_order.size() > max_cached_experts) {
-          int evict_idx = cache_order.front();
-          cache_order.erase(cache_order.begin());
+          // Find expert to evict (prefer those with lower token positions)
+          int evict_candidate_idx = 0;
+          int min_token_pos = last_token_position[cache_order[0]];
+          
+          if (is_batch_processing) {
+            // In batch mode, evict expert with lowest token position
+            for (size_t i = 1; i < cache_order.size() - 1; ++i) { // Don't evict the just-added one
+              if (last_token_position[cache_order[i]] < min_token_pos) {
+                min_token_pos = last_token_position[cache_order[i]];
+                evict_candidate_idx = i;
+              }
+            }
+          } else {
+            // In incremental mode, use standard LRU (evict oldest)
+            evict_candidate_idx = 0;
+          }
+          
+          int evict_idx = cache_order[evict_candidate_idx];
+          cache_order.erase(cache_order.begin() + evict_candidate_idx);
           
           if (is_cached[evict_idx]) {
             context.getWeight(expert_gate_proj_indices[evict_idx]).deactivate();
             context.getWeight(expert_up_proj_indices[evict_idx]).deactivate();
             context.getWeight(expert_down_proj_indices[evict_idx]).deactivate();
             is_cached[evict_idx] = false;
+            last_token_position[evict_idx] = -1;
           }
         }
       } else {
-        // Update LRU - move to end
+        // Update LRU and token position
+        last_token_position[expert_idx] = max_pos;
         auto it = std::find(cache_order.begin(), cache_order.end(), expert_idx);
         if (it != cache_order.end()) {
           cache_order.erase(it);
@@ -300,7 +342,8 @@ inline void CachedSlimMoELayer::compute_expert_forward_no_critical(
   nntrainer::TensorDim token_output_dim({1, 1, 1, hidden_size},
                                         input.getTensorType());
 
-  for (size_t i = 0; i < num_tokens; ++i) {
+  // Process tokens in reverse order for batch mode (better cache locality)
+  for (int i = num_tokens - 1; i >= 0; --i) {
     const unsigned token_idx = token_assignments[i].first;
     const float weight = token_assignments[i].second;
 
