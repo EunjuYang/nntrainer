@@ -70,10 +70,51 @@ CachedSlimMoELayer::CachedSlimMoELayer() :
   // Prefetch 활성화 여부
   const char* prefetch_env = std::getenv("NNTRAINER_MOE_PREFETCH");
   enable_prefetch = prefetch_env && std::string(prefetch_env) == "1";
+  
+  // Async deactivation 활성화 여부
+  const char* async_deact_env = std::getenv("NNTRAINER_ASYNC_DEACTIVATE");
+  enable_async_deactivation = async_deact_env && std::string(async_deact_env) == "1";
 #else
   max_cached_experts = 16;
   enable_prefetch = false;
+  enable_async_deactivation = false;
 #endif
+
+  // Start background deactivation thread only if enabled
+  if (enable_async_deactivation) {
+    deactivation_thread = std::thread([this]() {
+      while (!deactivation_thread_stop.load()) {
+        std::unique_lock<std::mutex> lock(deactivation_mutex);
+        deactivation_cv.wait(lock, [this] { 
+          return !deactivation_queue.empty() || deactivation_thread_stop.load(); 
+        });
+        
+        while (!deactivation_queue.empty()) {
+          auto [expert_idx, context_ptr] = deactivation_queue.front();
+          deactivation_queue.pop();
+          lock.unlock();
+          
+          // Perform deactivation outside of lock
+          if (context_ptr) {
+            context_ptr->getWeight(expert_gate_proj_indices[expert_idx]).deactivate();
+            context_ptr->getWeight(expert_up_proj_indices[expert_idx]).deactivate();
+            context_ptr->getWeight(expert_down_proj_indices[expert_idx]).deactivate();
+          }
+          
+          lock.lock();
+        }
+      }
+    });
+  }
+}
+
+CachedSlimMoELayer::~CachedSlimMoELayer() {
+  // Stop and join the deactivation thread
+  deactivation_thread_stop.store(true);
+  deactivation_cv.notify_all();
+  if (deactivation_thread.joinable()) {
+    deactivation_thread.join();
+  }
 }
 
 void CachedSlimMoELayer::finalize(nntrainer::InitLayerContext &context) {
@@ -617,15 +658,37 @@ void CachedSlimMoELayer::incremental_forwarding(
       iteration_map[expert_idx] = --loaded_expert_deque.end();
     }
     
-    // Simple cache eviction
+    // Cache eviction - use async or sync based on configuration
+    std::vector<int> evicted_experts;
     while (loaded_expert_deque.size() > max_cached_experts) {
       int target_idx = loaded_expert_deque.front();
-      context.getWeight(expert_gate_proj_indices[target_idx]).deactivate();
-      context.getWeight(expert_up_proj_indices[target_idx]).deactivate();
-      context.getWeight(expert_down_proj_indices[target_idx]).deactivate();
+      evicted_experts.push_back(target_idx);
+      
+      if (enable_async_deactivation) {
+        // Queue for background deactivation
+        {
+          std::lock_guard<std::mutex> lock(deactivation_mutex);
+          deactivation_queue.push({target_idx, &context});
+        }
+        deactivation_cv.notify_one();
+      } else {
+        // Synchronous deactivation (original behavior)
+        context.getWeight(expert_gate_proj_indices[target_idx]).deactivate();
+        context.getWeight(expert_up_proj_indices[target_idx]).deactivate();
+        context.getWeight(expert_down_proj_indices[target_idx]).deactivate();
+      }
+      
+      // Update tracking immediately
       loaded_expert_deque.pop_front();
       iteration_map.erase(target_idx);
       need_load[target_idx] = true;
+    }
+    
+    // Optional: Wait for deactivations if we evicted many experts (memory pressure)
+    // This prevents OOM when many experts are being swapped
+    if (enable_async_deactivation && evicted_experts.size() > 4) {
+      // Give deactivation thread time to free memory
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     // Combine expert outputs

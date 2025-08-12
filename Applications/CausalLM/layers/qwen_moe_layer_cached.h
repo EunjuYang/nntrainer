@@ -27,6 +27,9 @@
 #include <list>
 #include <mutex>
 #include <atomic>
+#include <queue>
+#include <condition_variable>
+#include <thread>
 
 namespace causallm {
 
@@ -44,7 +47,7 @@ public:
   /**
    * @brief     Destructor of Mixture of Expert Layer
    */
-  ~CachedSlimMoELayer() = default;
+  ~CachedSlimMoELayer();
 
   /**
    * @brief  Move constructor.
@@ -134,12 +137,20 @@ private:
   std::vector<std::vector<int>> expert_history;  // Track expert usage history
   std::atomic<bool> prefetch_in_progress{false};
   std::mutex cache_mutex;  // For thread-safe cache operations
+  
+  // Background deactivation queue
+  std::queue<std::tuple<int, nntrainer::RunLayerContext*>> deactivation_queue;
+  std::mutex deactivation_mutex;
+  std::condition_variable deactivation_cv;
+  std::atomic<bool> deactivation_thread_stop{false};
+  std::thread deactivation_thread;
 
   unsigned int gate_idx;
   
   // Add configurable cache size and prefetch flag
   unsigned int max_cached_experts = 16;
   bool enable_prefetch = false;
+  bool enable_async_deactivation = false;
 
   // Intermediate tensor indices
   unsigned int router_logits_idx;
