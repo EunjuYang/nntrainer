@@ -2,7 +2,7 @@
 /**
  * Copyright (C) 2025 Eunju Yang <ej.yang@samsung.com>
  *
- * @file   qwen_moe_layer_fsu.h
+ * @file   qwen_moe_layer_cached.h
  * @date   09 June 2025
  * @brief  This is Mixture of Expert Layer Class of Neural Network
  * @see    https://github.com/nnstreamer/nntrainer
@@ -21,21 +21,24 @@
 #ifdef __cplusplus
 
 #include <acti_func.h>
+#include <atomic>
 #include <causallm_common_properties.h>
 #include <common_properties.h>
+#include <condition_variable>
+#include <future>
 #include <layer_impl.h>
 #include <list>
+#include <memory>
 #include <mutex>
-#include <atomic>
 #include <queue>
-#include <condition_variable>
 #include <thread>
+#include <vector>
 
 namespace causallm {
 
 /**
- * @class   SlimMoELayer
- * @brief   Mixture of Expert Layer
+ * @class   CachedSlimMoELayer
+ * @brief   Mixture of Expert Layer with caching support
  */
 class CachedSlimMoELayer : public nntrainer::LayerImpl {
 public:
@@ -51,7 +54,7 @@ public:
 
   /**
    * @brief  Move constructor.
-   *  @param[in] CachedSlimMoELayer &&
+   * @param[in] CachedSlimMoELayer &&
    */
   CachedSlimMoELayer(CachedSlimMoELayer &&rhs) noexcept = default;
 
@@ -69,10 +72,12 @@ public:
   /**
    * @copydoc Layer::forwarding(RunLayerContext &context, bool training)
    */
-  void forwarding(nntrainer::RunLayerContext &context, bool training) override;
+  void forwarding(nntrainer::RunLayerContext &context,
+                  bool training) override;
 
   /**
-   * @copydoc Layer::incremental_forwarding(RunLayerContext &context, unsigned)
+   * @copydoc Layer::incremental_forwarding(RunLayerContext &context,
+   * unsigned)
    */
   void incremental_forwarding(nntrainer::RunLayerContext &context,
                               unsigned int from, unsigned int to,
@@ -94,8 +99,8 @@ public:
   void setProperty(const std::vector<std::string> &values) override;
 
   /**
-   * @copydoc Layer::exportTo(Exporter &exporter, const ml::train::ExportMethods
-   * &methods)
+   * @copydoc Layer::exportTo(Exporter &exporter, const
+   * ml::train::ExportMethods &methods)
    */
   void exportTo(nntrainer::Exporter &exporter,
                 const ml::train::ExportMethods &method) const override;
@@ -116,36 +121,37 @@ public:
     "moe_cached_slim"; /**< type of the layer */
 
 private:
-  unsigned int num_experts;      /**< number of experts */
-  unsigned int topk;             /**< number of experts per token, i.e., topk */
-  nntrainer::ActiFunc acti_func; /**< activation function for the expert */
+  unsigned int num_experts; /**< number of experts */
+  unsigned int topk;        /**< number of experts per token */
+  nntrainer::ActiFunc acti_func; /**< activation function */
   std::tuple<props::NumExperts, props::NumExpertsPerToken,
              nntrainer::props::Unit, props::MoEActivation>
     moe_props;
 
-  // weight indices
+  // Weight indices
   std::vector<unsigned int> expert_gate_proj_indices;
   std::vector<unsigned int> expert_up_proj_indices;
   std::vector<unsigned int> expert_down_proj_indices;
 
   // Simplified cache management - reduce overhead
-  std::vector<int> cache_order;  // Simple vector for LRU tracking
-  std::vector<bool> is_cached;   // Fast O(1) lookup
-  std::atomic<int> cache_size{0};
-  
+  std::vector<int> cache_order;   /**< Simple vector for LRU tracking */
+  std::vector<bool> is_cached;    /**< Fast O(1) lookup */
+  std::atomic<int> cache_size{0}; /**< Current cache size */
+
   // Lightweight async loading
-  std::atomic<int> loading_expert{-1};  // Currently loading expert
-  std::future<void> load_future;
-  
+  std::atomic<int> loading_expert{-1}; /**< Currently loading expert */
+  std::future<void> load_future;       /**< Future for async loading */
+
   // Optional background deactivation (only if enabled)
   std::unique_ptr<std::thread> deactivation_thread;
-  std::queue<std::tuple<int, nntrainer::RunLayerContext*>> deactivation_queue;
+  std::queue<std::tuple<int, nntrainer::RunLayerContext *>>
+    deactivation_queue;
   std::mutex deactivation_mutex;
   std::condition_variable deactivation_cv;
   std::atomic<bool> deactivation_thread_stop{false};
 
   unsigned int gate_idx;
-  
+
   // Configuration flags
   unsigned int max_cached_experts = 16;
   bool enable_prefetch = false;
@@ -154,8 +160,9 @@ private:
   // Intermediate tensor indices
   unsigned int router_logits_idx;
   unsigned int expert_mask_idx;
+
   /**
-   * @brief expert forward computation without memory copies
+   * @brief Expert forward computation without memory copies
    * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
    * @param output Output tensor to accumulate results
    * @param token_assignments Vector of (token_index, weight) pairs for this
@@ -172,7 +179,7 @@ private:
     const nntrainer::Tensor &down_proj, unsigned int hidden_size);
 
   /**
-   * @brief expert forward computation without critical section
+   * @brief Expert forward computation without critical section
    * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
    * @param expert_output Expert-specific output tensor
    * @param token_assignments Vector of (token_index, weight) pairs for this

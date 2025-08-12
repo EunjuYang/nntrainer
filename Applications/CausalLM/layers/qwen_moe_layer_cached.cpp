@@ -58,20 +58,21 @@ CachedSlimMoELayer::CachedSlimMoELayer() :
   expert_mask_idx(std::numeric_limits<unsigned>::max()) {
 #ifdef __ANDROID__
   // Android에서 캐시 크기를 환경 변수로 설정 가능하게 함
-  const char* cache_size_env = std::getenv("NNTRAINER_MOE_CACHE_SIZE");
+  const char *cache_size_env = std::getenv("NNTRAINER_MOE_CACHE_SIZE");
   if (cache_size_env) {
     max_cached_experts = std::stoi(cache_size_env);
   } else {
     max_cached_experts = 16; // 기본값
   }
-  
+
   // Prefetch 활성화 여부
-  const char* prefetch_env = std::getenv("NNTRAINER_MOE_PREFETCH");
+  const char *prefetch_env = std::getenv("NNTRAINER_MOE_PREFETCH");
   enable_prefetch = prefetch_env && std::string(prefetch_env) == "1";
-  
+
   // Async deactivation 활성화 여부
-  const char* async_deact_env = std::getenv("NNTRAINER_ASYNC_DEACTIVATE");
-  enable_async_deactivation = async_deact_env && std::string(async_deact_env) == "1";
+  const char *async_deact_env = std::getenv("NNTRAINER_ASYNC_DEACTIVATE");
+  enable_async_deactivation =
+    async_deact_env && std::string(async_deact_env) == "1";
 #else
   max_cached_experts = 16;
   enable_prefetch = false;
@@ -83,22 +84,26 @@ CachedSlimMoELayer::CachedSlimMoELayer() :
     deactivation_thread = std::make_unique<std::thread>([this]() {
       while (!deactivation_thread_stop.load()) {
         std::unique_lock<std::mutex> lock(deactivation_mutex);
-        deactivation_cv.wait(lock, [this] { 
-          return !deactivation_queue.empty() || deactivation_thread_stop.load(); 
+        deactivation_cv.wait(lock, [this] {
+          return !deactivation_queue.empty() ||
+                 deactivation_thread_stop.load();
         });
-        
+
         while (!deactivation_queue.empty()) {
           auto [expert_idx, context_ptr] = deactivation_queue.front();
           deactivation_queue.pop();
           lock.unlock();
-          
+
           // Perform deactivation outside of lock
           if (context_ptr) {
-            context_ptr->getWeight(expert_gate_proj_indices[expert_idx]).deactivate();
-            context_ptr->getWeight(expert_up_proj_indices[expert_idx]).deactivate();
-            context_ptr->getWeight(expert_down_proj_indices[expert_idx]).deactivate();
+            context_ptr->getWeight(expert_gate_proj_indices[expert_idx])
+              .deactivate();
+            context_ptr->getWeight(expert_up_proj_indices[expert_idx])
+              .deactivate();
+            context_ptr->getWeight(expert_down_proj_indices[expert_idx])
+              .deactivate();
           }
-          
+
           lock.lock();
         }
       }
@@ -476,7 +481,6 @@ void CachedSlimMoELayer::incremental_forwarding(
 
   nntrainer::Tensor &input_ = context.getInput(SINGLE_INOUT_IDX);
   nntrainer::Tensor &output_ = context.getOutput(SINGLE_INOUT_IDX);
-
   nntrainer::Tensor &router_logits_ = context.getTensor(router_logits_idx);
 
   nntrainer::TensorDim input_step_dim = input_.getDim();
@@ -491,7 +495,6 @@ void CachedSlimMoELayer::incremental_forwarding(
   output_step_dim.height(to - from);
 
   for (unsigned int b = 0; b < input_.batch(); ++b) {
-
     auto input = input_.getSharedDataTensor(
       input_step_dim, b * input_step_dim.getFeatureLen(), true);
     auto output = output_.getSharedDataTensor(
@@ -504,14 +507,14 @@ void CachedSlimMoELayer::incremental_forwarding(
     const unsigned hidden_size = input.width();
     const unsigned total_tokens = batch_size * seq_len;
 
-    // reshape input: [B,1,S,H] -> [B*S,1,1,H]
+    // Reshape input: [B,1,S,H] -> [B*S,1,1,H]
     input.reshape({total_tokens, 1, 1, hidden_size});
 
-    // reshape output: [B,1,S,H] -> [B*S,1,1,H]
+    // Reshape output: [B,1,S,H] -> [B*S,1,1,H]
     output.reshape({total_tokens, 1, 1, hidden_size});
     output.setZero();
 
-    // routing
+    // Routing
     nntrainer::Tensor &gate_weights = context.getWeight(gate_idx);
     input.dot(gate_weights, router_logits);
     router_logits.apply(nntrainer::ActiFunc::softmax<float>, router_logits);
@@ -519,13 +522,13 @@ void CachedSlimMoELayer::incremental_forwarding(
     auto topk_values = std::get<0>(topk_result);
     auto topk_indices = std::get<1>(topk_result);
 
-    // norm_topk_prob
+    // Normalize topk probabilities
     topk_values.divide_i(topk_values.sum(3));
 
     const uint32_t *indices_data = topk_indices.getData<uint32_t>();
     std::vector<std::vector<std::pair<unsigned, float>>> expert_assignments(
       num_experts);
-    
+
     // Set expert assignments
     for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
       for (int k = 0; k < static_cast<int>(topk); ++k) {
@@ -538,8 +541,8 @@ void CachedSlimMoELayer::incremental_forwarding(
     // Prepare expert outputs (allocate only for active experts)
     std::vector<nntrainer::Tensor> expert_outputs(num_experts);
     std::vector<int> active_experts;
-    active_experts.reserve(topk * total_tokens); // Reserve to avoid reallocation
-    
+    active_experts.reserve(topk * total_tokens);
+
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
          ++expert_idx) {
       if (!expert_assignments[expert_idx].empty()) {
@@ -549,7 +552,7 @@ void CachedSlimMoELayer::incremental_forwarding(
         active_experts.push_back(expert_idx);
       }
     }
-    
+
     // OPTIMIZATION: Minimal overhead processing
     // Step 1: Process cached experts immediately (no loading needed)
     int num_processed = 0;
@@ -561,10 +564,12 @@ void CachedSlimMoELayer::incremental_forwarding(
           input, expert_outputs[expert_idx], assignments,
           context.getWeight(expert_gate_proj_indices[expert_idx]),
           context.getWeight(expert_up_proj_indices[expert_idx]),
-          context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
-        
+          context.getWeight(expert_down_proj_indices[expert_idx]),
+          hidden_size);
+
         // Update LRU (just move to end, no complex operations)
-        auto it = std::find(cache_order.begin(), cache_order.end(), expert_idx);
+        auto it = std::find(cache_order.begin(), cache_order.end(),
+                            expert_idx);
         if (it != cache_order.end()) {
           cache_order.erase(it);
         }
@@ -572,7 +577,7 @@ void CachedSlimMoELayer::incremental_forwarding(
         num_processed++;
       }
     }
-    
+
     // Step 2: Load and process uncached experts with pipelining
     int prev_expert = -1;
     for (int expert_idx : active_experts) {
@@ -584,15 +589,19 @@ void CachedSlimMoELayer::incremental_forwarding(
           cache_order.push_back(prev_expert);
           cache_size++;
         }
-        
+
         // Start loading current expert
         if (enable_prefetch && num_processed > 0) {
           // Async load while processing previous
-          load_future = std::async(std::launch::async, [&context, this, expert_idx]() {
-            context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
-            context.getWeight(expert_up_proj_indices[expert_idx]).activate();
-            context.getWeight(expert_down_proj_indices[expert_idx]).activate();
-          });
+          load_future = std::async(
+            std::launch::async, [&context, this, expert_idx]() {
+              context.getWeight(expert_gate_proj_indices[expert_idx])
+                .activate();
+              context.getWeight(expert_up_proj_indices[expert_idx])
+                .activate();
+              context.getWeight(expert_down_proj_indices[expert_idx])
+                .activate();
+            });
           prev_expert = expert_idx;
         } else {
           // Sync load for first expert or when prefetch disabled
@@ -603,18 +612,19 @@ void CachedSlimMoELayer::incremental_forwarding(
           cache_order.push_back(expert_idx);
           cache_size++;
         }
-        
+
         // Compute expert
         const auto &assignments = expert_assignments[expert_idx];
         compute_expert_forward_no_critical(
           input, expert_outputs[expert_idx], assignments,
           context.getWeight(expert_gate_proj_indices[expert_idx]),
           context.getWeight(expert_up_proj_indices[expert_idx]),
-          context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
+          context.getWeight(expert_down_proj_indices[expert_idx]),
+          hidden_size);
         num_processed++;
       }
     }
-    
+
     // Complete any pending async load
     if (prev_expert >= 0 && load_future.valid()) {
       load_future.wait();
@@ -622,12 +632,12 @@ void CachedSlimMoELayer::incremental_forwarding(
       cache_order.push_back(prev_expert);
       cache_size++;
     }
-    
+
     // Step 3: Simple cache eviction (no complex data structures)
     while (cache_order.size() > max_cached_experts) {
       int evict_idx = cache_order.front();
       cache_order.erase(cache_order.begin());
-      
+
       // Check if expert is still active (don't evict if in use)
       bool still_active = false;
       for (int active_idx : active_experts) {
@@ -636,11 +646,11 @@ void CachedSlimMoELayer::incremental_forwarding(
           break;
         }
       }
-      
+
       if (!still_active) {
         is_cached[evict_idx] = false;
         cache_size--;
-        
+
         if (enable_async_deactivation && deactivation_thread) {
           // Async deactivation
           {
@@ -650,9 +660,11 @@ void CachedSlimMoELayer::incremental_forwarding(
           deactivation_cv.notify_one();
         } else {
           // Sync deactivation
-          context.getWeight(expert_gate_proj_indices[evict_idx]).deactivate();
+          context.getWeight(expert_gate_proj_indices[evict_idx])
+            .deactivate();
           context.getWeight(expert_up_proj_indices[evict_idx]).deactivate();
-          context.getWeight(expert_down_proj_indices[evict_idx]).deactivate();
+          context.getWeight(expert_down_proj_indices[evict_idx])
+            .deactivate();
         }
       } else {
         // If still active, keep it and move to end
@@ -665,7 +677,7 @@ void CachedSlimMoELayer::incremental_forwarding(
       output.add_i(expert_outputs[expert_idx]);
     }
 
-    // reshape output: [B*S,1,1,H] -> [B,1,S,H]
+    // Reshape output: [B*S,1,1,H] -> [B,1,S,H]
     output.reshape({batch_size, 1, seq_len, hidden_size});
   }
 }
