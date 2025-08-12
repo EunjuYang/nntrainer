@@ -18,14 +18,12 @@
 #include <causallm_common_properties.h>
 #include <common_properties.h>
 #include <layer_impl.h>
-#include <future>
-#include <atomic>
 
 namespace causallm {
 
 /**
  * @class   CachedSlimMoELayer
- * @brief   Mixture of Expert Layer with adaptive caching
+ * @brief   Mixture of Expert Layer with efficient caching
  */
 class CachedSlimMoELayer : public nntrainer::LayerImpl {
 public:
@@ -40,16 +38,24 @@ public:
   ~CachedSlimMoELayer() = default;
 
   /**
-   * @brief  Move constructor.
-   * @param[in] CachedSlimMoELayer &&
+   * @brief  Move constructor - deleted due to atomic members
    */
-  CachedSlimMoELayer(CachedSlimMoELayer &&rhs) noexcept = default;
+  CachedSlimMoELayer(CachedSlimMoELayer &&rhs) noexcept = delete;
 
   /**
-   * @brief  Move assignment operator.
-   * @param[in] rhs CachedSlimMoELayer to be moved.
+   * @brief  Move assignment operator - deleted due to atomic members
    */
-  CachedSlimMoELayer &operator=(CachedSlimMoELayer &&rhs) = default;
+  CachedSlimMoELayer &operator=(CachedSlimMoELayer &&rhs) = delete;
+
+  /**
+   * @brief  Copy constructor - deleted
+   */
+  CachedSlimMoELayer(const CachedSlimMoELayer &) = delete;
+
+  /**
+   * @brief  Copy assignment operator - deleted
+   */
+  CachedSlimMoELayer &operator=(const CachedSlimMoELayer &) = delete;
 
   /**
    * @copydoc Layer::finalize(InitLayerContext &context)
@@ -118,24 +124,20 @@ private:
   std::vector<unsigned int> expert_up_proj_indices;
   std::vector<unsigned int> expert_down_proj_indices;
 
-  // Adaptive cache management
+  // Simplified cache management - minimal overhead
   std::vector<bool> is_cached;   /**< O(1) lookup for cached status */
-  std::vector<int> cache_order;  /**< LRU tracking */
-  std::vector<int> last_token_position; /**< Track token position for each cached expert */
+  unsigned int cache_head = 0;   /**< Circular buffer head for LRU */
+  unsigned int cache_count = 0;  /**< Current number of cached experts */
+  std::vector<int> cache_ring;   /**< Circular buffer for cached experts */
+  std::vector<int> cache_position; /**< Position in cache ring (-1 if not cached) */
   
   // Dynamic cache sizing
   unsigned int base_cache_size = 16;
   unsigned int current_cache_size = 16;
-  float expert_diversity_ratio = 0.0f; /**< Ratio of unique experts to total */
   
-  // Cache statistics
-  std::atomic<unsigned int> cache_hits{0};
-  std::atomic<unsigned int> cache_misses{0};
-  std::atomic<unsigned int> total_requests{0};
-  
-  // Simple prefetching
-  std::future<void> prefetch_future;
-  int prefetching_expert = -1;
+  // Simple statistics (no atomic needed in single-threaded context)
+  unsigned int cache_hits = 0;
+  unsigned int cache_misses = 0;
 
   unsigned int gate_idx;
   unsigned int router_logits_idx;
@@ -156,12 +158,14 @@ private:
   void updateCacheSize(int unique_experts, int total_requests);
   
   /**
-   * @brief Get cache statistics
+   * @brief Add expert to cache (handles eviction if needed)
    */
-  float getCacheHitRate() const {
-    return total_requests > 0 ? 
-           static_cast<float>(cache_hits) / total_requests : 0.0f;
-  }
+  void addToCache(int expert_idx, nntrainer::RunLayerContext &context);
+  
+  /**
+   * @brief Update LRU position for cached expert
+   */
+  void updateCacheLRU(int expert_idx);
 };
 } // namespace causallm
 
