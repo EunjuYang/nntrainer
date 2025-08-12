@@ -8,12 +8,6 @@
  * @see    https://github.com/nnstreamer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
- * @note   This file is part of the Mixture of Expert Layer implementation.
- *         It does not support shared experts.
- *         This layer is implemented based on the LLama-MoE.
- *         For more information, please refer to the following link:
- *         https://arxiv.org/pdf/2406.16554
- * @todo   This layer does not support backwarding yet.
  */
 
 #ifndef __MOE_LAYER_H__
@@ -21,24 +15,15 @@
 #ifdef __cplusplus
 
 #include <acti_func.h>
-#include <atomic>
 #include <causallm_common_properties.h>
 #include <common_properties.h>
-#include <condition_variable>
-#include <future>
 #include <layer_impl.h>
-#include <list>
-#include <memory>
-#include <mutex>
-#include <queue>
-#include <thread>
-#include <vector>
 
 namespace causallm {
 
 /**
  * @class   CachedSlimMoELayer
- * @brief   Mixture of Expert Layer with caching support
+ * @brief   Mixture of Expert Layer with simple caching
  */
 class CachedSlimMoELayer : public nntrainer::LayerImpl {
 public:
@@ -50,7 +35,7 @@ public:
   /**
    * @brief     Destructor of Mixture of Expert Layer
    */
-  ~CachedSlimMoELayer();
+  ~CachedSlimMoELayer() = default;
 
   /**
    * @brief  Move constructor.
@@ -76,8 +61,7 @@ public:
                   bool training) override;
 
   /**
-   * @copydoc Layer::incremental_forwarding(RunLayerContext &context,
-   * unsigned)
+   * @copydoc Layer::incremental_forwarding(RunLayerContext &context, unsigned)
    */
   void incremental_forwarding(nntrainer::RunLayerContext &context,
                               unsigned int from, unsigned int to,
@@ -99,8 +83,8 @@ public:
   void setProperty(const std::vector<std::string> &values) override;
 
   /**
-   * @copydoc Layer::exportTo(Exporter &exporter, const
-   * ml::train::ExportMethods &methods)
+   * @copydoc Layer::exportTo(Exporter &exporter, const ml::train::ExportMethods
+   * &methods)
    */
   void exportTo(nntrainer::Exporter &exporter,
                 const ml::train::ExportMethods &method) const override;
@@ -117,12 +101,11 @@ public:
    */
   bool supportBackwarding() const override { return false; }
 
-  static constexpr const char *type =
-    "moe_cached_slim"; /**< type of the layer */
+  static constexpr const char *type = "moe_cached_slim";
 
 private:
-  unsigned int num_experts; /**< number of experts */
-  unsigned int topk;        /**< number of experts per token */
+  unsigned int num_experts;      /**< number of experts */
+  unsigned int topk;             /**< number of experts per token */
   nntrainer::ActiFunc acti_func; /**< activation function */
   std::tuple<props::NumExperts, props::NumExpertsPerToken,
              nntrainer::props::Unit, props::MoEActivation>
@@ -133,61 +116,17 @@ private:
   std::vector<unsigned int> expert_up_proj_indices;
   std::vector<unsigned int> expert_down_proj_indices;
 
-  // Simplified cache management - reduce overhead
-  std::vector<int> cache_order;   /**< Simple vector for LRU tracking */
-  std::vector<bool> is_cached;    /**< Fast O(1) lookup */
-  std::atomic<int> cache_size{0}; /**< Current cache size */
-
-  // Lightweight async loading
-  std::atomic<int> loading_expert{-1}; /**< Currently loading expert */
-  std::future<void> load_future;       /**< Future for async loading */
-
-  // Optional background deactivation (only if enabled)
-  std::unique_ptr<std::thread> deactivation_thread;
-  std::queue<std::tuple<int, nntrainer::RunLayerContext *>>
-    deactivation_queue;
-  std::mutex deactivation_mutex;
-  std::condition_variable deactivation_cv;
-  std::atomic<bool> deactivation_thread_stop{false};
+  // Simple cache management - minimal overhead
+  std::vector<bool> is_cached;   /**< O(1) lookup for cached status */
+  std::vector<int> cache_order;  /**< LRU tracking */
+  unsigned int max_cached_experts = 16;
 
   unsigned int gate_idx;
-
-  // Configuration flags
-  unsigned int max_cached_experts = 16;
-  bool enable_prefetch = false;
-  bool enable_async_deactivation = false;
-
-  // Intermediate tensor indices
   unsigned int router_logits_idx;
   unsigned int expert_mask_idx;
 
   /**
-   * @brief Expert forward computation without memory copies
-   * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
-   * @param output Output tensor to accumulate results
-   * @param token_assignments Vector of (token_index, weight) pairs for this
-   * expert
-   * @param gate_proj Gate projection weight tensor
-   * @param up_proj Up projection weight tensor
-   * @param down_proj Down projection weight tensor
-   * @param hidden_size Hidden dimension size
-   */
-  inline void compute_expert_forward(
-    const nntrainer::Tensor &input, nntrainer::Tensor &output,
-    const std::vector<std::pair<unsigned, float>> &token_assignments,
-    const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
-    const nntrainer::Tensor &down_proj, unsigned int hidden_size);
-
-  /**
-   * @brief Expert forward computation without critical section
-   * @param input Input tensor (reshaped to [total_tokens, 1, 1, hidden_size])
-   * @param expert_output Expert-specific output tensor
-   * @param token_assignments Vector of (token_index, weight) pairs for this
-   * expert
-   * @param gate_proj Gate projection weight tensor
-   * @param up_proj Up projection weight tensor
-   * @param down_proj Down projection weight tensor
-   * @param hidden_size Hidden dimension size
+   * @brief Expert forward computation
    */
   inline void compute_expert_forward_no_critical(
     const nntrainer::Tensor &input, nntrainer::Tensor &expert_output,
