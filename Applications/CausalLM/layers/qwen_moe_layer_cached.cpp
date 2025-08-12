@@ -19,6 +19,7 @@
 #include <node_exporter.h>
 #include <omp.h>
 #include <stdexcept>
+#include <iostream>
 
 #ifdef __ANDROID__
 #include <cstdlib>
@@ -43,7 +44,8 @@ CachedSlimMoELayer::CachedSlimMoELayer() :
 #ifdef __ANDROID__
   const char *cache_size_env = std::getenv("NNTRAINER_MOE_CACHE_SIZE");
   if (cache_size_env) {
-    max_cached_experts = std::stoi(cache_size_env);
+    base_cache_size = std::stoi(cache_size_env);
+    current_cache_size = base_cache_size;
   }
 #endif
 }
@@ -140,7 +142,7 @@ void CachedSlimMoELayer::finalize(nntrainer::InitLayerContext &context) {
   // Initialize cache management
   is_cached.resize(num_experts, false);
   last_token_position.resize(num_experts, -1);
-  cache_order.reserve(max_cached_experts);
+  cache_order.reserve(base_cache_size * 2); // Reserve extra space for dynamic sizing
 
   // 6. Request intermediate tensors
   const unsigned batch_size = in_dim.batch();
@@ -162,6 +164,32 @@ void CachedSlimMoELayer::forwarding(nntrainer::RunLayerContext &context,
                                     bool training) {
   // Use incremental_forwarding for consistency
   incremental_forwarding(context, 0, 0, training);
+}
+
+void CachedSlimMoELayer::updateCacheSize(int unique_experts, int total_expert_requests) {
+  // Calculate diversity ratio
+  expert_diversity_ratio = static_cast<float>(unique_experts) / total_expert_requests;
+  
+  // Adjust cache size based on diversity
+  // High diversity (>0.7) -> increase cache size
+  // Low diversity (<0.3) -> decrease cache size
+  if (expert_diversity_ratio > 0.7f) {
+    current_cache_size = std::min(base_cache_size * 2, num_experts);
+  } else if (expert_diversity_ratio < 0.3f) {
+    current_cache_size = std::max(base_cache_size / 2, topk * 2u);
+  } else {
+    current_cache_size = base_cache_size;
+  }
+  
+  // Print stats periodically for debugging
+#ifdef DEBUG
+  static int call_count = 0;
+  if (++call_count % 100 == 0) {
+    std::cerr << "[MoE Cache] Hit rate: " << getCacheHitRate() 
+              << ", Diversity: " << expert_diversity_ratio
+              << ", Cache size: " << current_cache_size << std::endl;
+  }
+#endif
 }
 
 void CachedSlimMoELayer::incremental_forwarding(
@@ -219,24 +247,35 @@ void CachedSlimMoELayer::incremental_forwarding(
     std::vector<std::vector<std::pair<unsigned, float>>> expert_assignments(
       num_experts);
 
-    // Track max token position for each expert (for sequence-aware caching)
+    // Track max token position and unique experts
     std::vector<int> expert_max_token_pos(num_experts, -1);
+    std::vector<bool> expert_used(num_experts, false);
+    int unique_expert_count = 0;
+    int total_expert_requests = 0;
     
     for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
       for (int k = 0; k < static_cast<int>(topk); ++k) {
         unsigned expert_idx = indices_data[i * topk + k];
         float weight = topk_values.getValue<float>(i, 0, 0, k);
         expert_assignments[expert_idx].emplace_back(i, weight);
-        // Update max token position for this expert
         expert_max_token_pos[expert_idx] = i;
+        
+        if (!expert_used[expert_idx]) {
+          expert_used[expert_idx] = true;
+          unique_expert_count++;
+        }
+        total_expert_requests++;
       }
     }
+
+    // Update cache size based on diversity
+    updateCacheSize(unique_expert_count, total_expert_requests);
 
     // Determine if this is batch processing or incremental
     bool is_batch_processing = (total_tokens > 1);
     
-    // Process each active expert
-    std::vector<std::pair<int, int>> expert_priority; // (expert_idx, max_token_pos)
+    // Collect and sort active experts
+    std::vector<std::pair<int, int>> expert_priority;
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
          ++expert_idx) {
       if (!expert_assignments[expert_idx].empty()) {
@@ -244,7 +283,7 @@ void CachedSlimMoELayer::incremental_forwarding(
       }
     }
     
-    // Sort experts by token position (process later tokens first for better cache reuse)
+    // Sort experts by token position for batch processing
     if (is_batch_processing) {
       std::sort(expert_priority.begin(), expert_priority.end(),
                 [](const auto &a, const auto &b) {
@@ -252,11 +291,28 @@ void CachedSlimMoELayer::incremental_forwarding(
                 });
     }
 
-    for (const auto &[expert_idx, max_pos] : expert_priority) {
+    // Wait for any pending prefetch
+    if (prefetch_future.valid()) {
+      prefetch_future.wait();
+      if (prefetching_expert >= 0 && !is_cached[prefetching_expert]) {
+        is_cached[prefetching_expert] = true;
+        cache_order.push_back(prefetching_expert);
+      }
+      prefetching_expert = -1;
+    }
+
+    // Process experts with prefetching
+    for (size_t idx = 0; idx < expert_priority.size(); ++idx) {
+      const auto &[expert_idx, max_pos] = expert_priority[idx];
       const auto &assignments = expert_assignments[expert_idx];
 
-      // Load expert if not cached
+      total_requests++;
+      
+      // Check cache status
       if (!is_cached[expert_idx]) {
+        cache_misses++;
+        
+        // Load current expert
         context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
         context.getWeight(expert_up_proj_indices[expert_idx]).activate();
         context.getWeight(expert_down_proj_indices[expert_idx]).activate();
@@ -265,26 +321,46 @@ void CachedSlimMoELayer::incremental_forwarding(
         last_token_position[expert_idx] = max_pos;
         cache_order.push_back(expert_idx);
         
-        // Cache eviction with sequence awareness
-        while (cache_order.size() > max_cached_experts) {
-          // Find expert to evict (prefer those with lower token positions)
+        // Start prefetching next expert if available
+        if (idx + 1 < expert_priority.size()) {
+          int next_expert = expert_priority[idx + 1].first;
+          if (!is_cached[next_expert] && !prefetch_future.valid()) {
+            prefetching_expert = next_expert;
+            prefetch_future = std::async(std::launch::async, 
+              [&context, this, next_expert]() {
+                context.getWeight(expert_gate_proj_indices[next_expert]).activate();
+                context.getWeight(expert_up_proj_indices[next_expert]).activate();
+                context.getWeight(expert_down_proj_indices[next_expert]).activate();
+              });
+          }
+        }
+        
+        // Cache eviction with adaptive size
+        while (cache_order.size() > current_cache_size) {
+          // Find expert to evict
           int evict_candidate_idx = 0;
-          int min_token_pos = last_token_position[cache_order[0]];
           
           if (is_batch_processing) {
-            // In batch mode, evict expert with lowest token position
-            for (size_t i = 1; i < cache_order.size() - 1; ++i) { // Don't evict the just-added one
+            // Evict expert with lowest token position
+            int min_token_pos = last_token_position[cache_order[0]];
+            for (size_t i = 1; i < cache_order.size() - 1; ++i) {
               if (last_token_position[cache_order[i]] < min_token_pos) {
                 min_token_pos = last_token_position[cache_order[i]];
                 evict_candidate_idx = i;
               }
             }
-          } else {
-            // In incremental mode, use standard LRU (evict oldest)
-            evict_candidate_idx = 0;
           }
           
           int evict_idx = cache_order[evict_candidate_idx];
+          
+          // Don't evict if it's being prefetched
+          if (evict_idx == prefetching_expert) {
+            if (evict_candidate_idx < cache_order.size() - 1) {
+              evict_candidate_idx++;
+              evict_idx = cache_order[evict_candidate_idx];
+            }
+          }
+          
           cache_order.erase(cache_order.begin() + evict_candidate_idx);
           
           if (is_cached[evict_idx]) {
@@ -296,6 +372,8 @@ void CachedSlimMoELayer::incremental_forwarding(
           }
         }
       } else {
+        cache_hits++;
+        
         // Update LRU and token position
         last_token_position[expert_idx] = max_pos;
         auto it = std::find(cache_order.begin(), cache_order.end(), expert_idx);
@@ -317,6 +395,17 @@ void CachedSlimMoELayer::incremental_forwarding(
         context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
       
       output.add_i(expert_output);
+    }
+
+    // Clean up any remaining prefetch
+    if (prefetch_future.valid()) {
+      prefetch_future.wait();
+      if (prefetching_expert >= 0 && !is_cached[prefetching_expert]) {
+        is_cached[prefetching_expert] = true;
+        last_token_position[prefetching_expert] = -1;
+        cache_order.push_back(prefetching_expert);
+      }
+      prefetching_expert = -1;
     }
 
     output.reshape({batch_size, 1, seq_len, hidden_size});

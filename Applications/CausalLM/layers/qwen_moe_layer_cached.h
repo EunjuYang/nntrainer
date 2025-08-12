@@ -18,12 +18,14 @@
 #include <causallm_common_properties.h>
 #include <common_properties.h>
 #include <layer_impl.h>
+#include <future>
+#include <atomic>
 
 namespace causallm {
 
 /**
  * @class   CachedSlimMoELayer
- * @brief   Mixture of Expert Layer with sequence-aware caching
+ * @brief   Mixture of Expert Layer with adaptive caching
  */
 class CachedSlimMoELayer : public nntrainer::LayerImpl {
 public:
@@ -116,11 +118,24 @@ private:
   std::vector<unsigned int> expert_up_proj_indices;
   std::vector<unsigned int> expert_down_proj_indices;
 
-  // Sequence-aware cache management
+  // Adaptive cache management
   std::vector<bool> is_cached;   /**< O(1) lookup for cached status */
   std::vector<int> cache_order;  /**< LRU tracking */
   std::vector<int> last_token_position; /**< Track token position for each cached expert */
-  unsigned int max_cached_experts = 16;
+  
+  // Dynamic cache sizing
+  unsigned int base_cache_size = 16;
+  unsigned int current_cache_size = 16;
+  float expert_diversity_ratio = 0.0f; /**< Ratio of unique experts to total */
+  
+  // Cache statistics
+  std::atomic<unsigned int> cache_hits{0};
+  std::atomic<unsigned int> cache_misses{0};
+  std::atomic<unsigned int> total_requests{0};
+  
+  // Simple prefetching
+  std::future<void> prefetch_future;
+  int prefetching_expert = -1;
 
   unsigned int gate_idx;
   unsigned int router_logits_idx;
@@ -134,6 +149,19 @@ private:
     const std::vector<std::pair<unsigned, float>> &token_assignments,
     const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
     const nntrainer::Tensor &down_proj, unsigned int hidden_size);
+    
+  /**
+   * @brief Update cache size based on expert diversity
+   */
+  void updateCacheSize(int unique_experts, int total_requests);
+  
+  /**
+   * @brief Get cache statistics
+   */
+  float getCacheHitRate() const {
+    return total_requests > 0 ? 
+           static_cast<float>(cache_hits) / total_requests : 0.0f;
+  }
 };
 } // namespace causallm
 
