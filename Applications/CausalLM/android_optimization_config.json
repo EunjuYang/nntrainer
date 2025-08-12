@@ -1,0 +1,47 @@
+{
+  "memory_optimization": {
+    "use_chunked_loading": true,
+    "chunk_size_mb": 64,
+    "preload_embedding_layer": true,
+    "preload_first_n_layers": 5,
+    "use_memory_compression": true,
+    "compression_algorithm": "lz4",
+    "aggressive_gc": true,
+    "gc_interval_ms": 5000
+  },
+  "mmap_optimization": {
+    "use_madvise": true,
+    "madvise_flags": ["MADV_SEQUENTIAL", "MADV_WILLNEED"],
+    "use_map_populate": false,
+    "use_map_hugetlb": false,
+    "prefetch_size_mb": 16,
+    "readahead_pages": 32
+  },
+  "threading": {
+    "io_thread_priority": -5,
+    "compute_thread_priority": -10,
+    "use_affinity": true,
+    "prefer_big_cores": true,
+    "max_parallel_io": 2
+  },
+  "cache_optimization": {
+    "use_persistent_cache": true,
+    "cache_directory": "/data/local/tmp/nntrainer_cache",
+    "max_cache_size_mb": 512,
+    "cache_compression": true
+  },
+  "model_optimization": {
+    "lazy_weight_loading": true,
+    "unload_unused_layers": true,
+    "layer_unload_threshold_ms": 1000,
+    "use_weight_streaming": true,
+    "streaming_buffer_size_mb": 128
+  },
+  "android_specific": {
+    "request_large_heap": true,
+    "use_native_allocator": true,
+    "disable_art_gc_during_inference": true,
+    "use_ashmem": true,
+    "ashmem_size_mb": 2048
+  }
+}

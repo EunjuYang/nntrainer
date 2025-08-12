@@ -90,10 +90,17 @@ void *SwapDevice::getBuffer(off_t offset, size_t size, void *memory_ptr,
       << "SwapDevice: mmap: " << SAFE_STRERROR(errno, error_buf, error_buflen);
 
 
-#if !defined(__ANDROID__) && !defined(_WIN32)
+#if !defined(_WIN32)
     // MADVISE can be used to improve performance.
+#if !defined(__ANDROID__)
     mlock(ptr, len);
+#endif
+    // Android supports madvise, use it for better performance
     madvise(ptr, len, MADV_SEQUENTIAL);
+    // For Android, also hint that we'll need this memory soon
+#ifdef __ANDROID__
+    madvise(ptr, len, MADV_WILLNEED);
+#endif
 #endif
 
     void *buf = static_cast<void *>(ptr + diff);
