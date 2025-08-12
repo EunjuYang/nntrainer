@@ -53,8 +53,6 @@ CachedSlimMoELayer::CachedSlimMoELayer() :
   expert_gate_proj_indices({}),
   expert_up_proj_indices({}),
   expert_down_proj_indices({}),
-  loaded_expert_deque({}),
-  need_load({}),
   gate_idx(std::numeric_limits<unsigned>::max()),
   router_logits_idx(std::numeric_limits<unsigned>::max()),
   expert_mask_idx(std::numeric_limits<unsigned>::max()) {
@@ -82,7 +80,7 @@ CachedSlimMoELayer::CachedSlimMoELayer() :
 
   // Start background deactivation thread only if enabled
   if (enable_async_deactivation) {
-    deactivation_thread = std::thread([this]() {
+    deactivation_thread = std::make_unique<std::thread>([this]() {
       while (!deactivation_thread_stop.load()) {
         std::unique_lock<std::mutex> lock(deactivation_mutex);
         deactivation_cv.wait(lock, [this] { 
@@ -109,11 +107,13 @@ CachedSlimMoELayer::CachedSlimMoELayer() :
 }
 
 CachedSlimMoELayer::~CachedSlimMoELayer() {
-  // Stop and join the deactivation thread
-  deactivation_thread_stop.store(true);
-  deactivation_cv.notify_all();
-  if (deactivation_thread.joinable()) {
-    deactivation_thread.join();
+  // Stop and join the deactivation thread if it exists
+  if (deactivation_thread) {
+    deactivation_thread_stop.store(true);
+    deactivation_cv.notify_all();
+    if (deactivation_thread->joinable()) {
+      deactivation_thread->join();
+    }
   }
 }
 
@@ -208,11 +208,11 @@ void CachedSlimMoELayer::finalize(nntrainer::InitLayerContext &context) {
       expert_down_dim, weight_initializer, weight_regularizer,
       weight_regularizer_constant, weight_decay,
       "expert_down_" + std::to_string(i), false, true));
-    need_load.push_back(true);
   }
   
-  // Initialize expert history tracking for prefetching
-  expert_history.resize(num_experts);
+  // Initialize cache management structures
+  is_cached.resize(num_experts, false);
+  cache_order.reserve(max_cached_experts);
 
   // 6. Request intermediate tensors
   const unsigned batch_size = in_dim.batch();
@@ -525,7 +525,8 @@ void CachedSlimMoELayer::incremental_forwarding(
     const uint32_t *indices_data = topk_indices.getData<uint32_t>();
     std::vector<std::vector<std::pair<unsigned, float>>> expert_assignments(
       num_experts);
-    // Set expert mask
+    
+    // Set expert assignments
     for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
       for (int k = 0; k < static_cast<int>(topk); ++k) {
         unsigned expert_idx = indices_data[i * topk + k];
@@ -534,161 +535,129 @@ void CachedSlimMoELayer::incremental_forwarding(
       }
     }
 
-    // Prepare expert outputs
+    // Prepare expert outputs (allocate only for active experts)
     std::vector<nntrainer::Tensor> expert_outputs(num_experts);
+    std::vector<int> active_experts;
+    active_experts.reserve(topk * total_tokens); // Reserve to avoid reallocation
+    
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
          ++expert_idx) {
       if (!expert_assignments[expert_idx].empty()) {
         expert_outputs[expert_idx] = nntrainer::Tensor(
           total_tokens, 1, 1, hidden_size, output.getTensorType());
         expert_outputs[expert_idx].setZero();
-      }
-    }
-    
-    // Collect active experts and categorize them
-    std::vector<int> active_experts;
-    std::vector<int> loaded_experts;
-    std::vector<int> experts_to_load;
-    
-    for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
-         ++expert_idx) {
-      if (!expert_assignments[expert_idx].empty()) {
         active_experts.push_back(expert_idx);
-        if (!need_load[expert_idx]) {
-          loaded_experts.push_back(expert_idx);
-        } else {
-          experts_to_load.push_back(expert_idx);
-        }
       }
     }
     
-    // OPTIMIZATION: True overlap of loading and computation
-    // Strategy: Load expert N+1 while computing expert N
-    
-    // Step 1: Process already loaded experts in parallel (no I/O needed)
-    #pragma omp parallel for schedule(dynamic) if(loaded_experts.size() > 1)
-    for (size_t i = 0; i < loaded_experts.size(); ++i) {
-      int expert_idx = loaded_experts[i];
-      const auto &assignments = expert_assignments[expert_idx];
-      
-      compute_expert_forward_no_critical(
-        input, expert_outputs[expert_idx], assignments,
-        context.getWeight(expert_gate_proj_indices[expert_idx]),
-        context.getWeight(expert_up_proj_indices[expert_idx]),
-        context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
-    }
-    
-    // Step 2: Pipeline loading and computation for new experts
-    if (!experts_to_load.empty()) {
-      // Load first expert synchronously (can't avoid this)
-      int first_expert = experts_to_load[0];
-      context.getWeight(expert_gate_proj_indices[first_expert]).activate();
-      context.getWeight(expert_up_proj_indices[first_expert]).activate();
-      context.getWeight(expert_down_proj_indices[first_expert]).activate();
-      
-      loaded_expert_deque.push_back(first_expert);
-      iteration_map[first_expert] = --loaded_expert_deque.end();
-      need_load[first_expert] = false;
-      
-      // Process remaining experts with pipelining
-      for (size_t i = 0; i < experts_to_load.size(); ++i) {
-        int current_expert = experts_to_load[i];
-        
-        // Start async loading of next expert (if exists)
-        std::future<void> next_load_future;
-        int next_expert = -1;
-        if (i + 1 < experts_to_load.size()) {
-          next_expert = experts_to_load[i + 1];
-          // Launch async loading of next expert
-          next_load_future = std::async(std::launch::async, [&context, this, next_expert]() {
-            context.getWeight(expert_gate_proj_indices[next_expert]).activate();
-            context.getWeight(expert_up_proj_indices[next_expert]).activate();
-            context.getWeight(expert_down_proj_indices[next_expert]).activate();
-          });
-        }
-        
-        // AGGRESSIVE PREFETCH: Also start loading expert i+2 if available
-        std::future<void> next_next_load_future;
-        int next_next_expert = -1;
-        if (enable_prefetch && i + 2 < experts_to_load.size()) {
-          next_next_expert = experts_to_load[i + 2];
-          next_next_load_future = std::async(std::launch::async, [&context, this, next_next_expert]() {
-            // Lower priority prefetch - just trigger mmap, don't wait
-            context.getWeight(expert_gate_proj_indices[next_next_expert]).activate();
-            context.getWeight(expert_up_proj_indices[next_next_expert]).activate();
-            context.getWeight(expert_down_proj_indices[next_next_expert]).activate();
-          });
-        }
-        
-        // Compute current expert while next is loading
-        const auto &assignments = expert_assignments[current_expert];
+    // OPTIMIZATION: Minimal overhead processing
+    // Step 1: Process cached experts immediately (no loading needed)
+    int num_processed = 0;
+    for (int expert_idx : active_experts) {
+      if (is_cached[expert_idx]) {
+        // Already cached - compute immediately
+        const auto &assignments = expert_assignments[expert_idx];
         compute_expert_forward_no_critical(
-          input, expert_outputs[current_expert], assignments,
-          context.getWeight(expert_gate_proj_indices[current_expert]),
-          context.getWeight(expert_up_proj_indices[current_expert]),
-          context.getWeight(expert_down_proj_indices[current_expert]), hidden_size);
+          input, expert_outputs[expert_idx], assignments,
+          context.getWeight(expert_gate_proj_indices[expert_idx]),
+          context.getWeight(expert_up_proj_indices[expert_idx]),
+          context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
         
-        // Wait for next expert loading to complete (if it was started)
-        if (next_expert != -1) {
-          next_load_future.wait();
-          // Update cache tracking for the loaded expert
-          loaded_expert_deque.push_back(next_expert);
-          iteration_map[next_expert] = --loaded_expert_deque.end();
-          need_load[next_expert] = false;
+        // Update LRU (just move to end, no complex operations)
+        auto it = std::find(cache_order.begin(), cache_order.end(), expert_idx);
+        if (it != cache_order.end()) {
+          cache_order.erase(it);
         }
-        
-        // Check if i+2 prefetch completed (don't wait, just check)
-        if (next_next_expert != -1 && next_next_load_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-          // Update cache if prefetch completed
-          loaded_expert_deque.push_back(next_next_expert);
-          iteration_map[next_next_expert] = --loaded_expert_deque.end();
-          need_load[next_next_expert] = false;
-          // Remove from experts_to_load to avoid double processing
-          experts_to_load.erase(experts_to_load.begin() + i + 2);
-        }
+        cache_order.push_back(expert_idx);
+        num_processed++;
       }
     }
     
-    // Update LRU for already loaded experts
-    for (int expert_idx : loaded_experts) {
-      if (iteration_map.find(expert_idx) != iteration_map.end()) {
-        loaded_expert_deque.erase(iteration_map[expert_idx]);
+    // Step 2: Load and process uncached experts with pipelining
+    int prev_expert = -1;
+    for (int expert_idx : active_experts) {
+      if (!is_cached[expert_idx]) {
+        // Wait for any previous async load to complete
+        if (prev_expert >= 0 && load_future.valid()) {
+          load_future.wait();
+          is_cached[prev_expert] = true;
+          cache_order.push_back(prev_expert);
+          cache_size++;
+        }
+        
+        // Start loading current expert
+        if (enable_prefetch && num_processed > 0) {
+          // Async load while processing previous
+          load_future = std::async(std::launch::async, [&context, this, expert_idx]() {
+            context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
+            context.getWeight(expert_up_proj_indices[expert_idx]).activate();
+            context.getWeight(expert_down_proj_indices[expert_idx]).activate();
+          });
+          prev_expert = expert_idx;
+        } else {
+          // Sync load for first expert or when prefetch disabled
+          context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
+          context.getWeight(expert_up_proj_indices[expert_idx]).activate();
+          context.getWeight(expert_down_proj_indices[expert_idx]).activate();
+          is_cached[expert_idx] = true;
+          cache_order.push_back(expert_idx);
+          cache_size++;
+        }
+        
+        // Compute expert
+        const auto &assignments = expert_assignments[expert_idx];
+        compute_expert_forward_no_critical(
+          input, expert_outputs[expert_idx], assignments,
+          context.getWeight(expert_gate_proj_indices[expert_idx]),
+          context.getWeight(expert_up_proj_indices[expert_idx]),
+          context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
+        num_processed++;
       }
-      loaded_expert_deque.push_back(expert_idx);
-      iteration_map[expert_idx] = --loaded_expert_deque.end();
     }
     
-    // Cache eviction - use async or sync based on configuration
-    std::vector<int> evicted_experts;
-    while (loaded_expert_deque.size() > max_cached_experts) {
-      int target_idx = loaded_expert_deque.front();
-      evicted_experts.push_back(target_idx);
+    // Complete any pending async load
+    if (prev_expert >= 0 && load_future.valid()) {
+      load_future.wait();
+      is_cached[prev_expert] = true;
+      cache_order.push_back(prev_expert);
+      cache_size++;
+    }
+    
+    // Step 3: Simple cache eviction (no complex data structures)
+    while (cache_order.size() > max_cached_experts) {
+      int evict_idx = cache_order.front();
+      cache_order.erase(cache_order.begin());
       
-      if (enable_async_deactivation) {
-        // Queue for background deactivation
-        {
-          std::lock_guard<std::mutex> lock(deactivation_mutex);
-          deactivation_queue.push({target_idx, &context});
+      // Check if expert is still active (don't evict if in use)
+      bool still_active = false;
+      for (int active_idx : active_experts) {
+        if (active_idx == evict_idx) {
+          still_active = true;
+          break;
         }
-        deactivation_cv.notify_one();
+      }
+      
+      if (!still_active) {
+        is_cached[evict_idx] = false;
+        cache_size--;
+        
+        if (enable_async_deactivation && deactivation_thread) {
+          // Async deactivation
+          {
+            std::lock_guard<std::mutex> lock(deactivation_mutex);
+            deactivation_queue.push({evict_idx, &context});
+          }
+          deactivation_cv.notify_one();
+        } else {
+          // Sync deactivation
+          context.getWeight(expert_gate_proj_indices[evict_idx]).deactivate();
+          context.getWeight(expert_up_proj_indices[evict_idx]).deactivate();
+          context.getWeight(expert_down_proj_indices[evict_idx]).deactivate();
+        }
       } else {
-        // Synchronous deactivation (original behavior)
-        context.getWeight(expert_gate_proj_indices[target_idx]).deactivate();
-        context.getWeight(expert_up_proj_indices[target_idx]).deactivate();
-        context.getWeight(expert_down_proj_indices[target_idx]).deactivate();
+        // If still active, keep it and move to end
+        cache_order.push_back(evict_idx);
       }
-      
-      // Update tracking immediately
-      loaded_expert_deque.pop_front();
-      iteration_map.erase(target_idx);
-      need_load[target_idx] = true;
-    }
-    
-    // Optional: Wait for deactivations if we evicted many experts (memory pressure)
-    // This prevents OOM when many experts are being swapped
-    if (enable_async_deactivation && evicted_experts.size() > 4) {
-      // Give deactivation thread time to free memory
-      std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     // Combine expert outputs

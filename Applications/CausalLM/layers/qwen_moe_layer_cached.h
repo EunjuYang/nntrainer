@@ -123,31 +123,30 @@ private:
              nntrainer::props::Unit, props::MoEActivation>
     moe_props;
 
-  // weight indeices
+  // weight indices
   std::vector<unsigned int> expert_gate_proj_indices;
   std::vector<unsigned int> expert_up_proj_indices;
   std::vector<unsigned int> expert_down_proj_indices;
 
-  std::list<int> loaded_expert_deque;
-  std::unordered_map<int, std::list<int>::iterator> iteration_map;
-  std::unordered_map<int, double> expert_predict_scores;
-  std::vector<bool> need_load;
+  // Simplified cache management - reduce overhead
+  std::vector<int> cache_order;  // Simple vector for LRU tracking
+  std::vector<bool> is_cached;   // Fast O(1) lookup
+  std::atomic<int> cache_size{0};
   
-  // Prefetching and async loading optimization
-  std::vector<std::vector<int>> expert_history;  // Track expert usage history
-  std::atomic<bool> prefetch_in_progress{false};
-  std::mutex cache_mutex;  // For thread-safe cache operations
+  // Lightweight async loading
+  std::atomic<int> loading_expert{-1};  // Currently loading expert
+  std::future<void> load_future;
   
-  // Background deactivation queue
+  // Optional background deactivation (only if enabled)
+  std::unique_ptr<std::thread> deactivation_thread;
   std::queue<std::tuple<int, nntrainer::RunLayerContext*>> deactivation_queue;
   std::mutex deactivation_mutex;
   std::condition_variable deactivation_cv;
   std::atomic<bool> deactivation_thread_stop{false};
-  std::thread deactivation_thread;
 
   unsigned int gate_idx;
   
-  // Add configurable cache size and prefetch flag
+  // Configuration flags
   unsigned int max_cached_experts = 16;
   bool enable_prefetch = false;
   bool enable_async_deactivation = false;
