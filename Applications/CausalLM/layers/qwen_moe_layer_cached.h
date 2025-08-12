@@ -18,12 +18,13 @@
 #include <causallm_common_properties.h>
 #include <common_properties.h>
 #include <layer_impl.h>
+#include <deque>
 
 namespace causallm {
 
 /**
  * @class   CachedSlimMoELayer
- * @brief   Mixture of Expert Layer with simple caching
+ * @brief   Mixture of Expert Layer with adaptive caching
  */
 class CachedSlimMoELayer : public nntrainer::LayerImpl {
 public:
@@ -116,10 +117,19 @@ private:
   std::vector<unsigned int> expert_up_proj_indices;
   std::vector<unsigned int> expert_down_proj_indices;
 
-  // Simple cache management - minimal overhead
+  // Adaptive cache management
   std::vector<bool> is_cached;   /**< O(1) lookup for cached status */
   std::vector<int> cache_order;  /**< LRU tracking */
   unsigned int max_cached_experts = 16;
+  unsigned int batch_cache_size = 24;  /**< Larger cache for batch processing */
+  
+  // Pattern tracking for incremental mode
+  std::deque<std::vector<int>> recent_expert_patterns; /**< Recent expert usage */
+  static constexpr size_t PATTERN_HISTORY_SIZE = 3;
+  bool is_batch_mode = false;  /**< Current processing mode */
+  
+  // Expert usage frequency for adaptive caching
+  std::vector<unsigned int> expert_usage_count; /**< Usage frequency tracking */
 
   unsigned int gate_idx;
   unsigned int router_logits_idx;
@@ -133,6 +143,11 @@ private:
     const std::vector<std::pair<unsigned, float>> &token_assignments,
     const nntrainer::Tensor &gate_proj, const nntrainer::Tensor &up_proj,
     const nntrainer::Tensor &down_proj, unsigned int hidden_size);
+    
+  /**
+   * @brief Predict next experts based on recent patterns
+   */
+  std::vector<int> predictNextExperts(const std::vector<int> &current_experts);
 };
 } // namespace causallm
 
