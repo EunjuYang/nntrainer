@@ -30,7 +30,6 @@
 #include <omp.h>
 #include <qwen_moe_layer_cached.h>
 #include <stdexcept>
-#include <set>
 
 #ifdef __ANDROID__
 #include <sys/mman.h>
@@ -498,80 +497,35 @@ void CachedSlimMoELayer::incremental_forwarding(
       if (!expert_assignments[expert_idx].empty()) {
         expert_outputs[expert_idx] = nntrainer::Tensor(
           total_tokens, 1, 1, hidden_size, output.getTensorType());
+        expert_outputs[expert_idx].setZero();
       }
     }
     
-    // Categorize experts into already loaded and need-to-load
+    // Collect active experts
+    std::vector<int> active_experts;
+    for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
+         ++expert_idx) {
+      if (!expert_assignments[expert_idx].empty()) {
+        active_experts.push_back(expert_idx);
+      }
+    }
+    
+    // OPTIMIZATION: Process already loaded experts first while loading others
     std::vector<int> loaded_experts;
     std::vector<int> experts_to_load;
     
-    for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
-         ++expert_idx) {
-      const auto &assignments = expert_assignments[expert_idx];
-      if (assignments.empty())
-        continue;
-        
-      if (need_load[expert_idx]) {
-        experts_to_load.push_back(expert_idx);
-      } else {
+    for (int expert_idx : active_experts) {
+      if (!need_load[expert_idx]) {
         loaded_experts.push_back(expert_idx);
-        // Update LRU for already loaded experts
-        if (iteration_map.find(expert_idx) != iteration_map.end()) {
-          loaded_expert_deque.erase(iteration_map[expert_idx]);
-        }
-        loaded_expert_deque.push_back(expert_idx);
-        iteration_map[expert_idx] = --loaded_expert_deque.end();
+      } else {
+        experts_to_load.push_back(expert_idx);
       }
     }
     
-    // OPTIMIZATION 1: Start async loading of experts that need to be loaded
-    // Use OpenMP tasks for async loading
-    #pragma omp parallel
-    {
-      #pragma omp single nowait
-      {
-        // Start loading experts asynchronously
-        for (int expert_idx : experts_to_load) {
-          #pragma omp task shared(context, expert_gate_proj_indices, expert_up_proj_indices, expert_down_proj_indices)
-          {
-            // Prefetch/activate the expert weights
-            context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
-            context.getWeight(expert_up_proj_indices[expert_idx]).activate();
-            context.getWeight(expert_down_proj_indices[expert_idx]).activate();
-          }
-        }
-        
-        // OPTIMIZATION 2: Process already loaded experts immediately while others are loading
-        // This overlaps computation with I/O
-        for (int expert_idx : loaded_experts) {
-          #pragma omp task shared(input, expert_outputs, expert_assignments, context)
-          {
-            const auto &assignments = expert_assignments[expert_idx];
-            compute_expert_forward_no_critical(
-              input, expert_outputs[expert_idx], assignments,
-              context.getWeight(expert_gate_proj_indices[expert_idx]),
-              context.getWeight(expert_up_proj_indices[expert_idx]),
-              context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
-          }
-        }
-      }
-      
-      // Wait for all loading tasks to complete
-      #pragma omp taskwait
-    }
-    
-    // Update cache management for newly loaded experts
-    for (int expert_idx : experts_to_load) {
-      loaded_expert_deque.push_back(expert_idx);
-      iteration_map[expert_idx] = --loaded_expert_deque.end();
-      need_load[expert_idx] = false;
-    }
-    
-    // OPTIMIZATION 3: Process newly loaded experts
-    // At this point, all experts are loaded, so we can process them in parallel
-    #pragma omp parallel for schedule(dynamic)
-    for (int i = 0; i < static_cast<int>(experts_to_load.size()); ++i) {
-      int expert_idx = experts_to_load[i];
+    // Process already loaded experts immediately (no waiting)
+    #pragma omp parallel for schedule(dynamic) if(loaded_experts.size() > 1)
+    for (size_t i = 0; i < loaded_experts.size(); ++i) {
+      int expert_idx = loaded_experts[i];
       const auto &assignments = expert_assignments[expert_idx];
       
       compute_expert_forward_no_critical(
@@ -581,89 +535,39 @@ void CachedSlimMoELayer::incremental_forwarding(
         context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
     }
     
-    // OPTIMIZATION 4: Predictive prefetching for next iteration
-    // Based on current expert usage pattern, prefetch likely experts
-    if (enable_prefetch && !experts_to_load.empty()) {
-      // Simple heuristic: prefetch experts adjacent to currently used ones
-      std::set<int> prefetch_candidates;
-      for (int expert_idx : experts_to_load) {
-        if (expert_idx > 0 && need_load[expert_idx - 1]) {
-          prefetch_candidates.insert(expert_idx - 1);
-        }
-        if (expert_idx < static_cast<int>(num_experts) - 1 && need_load[expert_idx + 1]) {
-          prefetch_candidates.insert(expert_idx + 1);
-        }
-      }
+    // Load and process new experts
+    for (int expert_idx : experts_to_load) {
+      // Load expert weights
+      context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
+      context.getWeight(expert_up_proj_indices[expert_idx]).activate();
+      context.getWeight(expert_down_proj_indices[expert_idx]).activate();
       
-      // Prefetch up to 2 experts asynchronously (don't block)
-      int prefetch_count = 0;
-      #pragma omp parallel
-      {
-        #pragma omp single nowait
-        {
-          for (int candidate : prefetch_candidates) {
-            if (prefetch_count >= 2) break;
-            if (loaded_expert_deque.size() < max_cached_experts - 2) {
-              #pragma omp task shared(context)
-              {
-                // Non-blocking prefetch
-                bool should_load = false;
-                
-                #pragma omp critical
-                {
-                  if (need_load[candidate]) {
-                    should_load = true;
-                    need_load[candidate] = false;  // Mark as being loaded
-                  }
-                }
-                
-                if (should_load) {
-                  // Actually perform the loading
-                  context.getWeight(expert_gate_proj_indices[candidate]).activate();
-                  context.getWeight(expert_up_proj_indices[candidate]).activate();
-                  context.getWeight(expert_down_proj_indices[candidate]).activate();
-                  
-                  #pragma omp critical
-                  {
-                    loaded_expert_deque.push_back(candidate);
-                    iteration_map[candidate] = --loaded_expert_deque.end();
-                  }
-                }
-              }
-              prefetch_count++;
-            }
-          }
-        }
-      }
+      // Update cache tracking
+      loaded_expert_deque.push_back(expert_idx);
+      iteration_map[expert_idx] = --loaded_expert_deque.end();
+      need_load[expert_idx] = false;
+      
+      // Process immediately after loading
+      const auto &assignments = expert_assignments[expert_idx];
+      compute_expert_forward_no_critical(
+        input, expert_outputs[expert_idx], assignments,
+        context.getWeight(expert_gate_proj_indices[expert_idx]),
+        context.getWeight(expert_up_proj_indices[expert_idx]),
+        context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
     }
-
-    // Cache eviction - improved to keep frequently used experts
+    
+    // Update LRU for already loaded experts
+    for (int expert_idx : loaded_experts) {
+      if (iteration_map.find(expert_idx) != iteration_map.end()) {
+        loaded_expert_deque.erase(iteration_map[expert_idx]);
+      }
+      loaded_expert_deque.push_back(expert_idx);
+      iteration_map[expert_idx] = --loaded_expert_deque.end();
+    }
+    
+    // Simple cache eviction
     while (loaded_expert_deque.size() > max_cached_experts) {
       int target_idx = loaded_expert_deque.front();
-      
-      // Don't evict if it was just used
-      bool recently_used = false;
-      for (int expert_idx : loaded_experts) {
-        if (expert_idx == target_idx) {
-          recently_used = true;
-          break;
-        }
-      }
-      for (int expert_idx : experts_to_load) {
-        if (expert_idx == target_idx) {
-          recently_used = true;
-          break;
-        }
-      }
-      
-      if (recently_used && loaded_expert_deque.size() > 1) {
-        // Move to back and try next
-        loaded_expert_deque.pop_front();
-        loaded_expert_deque.push_back(target_idx);
-        iteration_map[target_idx] = --loaded_expert_deque.end();
-        continue;
-      }
-      
       context.getWeight(expert_gate_proj_indices[target_idx]).deactivate();
       context.getWeight(expert_up_proj_indices[target_idx]).deactivate();
       context.getWeight(expert_down_proj_indices[target_idx]).deactivate();
@@ -673,11 +577,8 @@ void CachedSlimMoELayer::incremental_forwarding(
     }
 
     // Combine expert outputs
-    for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
-         ++expert_idx) {
-      if (!expert_assignments[expert_idx].empty()) {
-        output.add_i(expert_outputs[expert_idx]);
-      }
+    for (int expert_idx : active_experts) {
+      output.add_i(expert_outputs[expert_idx]);
     }
 
     // reshape output: [B*S,1,1,H] -> [B,1,S,H]
