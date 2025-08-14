@@ -172,9 +172,6 @@ if get_option('enable-mmap')
 endif
 
 if get_option('enable-opencl')
-  if get_option('platform') == 'android'
-  endif
-
   message ('OpenCL build is now enabled and will function only if an OpenCL-supported GPU is available. Using CLBlast as the OpenCL backend.')
   extra_defines += '-DENABLE_OPENCL=1'
   extra_defines += '-DCL_TARGET_OPENCL_VERSION=200'
@@ -198,6 +195,13 @@ if get_option('enable-opencl')
     clblast_options.add_cmake_defines({'CMAKE_POLICY_VERSION_MINIMUM': '3.10'})
     clblast_proj = cmake.subproject('clblast', options: clblast_options, required: true)
     clblast_dep = clblast_proj.dependency('clblast')
+  endif
+else
+  # When OpenCL is disabled, set clblast_dep to dummy_dep for Android
+  if get_option('platform') == 'android'
+    clblast_dep = dummy_dep
+    clblast_root = ''
+    opencl_root = ''
   endif
 endif
 
