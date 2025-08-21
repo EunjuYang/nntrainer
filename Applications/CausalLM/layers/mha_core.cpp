@@ -26,14 +26,33 @@
 #include <nntrainer_error.h>
 #include <node_exporter.h>
 
+#ifdef __ANDROID__
+#include "android_fp16_kernels.h"
+#endif
+
 #include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <type_traits>
 
+#ifdef ENABLE_FP16
+#ifdef USE__FP16
+#define _FP16 __fp16
+#else
+#define _FP16 _Float16
+#endif
+#endif
+
 inline float convert_scalar(uint16_t h) {
   return nntrainer::compute_fp16_to_fp32(h);
 }
+
+// For Android with FP16 support, use native FP16 operations
+#ifdef __ANDROID__
+#ifdef ENABLE_FP16
+#define USE_NATIVE_FP16
+#endif
+#endif
 
 namespace causallm {
 
@@ -114,12 +133,22 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
 
   /** Tensor for KV-Cache */
 
+#ifdef USE_NATIVE_FP16
+  // Use native FP16 for Android instead of UINT16
+  ml::train::TensorDim cache_key_dim(
+    {batch_size, 1, max_timestep, num_heads_KV * head_dim},
+    {context.getFormat(), ml::train::TensorDim::DataType::FP16});
+  ml::train::TensorDim cache_value_dim(
+    {batch_size, 1, max_timestep, num_heads_KV * head_dim},
+    {context.getFormat(), ml::train::TensorDim::DataType::FP16});
+#else
   ml::train::TensorDim cache_key_dim(
     {batch_size, 1, max_timestep, num_heads_KV * head_dim},
     {context.getFormat(), ml::train::TensorDim::DataType::UINT16});
   ml::train::TensorDim cache_value_dim(
     {batch_size, 1, max_timestep, num_heads_KV * head_dim},
     {context.getFormat(), ml::train::TensorDim::DataType::UINT16});
+#endif
 
   weight_idx[AttentionParams::cache_key] = context.requestTensor(
     cache_key_dim, "cache_key", nntrainer::Initializer::NONE, false,
@@ -275,6 +304,33 @@ void MHACoreLayer::compute_kcaches(
   unsigned int from, size_t sequence_len, unsigned int num_head,
   unsigned int group_size, unsigned int head_dim, BS::thread_pool<> &pool) {
 
+#ifdef USE_NATIVE_FP16
+  // Use native FP16 operations for Android
+  if (from) {
+    nntrainer::compute_kcaches<_FP16>(
+      in.getData<float>(), cache.getData<_FP16>(), out.getData<float>(),
+      from + 1, num_head / group_size, head_dim, group_size, 16);
+  } else {
+    std::vector<std::future<void>> futures;
+    for (unsigned int i = 0; i < sequence_len; ++i) {
+      float *input_addr = in.getData<float>() + num_head * head_dim * i;
+      _FP16 *cache_addr = cache.getData<_FP16>();
+      int row_to_compute = i + 1;
+      size_t out_start_row = (i + 1) * i / 2;
+
+      float *output_addr = out.getData<float>() + out_start_row * num_head;
+
+      futures.emplace_back(pool.submit_task([=]() {
+        nntrainer::compute_kcaches<_FP16>(
+          input_addr, cache_addr, output_addr, row_to_compute,
+          num_head / group_size, head_dim, group_size, 16);
+      }));
+    }
+    for (auto &fut : futures)
+      fut.get();
+  }
+#else
+  // Original UINT16 implementation
   if (from) {
     nntrainer::compute_kcaches<uint16_t>(
       in.getData<float>(), cache.getData<uint16_t>(), out.getData<float>(),
@@ -298,6 +354,7 @@ void MHACoreLayer::compute_kcaches(
     for (auto &fut : futures)
       fut.get();
   }
+#endif
 }
 
 void MHACoreLayer::one_batch_incremental_forwarding(
@@ -382,10 +439,18 @@ void MHACoreLayer::one_batch_incremental_forwarding(
 
   softmax_triangle(out_, to - from, num_heads_Q, from, pool);
 
+#ifdef USE_NATIVE_FP16
+  // Use native FP16 operations for Android
+  compute_fp16vcache_fp32_transposed(
+    out_.getData<float>(), reinterpret_cast<const uint16_t*>(b_cached_value.getData<_FP16>()),
+    attention_output_step.getData<float>(), to, num_heads_KV, gqa_size,
+    head_dim, (from) ? false : true, pool);
+#else
   compute_fp16vcache_fp32_transposed(
     out_.getData<float>(), b_cached_value.getData<uint16_t>(),
     attention_output_step.getData<float>(), to, num_heads_KV, gqa_size,
     head_dim, (from) ? false : true, pool);
+#endif
 }
 
 /************************************************************** */
@@ -463,6 +528,18 @@ void MHACoreLayer::apply_rotary_emb_tensor_v2(nntrainer::Tensor &in,
           nntrainer::compute_rotary_emb_value(in.width(), dim, half_, in_ptr,
                                               nullptr, cos_->data(),
                                               sin_->data(), convert_only);
+#ifdef USE_NATIVE_FP16
+        } else if (out.getDataType() ==
+                   ml::train::TensorDim::DataType::FP16) {
+          // Use native FP16 operations for Android
+          _FP16 *out_ptr = out.getData<_FP16>() +
+                              b * out.channel() * out.height() * out.width() +
+                              c * out.height() * out.width() + h * out.width();
+
+          nntrainer::compute_rotary_emb_value(in.width(), dim, half_, in_ptr,
+                                              out_ptr, cos_->data(),
+                                              sin_->data(), convert_only);
+#endif
         } else if (out.getDataType() ==
                    ml::train::TensorDim::DataType::UINT16) {
           uint16_t *out_ptr = out.getData<uint16_t>() +
@@ -508,6 +585,32 @@ void MHACoreLayer::compute_fp16vcache_fp32_transposed(
   int num_cache_head, int gqa_size, int head_dim, bool process_all,
   BS::thread_pool<> &pool) {
 
+#ifdef USE_NATIVE_FP16
+  // Use native FP16 for Android - cast vcache to _FP16 for direct FP16 operations
+  const _FP16 *vcache_fp16 = reinterpret_cast<const _FP16 *>(vcache);
+  
+  if (process_all) {
+    std::vector<std::future<void>> futures;
+    futures.reserve(seq);
+
+    for (int i = 0; i < seq; ++i) {
+      futures.push_back(pool.submit_task([=]() {
+        const float *input =
+          in + ((i * (i + 1)) / 2) * num_cache_head * gqa_size;
+        float *out = output + i * (num_cache_head * gqa_size * head_dim);
+        // Use FP16 version for Android
+        nntrainer::compute_fp16vcache_fp32_transposed_native(
+          i, input, vcache_fp16, out, num_cache_head, gqa_size, head_dim);
+      }));
+    }
+    for (auto &fut : futures)
+      fut.get();
+  } else {
+    nntrainer::compute_fp16vcache_fp32_transposed_native(
+      seq - 1, in, vcache_fp16, output, num_cache_head, gqa_size, head_dim);
+  }
+#else
+  // Original UINT16 implementation
   if (process_all) {
     std::vector<std::future<void>> futures;
     futures.reserve(seq);
@@ -527,6 +630,7 @@ void MHACoreLayer::compute_fp16vcache_fp32_transposed(
     nntrainer::compute_fp16vcache_fp32_transposed(
       seq - 1, in, vcache, output, num_cache_head, gqa_size, head_dim);
   }
+#endif
 }
 
 /**
@@ -668,7 +772,11 @@ void MHACoreLayer::updateTensorsByInputDimensions(
   kv_dim.width(kv_dim.width() / (num_heads_Q / num_heads_KV));
 
   ml::train::TensorDim kv_cache_dim = kv_dim;
+#ifdef USE_NATIVE_FP16
+  kv_cache_dim.setDataType(ml::train::TensorDim::DataType::FP16);
+#else
   kv_cache_dim.setDataType(ml::train::TensorDim::DataType::UINT16);
+#endif
   kv_cache_dim.height(max_timestep);
 
   precompute_freqs(head_dim, max_position_embeddings, theta);
