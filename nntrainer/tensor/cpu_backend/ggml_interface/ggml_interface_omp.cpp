@@ -28,8 +28,44 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdlib>
+#include <omp.h>
 
 namespace nntrainer {
+
+// Cache line size for padding to avoid false sharing
+constexpr size_t CACHE_LINE_SIZE = 64;
+
+// Optimized thread count management
+static int get_optimal_thread_count(size_t workload_size, size_t min_work_per_thread = 16) {
+    static int max_threads = 0;
+    if (max_threads == 0) {
+        // Initialize once
+        const char* env_threads = std::getenv("OMP_NUM_THREADS");
+        if (env_threads) {
+            max_threads = std::atoi(env_threads);
+        } else {
+            max_threads = std::min(omp_get_max_threads(), 
+                                  static_cast<int>(std::thread::hardware_concurrency()));
+        }
+        // Limit to reasonable number to avoid oversubscription
+        max_threads = std::min(max_threads, 16);
+    }
+    
+    // Calculate optimal thread count based on workload
+    int optimal = static_cast<int>(workload_size / min_work_per_thread);
+    optimal = std::max(1, std::min(optimal, max_threads));
+    
+    // For small workloads, use fewer threads to reduce overhead
+    if (workload_size < 64) {
+        optimal = std::min(optimal, 2);
+    } else if (workload_size < 256) {
+        optimal = std::min(optimal, 4);
+    }
+    
+    return optimal;
+}
+
 /**
  * @brief Continuously packed 4 q8_K
  *
@@ -76,30 +112,37 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M, const unsigned int N,
                                const unsigned int lda, const void *B,
                                const unsigned int ldb, float *C,
                                const unsigned int ldc) {
-  int NB_COLS = 4;
+  constexpr int NB_COLS = 4;
+  constexpr size_t MIN_WORK_PER_THREAD = 32;
+  
   if (M == 1) { // GEMV
-    int n_threads = 4;
     unsigned int B_step = sizeof(block_q4_0) * (K / QK4_0);
     unsigned int blocks_per_row = (K + QK8_0 - 1) / QK8_0;
     unsigned int qa_size = sizeof(block_q8_0) * blocks_per_row;
-    std::vector<char> QA = std::vector<char>(qa_size);
-    ::quantize_row_q8_0(A, QA.data(), K);
+    
+    // Use thread-local storage to avoid allocation in hot path
+    thread_local std::vector<char> QA_storage;
+    QA_storage.resize(qa_size);
+    ::quantize_row_q8_0(A, QA_storage.data(), K);
+    
+    // Optimize thread count based on workload
+    int n_threads = get_optimal_thread_count(N, MIN_WORK_PER_THREAD);
 
-#pragma omp parallel for num_threads(n_threads)
-    for (int thread_idx = 0; thread_idx < n_threads; ++thread_idx) {
-      unsigned int M_step_start = (thread_idx * N) / n_threads;     // = 0
-      unsigned int M_step_end = ((thread_idx + 1) * N) / n_threads; // ne01 = N
-
-      M_step_start = (M_step_start % NB_COLS)
-                       ? M_step_start + NB_COLS - (M_step_start % NB_COLS)
-                       : M_step_start;
-      M_step_end = (M_step_end % NB_COLS)
-                     ? M_step_end + NB_COLS - (M_step_end % NB_COLS)
-                     : M_step_end;
-
-      nntr_gemv_q4_0_4x8_q8_0(K, (float *)((C) + M_step_start), N,
-                              (void *)((char *)B + M_step_start * B_step),
-                              QA.data(), M, M_step_end - M_step_start);
+#pragma omp parallel for num_threads(n_threads) schedule(static)
+    for (int idx = 0; idx < static_cast<int>((N + NB_COLS - 1) / NB_COLS); ++idx) {
+      unsigned int M_step_start = idx * NB_COLS;
+      unsigned int M_step_end = std::min(M_step_start + NB_COLS, N);
+      
+      // Ensure alignment
+      M_step_start = (M_step_start / NB_COLS) * NB_COLS;
+      M_step_end = ((M_step_end + NB_COLS - 1) / NB_COLS) * NB_COLS;
+      M_step_end = std::min(M_step_end, N);
+      
+      if (M_step_start < N) {
+        nntr_gemv_q4_0_4x8_q8_0(K, (float *)(C + M_step_start), N,
+                                (void *)((char *)B + M_step_start * B_step),
+                                QA_storage.data(), M, M_step_end - M_step_start);
+      }
     }
   } else if (M % 4 != 0) {
     int n_threads = 8;
@@ -181,24 +224,25 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M, const unsigned int N,
       ggml_quantize_mat_q8_0_4x8(A + 4 * i * K, QA.data() + i * qa_4_rows_size,
                                  K);
     }
-    int thread_num = std::thread::hardware_concurrency() / 2;
+    // Optimize thread count for GEMM
+    int thread_num = get_optimal_thread_count(N, MIN_WORK_PER_THREAD * 2);
     unsigned int B_step = sizeof(block_q4_0) * (K / QK4_0);
 
-#pragma omp parallel for num_threads(thread_num)
-    for (int i = 0; i < thread_num; i++) {
-      unsigned int src0_start = (i * N) / thread_num;
-      unsigned int src0_end = ((i + 1) * N) / thread_num;
-
-      src0_start = (src0_start % NB_COLS)
-                     ? src0_start + NB_COLS - (src0_start % NB_COLS)
-                     : src0_start;
-      src0_end = (src0_end % NB_COLS)
-                   ? src0_end + NB_COLS - (src0_end % NB_COLS)
-                   : src0_end;
-
-      nntr_gemm_q4_0_4x8_q8_0(K, (float *)(C + src0_start), ldc,
-                              (void *)((char *)B + src0_start * B_step),
-                              QA.data(), M, src0_end - src0_start);
+    // Use static scheduling for consistent performance
+#pragma omp parallel for num_threads(thread_num) schedule(static)
+    for (int idx = 0; idx < static_cast<int>((N + NB_COLS - 1) / NB_COLS); ++idx) {
+      unsigned int src0_start = idx * NB_COLS;
+      unsigned int src0_end = std::min(src0_start + NB_COLS, N);
+      
+      src0_start = (src0_start / NB_COLS) * NB_COLS;
+      src0_end = ((src0_end + NB_COLS - 1) / NB_COLS) * NB_COLS;
+      src0_end = std::min(src0_end, N);
+      
+      if (src0_start < N) {
+        nntr_gemm_q4_0_4x8_q8_0(K, (float *)(C + src0_start), ldc,
+                                (void *)((char *)B + src0_start * B_step),
+                                QA.data(), M, src0_end - src0_start);
+      }
     }
   }
 }
