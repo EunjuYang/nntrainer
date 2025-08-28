@@ -729,6 +729,7 @@ void NeuralNetwork::load(const std::string &file_path,
     HANDLE hFile, hMap;
 #endif
 
+    /*
     if (exec_mode == ml::train::ExecutionMode::INFERENCE) {
       if (MMAP_READ) {
 #if defined(_WIN32)
@@ -785,39 +786,39 @@ void NeuralNetwork::load(const std::string &file_path,
       }
 
     } else {
-      for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
-           ++iter) {
-        (*iter)->read(model_file, false, exec_mode, fsu_mode);
-      }
+    */
+    for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); ++iter) {
+      (*iter)->read(model_file, false, exec_mode, fsu_mode);
+    }
 
-      try {
-        /// this is assuming that the failure is allowed at the end of the file
-        /// read. so, after this line, additional read shouldn't be called
-        if (opt && istrequal(opt->getType(), "adam")) {
-          std::string opt_type;
-          opt_type.resize(4);
-          model_file.read((char *)&opt_type[0], 4);
+    try {
+      /// this is assuming that the failure is allowed at the end of the file
+      /// read. so, after this line, additional read shouldn't be called
+      if (opt && istrequal(opt->getType(), "adam")) {
+        std::string opt_type;
+        opt_type.resize(4);
+        model_file.read((char *)&opt_type[0], 4);
 
-          if (istrequal(opt_type, "adam")) {
-            for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
-                 iter++) {
-              (*iter)->read(model_file, true, exec_mode);
-            }
+        if (istrequal(opt_type, "adam")) {
+          for (auto iter = model_graph.cbegin(); iter != model_graph.cend();
+               iter++) {
+            (*iter)->read(model_file, true, exec_mode);
           }
         }
-
-        if (!fsu_mode && exec_mode == ml::train::ExecutionMode::TRAIN) {
-
-          checkedRead(model_file, (char *)&epoch_idx, sizeof(epoch_idx),
-                      "[NeuralNetwork::readModel] failed to read epoch_idx");
-          checkedRead(model_file, (char *)&iter, sizeof(iter),
-                      "[NeuralNetwork::readModel] failed to read iteration");
-        }
-      } catch (...) {
-        std::cerr << "failed to read additional data like optimizer variable, "
-                     "iteration, proceeding with default\n";
       }
+
+      if (!fsu_mode && exec_mode == ml::train::ExecutionMode::TRAIN) {
+
+        checkedRead(model_file, (char *)&epoch_idx, sizeof(epoch_idx),
+                    "[NeuralNetwork::readModel] failed to read epoch_idx");
+        checkedRead(model_file, (char *)&iter, sizeof(iter),
+                    "[NeuralNetwork::readModel] failed to read iteration");
+      }
+    } catch (...) {
+      std::cerr << "failed to read additional data like optimizer variable, "
+                   "iteration, proceeding with default\n";
     }
+    // }
 
     ml_logi("read modelfile: %s",
             (v.size() == 2) ? v[1].c_str() : v[0].c_str());

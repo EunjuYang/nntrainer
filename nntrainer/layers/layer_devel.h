@@ -372,6 +372,7 @@ public:
       for (unsigned int i = 0; i < run_context.getNumWeights(); ++i) {
         if (run_context.isGradientFirstAccess(i)) {
           run_context.getWeight(i).save(file);
+          // std::cout << "skip to save " << run_context.getName() << std::endl;
         }
       }
     }
