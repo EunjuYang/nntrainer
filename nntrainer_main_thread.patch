@@ -1,0 +1,217 @@
+diff --git a/nntrainer/dataset/databuffer.cpp b/nntrainer/dataset/databuffer.cpp
+index original..modified 100644
+--- a/nntrainer/dataset/databuffer.cpp
++++ b/nntrainer/dataset/databuffer.cpp
+@@ -69,6 +69,87 @@ void DataBuffer::setProperty(const std::vector<std::string> &values) {
+ }
+ 
+ std::future<std::shared_ptr<IterationQueue>>
++DataBuffer::startFetchWorker(const std::vector<TensorDim> &input_dims,
++                             const std::vector<TensorDim> &label_dims,
++                             bool shuffle) {
++  NNTR_THROW_IF(!producer, std::runtime_error) << "producer does not exist";
++  NNTR_THROW_IF(input_dims.empty(), std::runtime_error)
++    << "There must be at least one input";
++
++  auto q_size = std::get<PropsBufferSize>(*db_props);
++  auto iq = std::make_shared<IterationQueue>(q_size, input_dims, label_dims);
++  auto generator = producer->finalize(input_dims, label_dims);
++  auto size = producer->size(input_dims, label_dims);
++  iq_view = iq;
++
++  // Store generator and state for on-demand generation in main thread
++  main_thread_generator = generator;
++  main_thread_size = size;
++  main_thread_current_idx = 0;
++  main_thread_shuffle = shuffle;
++  main_thread_iq = iq;
++  
++  if (shuffle == true && size != DataProducer::SIZE_UNDEFINED) {
++    main_thread_idxes.resize(size);
++    std::iota(main_thread_idxes.begin(), main_thread_idxes.end(), 0);
++    std::shuffle(main_thread_idxes.begin(), main_thread_idxes.end(), rng);
++  }
++
++  // Return immediately fulfilled future (no thread creation)
++  std::promise<std::shared_ptr<IterationQueue>> promise;
++  promise.set_value(iq);
++  return promise.get_future();
++}
++
++ScopedView<Iteration> DataBuffer::fetch() {
++  NNTR_THROW_IF(!producer, std::runtime_error) << "producer does not exist";
++  auto iq = iq_view.lock();
++  NNTR_THROW_IF(!iq, std::runtime_error)
++    << "Cannot fetch, either fetcher is not running or fetcher has ended and "
++       "invalidated";
++  
++  // Generate data on-demand in main thread
++  if (main_thread_generator) {
++    // Check if we've reached the end
++    if (main_thread_size != DataProducer::SIZE_UNDEFINED && 
++        main_thread_current_idx >= main_thread_size) {
++      // Signal end of data
++      main_thread_iq->notifyEndOfRequestEmpty();
++      return main_thread_iq->requestFilledSlot();
++    }
++    
++    // Fill one iteration worth of samples
++    auto iteration_samples = main_thread_iq->batch_size;
++    for (unsigned int s = 0; s < iteration_samples; ++s) {
++      if (main_thread_size != DataProducer::SIZE_UNDEFINED && 
++          main_thread_current_idx >= main_thread_size) {
++        break;
++      }
++      
++      auto sample_view = main_thread_iq->requestEmptySlot();
++      if (sample_view.isEmpty()) {
++        break;
++      }
++      
++      auto &sample = sample_view.get();
++      try {
++        unsigned int idx = main_thread_shuffle && !main_thread_idxes.empty() ? 
++                          main_thread_idxes[main_thread_current_idx] : 
++                          main_thread_current_idx;
++        bool last = main_thread_generator(idx, sample.getInputsRef(), sample.getLabelsRef());
++        main_thread_current_idx++;
++        if (last) {
++          main_thread_iq->notifyEndOfRequestEmpty();
++          break;
++        }
++      } catch (std::exception &e) {
++        ml_loge("Fetching sample failed, Error: %s", e.what());
++        throw;
++      }
++    }
++  }
++  
++  return iq->requestFilledSlot();
++}
++
++std::future<std::shared_ptr<IterationQueue>>
++DataBuffer::startFetchWorker_original(const std::vector<TensorDim> &input_dims,
++                             const std::vector<TensorDim> &label_dims,
++                             bool shuffle) {
+   NNTR_THROW_IF(!producer, std::runtime_error) << "producer does not exist";
+   NNTR_THROW_IF(input_dims.empty(), std::runtime_error)
+     << "There must be at least one input";
+@@ -152,15 +233,6 @@ DataBuffer::startFetchWorker(const std::vector<TensorDim> &input_dims,
+   });
+ }
+ 
+-ScopedView<Iteration> DataBuffer::fetch() {
+-  NNTR_THROW_IF(!producer, std::runtime_error) << "producer does not exist";
+-  auto iq = iq_view.lock();
+-  NNTR_THROW_IF(!iq, std::runtime_error)
+-    << "Cannot fetch, either fetcher is not running or fetcher has ended and "
+-       "invalidated";
+-  return iq->requestFilledSlot();
+-}
+-
+ std::tuple<DataProducer::Generator /** generator */, unsigned int /** size */>
+ DataBuffer::getGenerator(const std::vector<TensorDim> &input_dims,
+                          const std::vector<TensorDim> &label_dims) {
+diff --git a/nntrainer/dataset/databuffer.h b/nntrainer/dataset/databuffer.h
+index original..modified 100644
+--- a/nntrainer/dataset/databuffer.h
++++ b/nntrainer/dataset/databuffer.h
+@@ -137,6 +137,15 @@ private:
+   std::weak_ptr<IterationQueue>
+     iq_view; /**< weak pointer to iteration queue to request data later */
+   std::mt19937 rng; /**< random number generator */
++  
++  // Main thread execution state
++  DataProducer::Generator main_thread_generator; /**< generator for main thread */
++  unsigned int main_thread_size; /**< size of dataset */
++  unsigned int main_thread_current_idx; /**< current index */
++  bool main_thread_shuffle; /**< whether to shuffle */
++  std::vector<unsigned int> main_thread_idxes; /**< shuffled indices */
++  std::shared_ptr<IterationQueue> main_thread_iq; /**< iteration queue */
++  
+ };
+ 
+ } // namespace nntrainer
+diff --git a/nntrainer/dataset/iteration_queue.cpp b/nntrainer/dataset/iteration_queue.cpp
+index original..modified 100644
+--- a/nntrainer/dataset/iteration_queue.cpp
++++ b/nntrainer/dataset/iteration_queue.cpp
+@@ -68,7 +68,14 @@ ScopedView<Sample> IterationQueue::requestEmptySlot() {
+ 
+   if (being_filled == nullptr ||
+       current_iterator + 1 == being_filled->get().end()) {
+-    being_filled = empty_q.waitAndPop();
++    // Non-blocking pop for main thread execution
++    being_filled = empty_q.tryPop();
++    if (being_filled == nullptr) {
++      // No empty slots available, return empty view
++      return ScopedView<Sample>(nullptr);
++    }
++    // Original blocking version:
++    // being_filled = empty_q.waitAndPop();
+     being_filled->reset();
+     num_being_filled++;
+     current_iterator = being_filled->get().begin();
+@@ -102,7 +109,15 @@ ScopedView<Iteration> IterationQueue::requestFilledSlot() {
+     return ScopedView<Iteration>(nullptr);
+   }
+ 
+-  auto iteration = filled_q.waitAndPop();
++  // Non-blocking pop for main thread execution
++  auto iteration = filled_q.tryPop();
++  if (iteration == nullptr && flow_state.load() != FlowState::FLOW_STATE_STOP_REQUESTED) {
++    // No filled slots available yet, return empty view
++    return ScopedView<Iteration>(nullptr);
++  }
++  
++  // Original blocking version:
++  // auto iteration = filled_q.waitAndPop();
+   if (iteration == nullptr) {
+     auto stop_request_state = FlowState::FLOW_STATE_STOP_REQUESTED;
+     bool exchange_result = flow_state.compare_exchange_strong(
+diff --git a/nntrainer/dataset/iteration_queue.h b/nntrainer/dataset/iteration_queue.h
+index original..modified 100644
+--- a/nntrainer/dataset/iteration_queue.h
++++ b/nntrainer/dataset/iteration_queue.h
+@@ -71,6 +71,21 @@ public:
+     return ptr;
+   }
+ 
++  /**
++   * @brief try to pop data from the queue without blocking
++   * @return T* view of the data or nullptr if queue is empty
++   */
++  T *tryPop() {
++    std::unique_lock<std::shared_mutex> lk(q_mutex);
++    if (q.empty()) {
++      return nullptr;
++    }
++    auto ptr = q.front();
++    q.pop();
++    
++    return ptr;
++  }
++
+   /**
+    * @brief check if current queue is empty
+    *
+@@ -245,6 +260,11 @@ public:
+    */
+   unsigned int slots() { return iterations.size(); }
+ 
++  /**
++   * @brief get batch size
++   */
++  unsigned int batch_size;
++
+   /**
+    * @brief get size of batch for one iteration
+    *
+@@ -379,7 +399,6 @@ private:
+                           num_being_filled */
+   std::atomic<FlowState> flow_state; /**< flow state of the queue */
+ 
+-  unsigned int batch_size;
+   ViewQueue<MarkableIteration> empty_q;  /**< iterations to be filled */
+   ViewQueue<MarkableIteration> filled_q; /**< iterations to be served */
+ };
