@@ -718,6 +718,45 @@ void swiglu(const unsigned int N, float *X, const float *Y, const float *Z) {
   _mm_setcsr(oldcsr);
 }
 
+void swiglu(const unsigned int N, float *X, const float *Y, const float *Z, float alpha) {
+  size_t i = 0;
+
+  auto oldcsr = _mm_getcsr();
+  // We don't need denormals, enable:
+  // DAZ = Denormals Are Zero
+  // FTZ = Flush To Zero
+  _mm_setcsr(oldcsr | 0x8040);
+
+  auto alpha_vec = _mm256_set1_ps(alpha);
+
+  for (; i + 16 < N; i += 16) {
+    auto y0 = _mm256_loadu_ps(Y + i);
+    auto y1 = _mm256_loadu_ps(Y + i + 8);
+    auto z0 = _mm256_loadu_ps(Z + i);
+    auto z1 = _mm256_loadu_ps(Z + i + 8);
+
+    _mm256_storeu_ps(X + i, avx2_approx_swiglu_alpha(y0, z0, alpha_vec));
+    _mm256_storeu_ps(X + i + 8, avx2_approx_swiglu_alpha(y1, z1, alpha_vec));
+  }
+
+  if (i + 8 < N)
+    UNLIKELY {
+      auto y0 = _mm256_loadu_ps(Y + i);
+      auto z0 = _mm256_loadu_ps(Z + i);
+      _mm256_storeu_ps(X + i, avx2_approx_swiglu_alpha(y0, z0, alpha_vec));
+      i += 8;
+    }
+
+  if (i < N)
+    UNLIKELY {
+      // Process remaining elements
+      for (; i < N; ++i) {
+        X[i] = (Y[i] / (1.0f + std::exp(-alpha * Y[i]))) * Z[i];
+      }
+    }
+  _mm_setcsr(oldcsr);
+}
+
 void ele_mul(const unsigned int N, const float *X, const float *Y, float *Z,
              float alpha, float beta, unsigned int i_stride,
              unsigned int o_stride) {
