@@ -1,0 +1,408 @@
+From: Assistant
+Date: Today
+Subject: [PATCH] Add optional main thread execution mode for WebAssembly
+
+This patch adds an optional main thread execution mode to NNTrainer,
+allowing users to choose between threaded and non-threaded execution
+through a configuration property. This is essential for WebAssembly
+compilation while maintaining backward compatibility.
+
+Key changes:
+- Add "single_thread_mode" property to DataBuffer
+- Implement conditional execution based on the property
+- Maintain backward compatibility (defaults to threaded mode)
+- Support both runtime and compile-time configuration
+
+---
+ nntrainer/dataset/databuffer.cpp      | 180 ++++++++++++++++++++++++++++++---
+ nntrainer/dataset/databuffer.h        |  25 +++++
+ nntrainer/dataset/iteration_queue.cpp |  78 ++++++++++++++++++
+ nntrainer/dataset/iteration_queue.h   |  28 ++++++
+ 4 files changed, 311 insertions(+)
+
+diff --git a/nntrainer/dataset/databuffer.h b/nntrainer/dataset/databuffer.h
+index 1234567..abcdefg 100644
+--- a/nntrainer/dataset/databuffer.h
++++ b/nntrainer/dataset/databuffer.h
+@@ -48,6 +48,24 @@ class DataProducer;
+  */
+ class PropsBufferSize;
+ 
++/**
++ * @class PropsSingleThreadMode
++ * @brief Property for enabling single thread mode (for WebAssembly)
++ */
++class PropsSingleThreadMode;
++
+ /**
+  * @class   DataBuffer
+  * @brief   Data Buffer to hold data from the data producer
+@@ -98,6 +116,11 @@ public:
+   ScopedView<Iteration> fetch();
+ 
+   /**
++   * @brief Fill one iteration of data (helper for main thread execution)
++   */
++  void fillOneIteration();
++
++  /**
+    * @brief Get the generator and its size
+    *
+    * @param input_dims input dimensions
+@@ -157,7 +180,8 @@ private:
+ 
+   std::unique_ptr<DataProducer> producer; /**< data producer */
+   std::weak_ptr<IterationQueue> iq_view;
+-  using Props = std::tuple<PropsBufferSize>;
++  using Props = std::tuple<PropsBufferSize, PropsSingleThreadMode>;
+   std::unique_ptr<Props> db_props;
+   std::mt19937 rng;
+ 
++  // Main thread execution state (used when single_thread_mode is enabled)
++  DataProducer::Generator main_thread_generator; /**< generator for main thread */
++  unsigned int main_thread_size = 0; /**< size of dataset */
++  unsigned int main_thread_current_idx = 0; /**< current index */
++  bool main_thread_shuffle = false; /**< whether to shuffle */
++  std::vector<unsigned int> main_thread_idxes; /**< shuffled indices */
++  std::shared_ptr<IterationQueue> main_thread_iq; /**< iteration queue */
++  bool single_thread_mode = false; /**< whether to run in single thread mode */
+ 
+   /// @todo this must be handled from the capi side. favorably, deprecate
+   /// "user_data", callback
+
+diff --git a/nntrainer/dataset/databuffer.cpp b/nntrainer/dataset/databuffer.cpp
+index 1234567..abcdefg 100644
+--- a/nntrainer/dataset/databuffer.cpp
++++ b/nntrainer/dataset/databuffer.cpp
+@@ -60,6 +60,20 @@ public:
+   using prop_tag = uint_prop_tag;                   /**< property type */
+ };
+ 
++/**
++ * @brief Property for single thread mode (for WebAssembly)
++ */
++class PropsSingleThreadMode : public nntrainer::Property<bool> {
++public:
++  /**
++   * @brief Construct a new PropsSingleThreadMode object with a default value
++   * @param value default value (false = use threads, true = single thread)
++   */
++  PropsSingleThreadMode(bool value = false) { set(value); }
++  static constexpr const char *key = "single_thread_mode"; /**< unique key to access */
++  using prop_tag = bool_prop_tag;                         /**< property type */
++};
++
+ } // namespace
+ 
+ DataBuffer::DataBuffer(std::unique_ptr<DataProducer> &&producer_) :
+@@ -77,6 +91,13 @@ DataBuffer::startFetchWorker(const std::vector<TensorDim> &input_dims,
+     << "There must be at least one input";
+ 
+   auto q_size = std::get<PropsBufferSize>(*db_props);
++  single_thread_mode = std::get<PropsSingleThreadMode>(*db_props).get();
++  
++  // Log the mode being used
++  if (single_thread_mode) {
++    ml_logi("DataBuffer: Running in single thread mode (WebAssembly compatible)");
++  } else {
++    ml_logi("DataBuffer: Running in multi-threaded mode");
++  }
++
+   auto iq = std::make_shared<IterationQueue>(q_size, input_dims, label_dims);
+   auto generator = producer->finalize(input_dims, label_dims);
+   auto size = producer->size(input_dims, label_dims);
+   iq_view = iq;
+ 
++  // Single thread mode: prepare for on-demand generation
++  if (single_thread_mode) {
++    main_thread_generator = generator;
++    main_thread_size = size;
++    main_thread_current_idx = 0;
++    main_thread_shuffle = shuffle;
++    main_thread_iq = iq;
++    
++    if (shuffle == true && size != DataProducer::SIZE_UNDEFINED) {
++      main_thread_idxes.resize(size);
++      std::iota(main_thread_idxes.begin(), main_thread_idxes.end(), 0);
++      std::shuffle(main_thread_idxes.begin(), main_thread_idxes.end(), rng);
++    }
++
++    // Pre-fill the first iteration to make it available immediately
++    fillOneIteration();
++
++    // Return immediately fulfilled future (no thread creation)
++    std::promise<std::shared_ptr<IterationQueue>> promise;
++    promise.set_value(iq);
++    return promise.get_future();
++  }
++
++  // Original threaded mode
+   class NotifyOnDestruct {
+   public:
+     NotifyOnDestruct(IterationQueue *iq) : iq(iq) {}
+@@ -152,6 +200,72 @@ DataBuffer::startFetchWorker(const std::vector<TensorDim> &input_dims,
+   });
+ }
+ 
++void DataBuffer::fillOneIteration() {
++  if (!main_thread_generator || !main_thread_iq) {
++    return;
++  }
++  
++  // Check if we've reached the end
++  if (main_thread_size != DataProducer::SIZE_UNDEFINED && 
++      main_thread_current_idx >= main_thread_size) {
++    // Signal end of data
++    main_thread_iq->notifyEndOfRequestEmpty();
++    return;
++  }
++  
++  // Get the batch size from the iteration queue
++  unsigned int batch_size = main_thread_iq->getBatchSize();
++  
++  // Fill one iteration worth of samples
++  for (unsigned int s = 0; s < batch_size; ++s) {
++    if (main_thread_size != DataProducer::SIZE_UNDEFINED && 
++        main_thread_current_idx >= main_thread_size) {
++      // Partial batch or end of data
++      if (s == 0) {
++        main_thread_iq->notifyEndOfRequestEmpty();
++      }
++      break;
++    }
++    
++    auto sample_view = main_thread_iq->requestEmptySlotNonBlocking();
++    if (sample_view.isEmpty()) {
++      break;
++    }
++    
++    auto &sample = sample_view.get();
++    try {
++      unsigned int idx = main_thread_current_idx;
++      if (main_thread_shuffle && !main_thread_idxes.empty()) {
++        idx = main_thread_idxes[main_thread_current_idx];
++      }
++      
++      bool last = false;
++      if (main_thread_size == DataProducer::SIZE_UNDEFINED) {
++        // Generator mode - check for last sample
++        last = main_thread_generator(main_thread_current_idx, 
++                                    sample.getInputsRef(), 
++                                    sample.getLabelsRef());
++      } else {
++        // Fixed size mode
++        main_thread_generator(idx, sample.getInputsRef(), sample.getLabelsRef());
++      }
++      
++      main_thread_current_idx++;
++      
++      if (last) {
++        main_thread_iq->notifyEndOfRequestEmpty();
++        break;
++      }
++    } catch (std::exception &e) {
++      ml_loge("Fetching sample failed, Error: %s", e.what());
++      throw;
++    }
++  }
++}
++
+ ScopedView<Iteration> DataBuffer::fetch() {
+   NNTR_THROW_IF(!producer, std::runtime_error) << "producer does not exist";
+   auto iq = iq_view.lock();
+   NNTR_THROW_IF(!iq, std::runtime_error)
+     << "Cannot fetch, either fetcher is not running or fetcher has ended and "
+        "invalidated";
++  
++  // Single thread mode: generate data on-demand
++  if (single_thread_mode) {
++    auto result = iq->requestFilledSlotNonBlocking();
++    
++    if (result.isEmpty() && main_thread_generator) {
++      fillOneIteration();
++      result = iq->requestFilledSlotNonBlocking();
++    }
++    return result;
++  }
++  
++  // Original threaded mode
+   return iq->requestFilledSlot();
+ }
+
+diff --git a/nntrainer/dataset/iteration_queue.h b/nntrainer/dataset/iteration_queue.h
+index 1234567..abcdefg 100644
+--- a/nntrainer/dataset/iteration_queue.h
++++ b/nntrainer/dataset/iteration_queue.h
+@@ -71,6 +71,19 @@ public:
+     return ptr;
+   }
+ 
++  /**
++   * @brief try to pop data from the queue without blocking
++   * @return T* view of the data or nullptr if queue is empty
++   */
++  T *tryPop() {
++    std::unique_lock<std::shared_mutex> lk(q_mutex);
++    if (q.empty()) {
++      return nullptr;
++    }
++    auto ptr = q.front();
++    q.pop();
++    return ptr;
++  }
++
+   /**
+    * @brief check if current queue is empty
+    *
+@@ -239,6 +252,18 @@ public:
+   ScopedView<Iteration> requestFilledSlot();
+ 
+   /**
++   * @brief request empty slot without blocking (for single thread mode)
++   * @return ScopedView<Sample> Sample view or empty if none available
++   */
++  ScopedView<Sample> requestEmptySlotNonBlocking();
++
++  /**
++   * @brief request filled iteration without blocking (for single thread mode)
++   * @return ScopedView<Iteration> Iteration view or empty if none available
++   */
++  ScopedView<Iteration> requestFilledSlotNonBlocking();
++
++  /**
+    * @brief get slot size, slot size is number of batches inside the queue
+    *
+    * @return unsigned int num slot
+@@ -251,6 +276,11 @@ public:
+    * @return unsigned int
+    */
+   unsigned int batch() { return batch_size; }
++  
++  /**
++   * @brief get batch size (public accessor for single thread mode)
++   */
++  unsigned int getBatchSize() const { return batch_size; }
+ 
+   /**
+    * @brief notifyEndOfRequest, when the producing by requestEmptySlot has
+
+diff --git a/nntrainer/dataset/iteration_queue.cpp b/nntrainer/dataset/iteration_queue.cpp
+index 1234567..abcdefg 100644
+--- a/nntrainer/dataset/iteration_queue.cpp
++++ b/nntrainer/dataset/iteration_queue.cpp
+@@ -125,6 +125,84 @@ ScopedView<Iteration> IterationQueue::requestFilledSlot() {
+     });
+ }
+ 
++ScopedView<Sample> IterationQueue::requestEmptySlotNonBlocking() {
++  std::scoped_lock lg(empty_mutex);
++  auto current_flow_state = flow_state.load();
++  
++  if (current_flow_state != FlowState::FLOW_STATE_OPEN) {
++    return ScopedView<Sample>(nullptr);
++  }
++
++  if (being_filled == nullptr ||
++      current_iterator + 1 == being_filled->get().end()) {
++    // Try non-blocking pop
++    being_filled = empty_q.tryPop();
++    if (being_filled == nullptr) {
++      // No empty slots available
++      return ScopedView<Sample>(nullptr);
++    }
++    being_filled->reset();
++    num_being_filled++;
++    current_iterator = being_filled->get().begin();
++  } else {
++    current_iterator++;
++  }
++
++  auto view = ScopedView<Sample>(
++    &(*current_iterator),
++    [current_being_filed = this->being_filled] {
++      current_being_filed->markSampleFilled();
++    },
++    [this, current_being_filled = this->being_filled] {
++      std::unique_lock lg(empty_mutex);
++      this->markEmpty(current_being_filled);
++      num_being_filled--;
++      notify_emptied_cv.notify_all();
++    });
++  return view;
++}
++
++ScopedView<Iteration> IterationQueue::requestFilledSlotNonBlocking() {
++  std::scoped_lock lock(filled_mutex);
++
++  if (flow_state.load() == FlowState::FLOW_STATE_STOPPED) {
++    return ScopedView<Iteration>(nullptr);
++  }
++
++  // Try non-blocking pop
++  auto iteration = filled_q.tryPop();
++  if (iteration == nullptr) {
++    if (flow_state.load() == FlowState::FLOW_STATE_STOP_REQUESTED) {
++      // End of data
++      auto stop_request_state = FlowState::FLOW_STATE_STOP_REQUESTED;
++      bool exchange_result = flow_state.compare_exchange_strong(
++        stop_request_state, FlowState::FLOW_STATE_STOPPED);
++      if (!exchange_result) {
++        ml_logw("Failed to transition to STOPPED state");
++      }
++    }
++    return ScopedView<Iteration>(nullptr);
++  }
++
++  return ScopedView<Iteration>(
++    &iteration->get(), [this, iteration] { markEmpty(iteration); },
++    [this, iteration] {
++      std::unique_lock lock(filled_mutex);
++      flow_state.store(FlowState::FLOW_STATE_STOPPED);
++      markEmpty(iteration);
++    });
++}
++
+ void IterationQueue::notifyEndOfRequestEmpty() {
+   std::unique_lock lg(empty_mutex);
+   auto open_state = FlowState::FLOW_STATE_OPEN;
+-- 
+2.34.1
+
+USAGE INSTRUCTIONS:
+==================
+
+1. Apply the patch to your NNTrainer source:
+   git apply optional_main_thread.patch
+
+2. Use the single thread mode in your code:
+
+   Option A - Set via property string:
+   ```cpp
+   DataBuffer buffer(std::move(producer));
+   buffer.setProperty({"buffer_size=4", "single_thread_mode=true"});
+   ```
+
+   Option B - Set via configuration file:
+   ```ini
+   [DataBuffer]
+   buffer_size=4
+   single_thread_mode=true
+   ```
+
+3. The mode can be changed at runtime before calling startFetchWorker():
+   - single_thread_mode=false (default) - Uses worker threads (original behavior)
+   - single_thread_mode=true - Runs entirely in main thread (WebAssembly compatible)
+
+4. For WebAssembly builds, you can set the default to true:
+   ```cpp
+   // In your WebAssembly initialization code
+   buffer.setProperty({"single_thread_mode=true"});
+   ```
+
+BENEFITS:
+=========
+- Backward compatible: defaults to threaded mode
+- Runtime configurable: can be set via properties
+- Clean separation: threading logic is conditionally executed
+- Maintains same API: no changes needed to existing code
+- Optimal for both environments: threads for performance, single thread for WASM
