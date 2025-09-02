@@ -101,6 +101,16 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
 void swiglu(const unsigned int N, float *X, const float *Y, const float *Z);
 
 /**
+ * @brief swiglu function with alpha and AVX : X = (Y / (1 + exp(- alpha * Y))) * Z
+ * @param N number of elements in X
+ * @param X float* for Vector X
+ * @param Y float* for Vector Y
+ * @param Z float* for Vector Z
+ * @param alpha float
+ */
+void swiglu(const unsigned int N, float *X, const float *Y, const float *Z, float alpha);
+
+/**
  * @brief     elementwise vector multiplication : Z = X ⊙ alpha * Y +
  * beta * Z
  * @param[in] N  length of the vector

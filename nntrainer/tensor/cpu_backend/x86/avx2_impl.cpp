@@ -310,6 +310,16 @@ avx2_approx_swiglu(__m256 x, __m256 s) noexcept -> __m256 {
   auto swiglu_nonscaled = _mm256_div_ps(x, inv_sigmoid);
   return _mm256_mul_ps(swiglu_nonscaled, s);
 }
+
+_nnt_ATTR_ALWAYS_INLINE _nnt_ATTR_FLATTEN auto _nnt_CC_VECTORCALL
+avx2_approx_swiglu_alpha(__m256 x, __m256 s, __m256 alpha) noexcept -> __m256 {
+  auto alpha_x = _mm256_mul_ps(alpha, x);
+  auto neg_alpha_x = avx2_negate_ps(alpha_x);
+  auto inv_sigmoid =
+    _mm256_add_ps(avx2_approx_exp_e2lookup<8>(neg_alpha_x), _mm256_set1_ps(1.0f));
+  auto swiglu_nonscaled = _mm256_div_ps(x, inv_sigmoid);
+  return _mm256_mul_ps(swiglu_nonscaled, s);
+}
 } // namespace
 
 namespace nntrainer::avx2 {
