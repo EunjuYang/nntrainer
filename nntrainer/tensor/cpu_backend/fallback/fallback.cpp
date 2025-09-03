@@ -179,8 +179,10 @@ void convert_q4_0x8_shuffle_dispatch(const void *src, uint16_t *d_out,
 }
 
 void calc_trigonometric_vals_dup(unsigned int N_half, float *angle, float *cos_,
-                                 float *sin_, unsigned int alpha) {
-  __fallback_calc_trigonometric_vals_dup(N_half, angle, cos_, sin_, alpha);
+                                 float *sin_, unsigned int from,
+                                 float attention_scaling) {
+  __fallback_calc_trigonometric_vals_dup(N_half, angle, cos_, sin_, from,
+                                         attention_scaling);
 }
 
 void swiglu(const unsigned int N, float *X, float *Y, float *Z) {

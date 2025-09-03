@@ -331,7 +331,8 @@ void __fallback_convert_q4_0x8_shuffle_dispatch(const void *src,
 
 void __fallback_calc_trigonometric_vals_dup(unsigned int N_half, float *angle,
                                             float *cos_, float *sin_,
-                                            unsigned int alpha) {
+                                            unsigned int from,
+                                            float attention_scaling) {
   throw std::runtime_error(
     "Error: No implementation of rotary embedding layer incremental_forwarding "
     "with SIMD acceleration except for NEON!");
