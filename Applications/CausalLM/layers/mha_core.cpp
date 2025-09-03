@@ -514,7 +514,7 @@ void MHACoreLayer::precompute_freqs(int head_dim, unsigned int seq_len,
 
 #ifdef USE_NEON
     nntrainer::calc_trigonometric_vals_dup(
-      half_, thetas.data(), (*cos)[i].data(), (*sin)[i].data(), i);
+      half_, thetas.data(), (*cos)[i].data(), (*sin)[i].data(), i, attention_scaling);
 #else
     for (unsigned int j = 0; j < half_; ++j) {
       float angle = i * thetas[j];
