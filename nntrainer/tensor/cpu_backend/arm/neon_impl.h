@@ -704,26 +704,26 @@ void softmax_row(T *qk_out, size_t start_row, size_t end_row, size_t num_heads,
 
 #ifdef ENABLE_FP16
 /**
- * @brief Multihead softmax with mixed precision, inplace version
+ * @brief Multihead softmax with mixed precision, inplace version (overload)
  * @param[in/out] qk_out __fp16* input/output values
  * @param[in] start_row start row number
  * @param[in] end_row end row number
  * @param[in] num_heads heads number
- * @param[in] sink float* sink values for attention (must not be nullptr)
+ * @param[in] sink float* sink values for attention (can be nullptr)
  */
-void softmax_row_inplace_fp16_fp32(__fp16 *qk_out, size_t start_row, size_t end_row,
-                                   size_t num_heads, float *sink);
+void softmax_row_inplace(__fp16 *qk_out, size_t start_row, size_t end_row,
+                         size_t num_heads, float *sink);
 
 /**
- * @brief Multihead softmax with mixed precision
+ * @brief Multihead softmax with mixed precision (overload)
  * @param[in/out] qk_out __fp16* input/output values
  * @param[in] start_row start row number
  * @param[in] end_row end row number
  * @param[in] num_heads heads number
- * @param[in] sink float* sink values for attention (must not be nullptr)
+ * @param[in] sink float* sink values for attention (can be nullptr)
  */
-void softmax_row_fp16_fp32(__fp16 *qk_out, size_t start_row, size_t end_row,
-                           size_t num_heads, float *sink);
+void softmax_row(__fp16 *qk_out, size_t start_row, size_t end_row,
+                 size_t num_heads, float *sink);
 #endif
 } // namespace nntrainer::neon
 
