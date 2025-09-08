@@ -1323,6 +1323,34 @@ void swiglu(const unsigned int N, __fp16 *X, __fp16 *Y, __fp16 *Z) {
   }
 }
 
+void swiglu(const unsigned int N, __fp16 *X, __fp16 *Y, __fp16 *Z, float alpha) {
+  unsigned int i = 0;
+  __fp16 neg_alpha = static_cast<__fp16>(-alpha);
+  
+  for (; N - i >= 8; i += 8) {
+    float16x8_t y0_7 = vld1q_f16(&Y[i]);
+    float16x8_t z0_7 = vld1q_f16(&Z[i]);
+    float16x8_t alpha_y0_7 = vmulq_n_f16(y0_7, neg_alpha);
+
+    // Convert to float32 for exp calculation
+    float32x4_t exp0_3 = exp_ps(vcvt_f32_f16(vget_low_f16(alpha_y0_7)));
+    float32x4_t exp4_7 = exp_ps(vcvt_f32_f16(vget_high_f16(alpha_y0_7)));
+
+    // Convert back to float16
+    float16x8_t exp0_7 =
+      vcombine_f16(vcvt_f16_f32(exp0_3), vcvt_f16_f32(exp4_7));
+    exp0_7 = vaddq_f16(exp0_7, vmovq_n_f16(1.f));
+    exp0_7 = vdivq_f16(y0_7, exp0_7);
+    exp0_7 = vmulq_f16(exp0_7, z0_7);
+
+    vst1q_f16(&X[i], exp0_7);
+  }
+  while (i < N) {
+    X[i] = (Y[i] / (1.f + std::exp(-alpha * static_cast<float>(Y[i])))) * Z[i];
+    ++i;
+  }
+}
+
 __fp16 max_val(const unsigned int N, __fp16 *X) {
   unsigned int i = 0;
   __fp16 ret = X[i];

@@ -47,6 +47,16 @@ void compute_rotary_embedding_value(unsigned int dim, unsigned int half_,
 void swiglu(const unsigned int N, __fp16 *X, __fp16 *Y, __fp16 *Z);
 
 /**
+ * @brief swiglu function with alpha and neon : X = (Y / (1 + exp(- alpha * Y))) * Z
+ * @param N number of elements in X
+ * @param X __fp16* for Vector X
+ * @param Y __fp16* for Vector Y
+ * @param Z __fp16* for Vector Z
+ * @param alpha float
+ */
+void swiglu(const unsigned int N, __fp16 *X, __fp16 *Y, __fp16 *Z, float alpha);
+
+/**
  * @brief returns maximum value of the vector X
  *
  * @param N number of elements in X
