@@ -221,6 +221,15 @@ void __fallback_swiglu(const unsigned int N, _FP16 *X, _FP16 *Y, _FP16 *Z) {
   }
 }
 
+void __fallback_swiglu(const unsigned int N, _FP16 *X, _FP16 *Y, _FP16 *Z,
+                       float alpha) {
+  unsigned int i = 0;
+  while (i < N) {
+    X[i] = (Y[i] / static_cast<_FP16>(1.f + std::exp(-alpha * static_cast<float>(Y[i])))) * Z[i];
+    ++i;
+  }
+}
+
 _FP16 __fallback_max(const unsigned int N, _FP16 *X) {
   std::vector<_FP16> v(X, X + N);
   return *std::max_element(v.begin(), v.end());

@@ -310,6 +310,10 @@ void swiglu(const unsigned int N, _FP16 *X, _FP16 *Y, _FP16 *Z) {
   nntrainer::neon::swiglu(N, X, Y, Z);
 }
 
+void swiglu(const unsigned int N, _FP16 *X, _FP16 *Y, _FP16 *Z, float alpha) {
+  nntrainer::neon::swiglu(N, X, Y, Z, alpha);
+}
+
 _FP16 max_val(const unsigned int N, _FP16 *X) {
   return nntrainer::neon::max_val(N, X);
 }
