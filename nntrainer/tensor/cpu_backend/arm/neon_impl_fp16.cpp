@@ -1624,14 +1624,11 @@ static void softmax_row_inplace_with_fp32_sink(__fp16 *qk_out, size_t start_row,
   delete[] sum_vals;
 }
 
-// Template specialization for __fp16 input with float sink
-void softmax_row_inplace(__fp16 *qk_out, size_t start_row, size_t end_row,
-                         size_t num_heads, float *sink) {
-  if (sink == nullptr) {
-    return softmax_row_inplace_no_sink(qk_out, start_row, end_row, num_heads);
-  } else {
-    return softmax_row_inplace_with_fp32_sink(qk_out, start_row, end_row, num_heads, sink);
-  }
+// Overloaded function for __fp16 input with float sink
+// Note: This is NOT a template specialization, but an overload
+void softmax_row_inplace_fp16_fp32(__fp16 *qk_out, size_t start_row, size_t end_row,
+                                   size_t num_heads, float *sink) {
+  return softmax_row_inplace_with_fp32_sink(qk_out, start_row, end_row, num_heads, sink);
 }
 
 // Static helper function for softmax_row with __fp16 sink
@@ -1866,14 +1863,11 @@ static void softmax_row_with_fp32_sink(__fp16 *qk_out, size_t start_row,
   delete[] sum_vals;
 }
 
-// Function for softmax_row with __fp16 input and float sink
-void softmax_row(__fp16 *qk_out, size_t start_row, size_t end_row,
-                 size_t num_heads, float *sink) {
-  if (sink == nullptr) {
-    return softmax_row_no_sink(qk_out, start_row, end_row, num_heads);
-  } else {
-    return softmax_row_with_fp32_sink(qk_out, start_row, end_row, num_heads, sink);
-  }
+// Overloaded function for softmax_row with __fp16 input and float sink
+// Note: This is NOT a template specialization, but an overload
+void softmax_row_fp16_fp32(__fp16 *qk_out, size_t start_row, size_t end_row,
+                           size_t num_heads, float *sink) {
+  return softmax_row_with_fp32_sink(qk_out, start_row, end_row, num_heads, sink);
 }
 
 static inline void load_fp16_4_to_chunk(const __fp16 *src, float *dst,
