@@ -821,38 +821,48 @@ void calc_trigonometric_vals_dup(unsigned int N_half, float *angle, float *cos_,
 
   unsigned int N = 2 * N_half;
 
-  // Apply attention scaling to the computed cos and sin values
-  if (attention_scaling != 1.0f) {
-    // Apply scaling to first half
-    unsigned int j = 0;
-    for (; N_half - j >= 4; j += 4) {
-      float32x4_t cos_vals = vld1q_f32(&cos_[j]);
-      float32x4_t sin_vals = vld1q_f32(&sin_[j]);
-      cos_vals = vmulq_n_f32(cos_vals, attention_scaling);
-      sin_vals = vmulq_n_f32(sin_vals, attention_scaling);
-      vst1q_f32(&cos_[j], cos_vals);
-      vst1q_f32(&sin_[j], sin_vals);
-    }
-    while (j < N_half) {
-      cos_[j] *= attention_scaling;
-      sin_[j] *= attention_scaling;
-      ++j;
-    }
-  }
-
-  // Copy values to second half (duplicate)
+  // Apply attention scaling and duplicate values to second half
   unsigned int i = N_half;
   unsigned int i_half = 0;
 
-  for (; (N - i >= 4) && (N_half - i_half >= 4); i += 4, i_half += 4) {
-    vst1q_f32(&cos_[i], vld1q_f32(&cos_[i_half]));
-    vst1q_f32(&sin_[i], vld1q_f32(&sin_[i_half]));
-  }
-  while (i < N || i_half < N_half) {
-    cos_[i] = cos_[i_half];
-    sin_[i] = sin_[i_half];
-    ++i;
-    ++i_half;
+  if (attention_scaling != 1.0f) {
+    // Process with scaling - vectorized path
+    for (; (N - i >= 4) && (N_half - i_half >= 4); i += 4, i_half += 4) {
+      float32x4_t cos_vals = vld1q_f32(&cos_[i_half]);
+      float32x4_t sin_vals = vld1q_f32(&sin_[i_half]);
+      cos_vals = vmulq_n_f32(cos_vals, attention_scaling);
+      sin_vals = vmulq_n_f32(sin_vals, attention_scaling);
+      // Store scaled values back to first half
+      vst1q_f32(&cos_[i_half], cos_vals);
+      vst1q_f32(&sin_[i_half], sin_vals);
+      // Store scaled values to second half (duplicate)
+      vst1q_f32(&cos_[i], cos_vals);
+      vst1q_f32(&sin_[i], sin_vals);
+    }
+    // Process remaining elements with scaling
+    while (i < N || i_half < N_half) {
+      cos_[i_half] *= attention_scaling;
+      sin_[i_half] *= attention_scaling;
+      cos_[i] = cos_[i_half];
+      sin_[i] = sin_[i_half];
+      ++i;
+      ++i_half;
+    }
+  } else {
+    // No scaling - just copy, vectorized path
+    for (; (N - i >= 4) && (N_half - i_half >= 4); i += 4, i_half += 4) {
+      float32x4_t cos_vals = vld1q_f32(&cos_[i_half]);
+      float32x4_t sin_vals = vld1q_f32(&sin_[i_half]);
+      vst1q_f32(&cos_[i], cos_vals);
+      vst1q_f32(&sin_[i], sin_vals);
+    }
+    // Copy remaining elements
+    while (i < N || i_half < N_half) {
+      cos_[i] = cos_[i_half];
+      sin_[i] = sin_[i_half];
+      ++i;
+      ++i_half;
+    }
   }
 }
 
