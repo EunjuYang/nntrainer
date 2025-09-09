@@ -511,4 +511,31 @@ void softmax_row(float *qk_out, size_t start_row, size_t end_row,
                  size_t num_heads, float *sink) {
   neon::softmax_row(qk_out, start_row, end_row, num_heads, sink);
 }
+
+#ifdef ENABLE_FP16
+// Template specialization for __fp16 with __fp16 sink
+template <>
+void softmax_row_inplace(__fp16 *qk_out, size_t start_row, size_t end_row,
+                         size_t num_heads, __fp16 *sink) {
+  neon::softmax_row_inplace(qk_out, start_row, end_row, num_heads, sink);
+}
+
+template <>
+void softmax_row(__fp16 *qk_out, size_t start_row, size_t end_row,
+                 size_t num_heads, __fp16 *sink) {
+  neon::softmax_row(qk_out, start_row, end_row, num_heads, sink);
+}
+
+// Overloaded function for __fp16 with float sink (mixed precision)
+void softmax_row_inplace(__fp16 *qk_out, size_t start_row, size_t end_row,
+                         size_t num_heads, float *sink) {
+  neon::softmax_row_inplace(qk_out, start_row, end_row, num_heads, sink);
+}
+
+void softmax_row(__fp16 *qk_out, size_t start_row, size_t end_row,
+                 size_t num_heads, float *sink) {
+  neon::softmax_row(qk_out, start_row, end_row, num_heads, sink);
+}
+#endif
+
 } /* namespace nntrainer */
