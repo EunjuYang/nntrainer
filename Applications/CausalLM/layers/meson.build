@@ -166,7 +166,7 @@ causallm_cached_slim_gptoss_moe_layer = shared_library(
     'cached_slim_gptoss_moe_layer',
     causallm_gptoss_moe_layer_cached_src_abs,
     include_directories: causallm_layer_inc,
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep],
+    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, openmp_dep],
     install: true,
     install_dir: application_install_dir
 )

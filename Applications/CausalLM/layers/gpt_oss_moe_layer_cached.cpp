@@ -268,13 +268,17 @@ void CachedSlimGptOssMoELayer::incremental_forwarding(
       }
     }
 
-    // Parallel processing for multiple tokens with many active experts
+    // Allocate expert outputs only for active experts to save memory
     std::vector<nntrainer::Tensor> expert_outputs(num_experts);
+    std::vector<bool> expert_active(num_experts, false);
+    int active_expert_count = 0;
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
          ++expert_idx) {
       if (!expert_assignments[expert_idx].empty()) {
         expert_outputs[expert_idx] = nntrainer::Tensor(
           total_tokens, 1, 1, hidden_size, output.getTensorType());
+        expert_active[expert_idx] = true;
+        active_expert_count++;
       }
     }
     std::vector<int> target_idx_vector;
@@ -320,9 +324,10 @@ void CachedSlimGptOssMoELayer::incremental_forwarding(
 #ifdef DEBUG
     auto t1_hit = high_resolution_clock::now();
 #endif
-// run hit experts
-#pragma omp parallel for schedule(dynamic)
-    for (int expert_idx : hit_idx_vector) {
+// run hit experts with better scheduling
+#pragma omp parallel for schedule(static) if(hit_idx_vector.size() > 2)
+    for (size_t i = 0; i < hit_idx_vector.size(); ++i) {
+      int expert_idx = hit_idx_vector[i];
       const auto &assignments = expert_assignments[expert_idx];
 
       compute_expert_forward(
@@ -339,8 +344,9 @@ void CachedSlimGptOssMoELayer::incremental_forwarding(
 
     auto t1_miss = high_resolution_clock::now();
 #endif
-#pragma omp parallel for schedule(dynamic)
-    for (int expert_idx : missed_idx_vector) {
+#pragma omp parallel for schedule(static) if(missed_idx_vector.size() > 2)
+    for (size_t i = 0; i < missed_idx_vector.size(); ++i) {
+      int expert_idx = missed_idx_vector[i];
       context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
       context.getWeight(expert_up_proj_indices[expert_idx]).activate();
       context.getWeight(expert_down_proj_indices[expert_idx]).activate();
@@ -375,8 +381,9 @@ void CachedSlimGptOssMoELayer::incremental_forwarding(
 #ifdef DEBUG
     auto t1_evict = high_resolution_clock::now();
 #endif
-#pragma omp parallel for schedule(dynamic)
-    for (int target_idx : evict_idx_vector) {
+#pragma omp parallel for schedule(static) if(evict_idx_vector.size() > 2)
+    for (size_t i = 0; i < evict_idx_vector.size(); ++i) {
+      int target_idx = evict_idx_vector[i];
       context.getWeight(expert_gate_proj_indices[target_idx]).deactivate();
       context.getWeight(expert_up_proj_indices[target_idx]).deactivate();
       context.getWeight(expert_down_proj_indices[target_idx]).deactivate();
@@ -388,13 +395,10 @@ void CachedSlimGptOssMoELayer::incremental_forwarding(
     auto t2_evict = high_resolution_clock::now();
 #endif
 
-    // Combine expert outputs
-    int init = 0;
+    // Combine expert outputs more efficiently
+    output.setValue(0.0f); // Initialize to zero
     for (int expert_idx : target_idx_vector) {
-      if (!init) {
-        output.copyData(expert_outputs[expert_idx]);
-        ++init;
-      } else {
+      if (expert_active[expert_idx]) {
         output.add_i(expert_outputs[expert_idx]);
       }
     }
@@ -419,11 +423,12 @@ void CachedSlimGptOssMoELayer::incremental_forwarding(
               << "miss_compute: " << dt_miss.count() / 1'000'000 << " ms "
               << "\t| "
               << "evict_time: " << dt_evict.count() / 1'000'000 << " ms "
-              << "\t| " std::cout << std::endl;
+              << "\t| " << std::endl;
 #endif
   }
 }
 
+// Optimized batch processing version of expert forward
 inline void CachedSlimGptOssMoELayer::compute_expert_forward(
   const nntrainer::Tensor &input, nntrainer::Tensor &expert_output,
   const std::vector<std::pair<unsigned, float>> &token_assignments,
@@ -438,76 +443,127 @@ inline void CachedSlimGptOssMoELayer::compute_expert_forward(
   if (num_tokens == 0)
     return;
 
-  // Create tensor dimensions for single token processing
-  nntrainer::TensorDim token_input_dim({1, 1, 1, hidden_size},
-                                       input.getTensorType());
-  nntrainer::TensorDim intermediate_dim({1, 1, 1, intermediate_size},
-                                        input.getTensorType());
-  nntrainer::TensorDim token_output_dim({1, 1, 1, hidden_size},
-                                        input.getTensorType());
-
-  // Process each token individually to avoid memory copies
-  for (size_t i = 0; i < num_tokens; ++i) {
-    const unsigned token_idx = token_assignments[i].first;
-    const float weight = token_assignments[i].second;
-
-    // Create shared tensor for input token (no memory copy)
-    size_t token_offset = token_idx * hidden_size;
-    nntrainer::Tensor token_input =
-      input.getSharedDataTensor(token_input_dim, token_offset, true);
-
-    // Create intermediate tensors for this token
-    nntrainer::Tensor gate_out(intermediate_dim);
-    nntrainer::Tensor acti_out(intermediate_dim);
-    nntrainer::Tensor up_out(intermediate_dim);
-
-    // Gate projection using optimized dot operation
-    token_input.dot(gate_proj, gate_out);
-    gate_out.add(gate_bias, gate_out);
-    // gate_out.clamp(min=None, max=limit)
-    nntrainer::clamp(gate_out.getData(), gate_out.getData(), intermediate_size,
-                     std::numeric_limits<float>::lowest(), limit);
-
-    // Up projection using optimized dot operation
-    token_input.dot(up_proj, up_out);
-    up_out.add_i(up_bias);
-    // up_out.clamp(min=-limit, max=limit)
-    nntrainer::clamp(up_out.getData(), up_out.getData(), intermediate_size,
-                     -limit, limit);
-
-    // Apply activation (silu)
-    // (up + 1) * (gate * torch.sigmoid(gate * alpha))
-    // swiglu : X = Z * (Y / 1 + exp(-alpha * Y))
-    // X := acti_out
-    // Y := gate_out
-    // Z := up_out + 1
-    up_out.add_i(1);
-#pragma omp parallel for collapse(3)
-    for (unsigned int b = 0; b < acti_out.batch(); ++b) {
-      for (unsigned int c = 0; c < acti_out.channel(); ++c) {
-        for (unsigned int h = 0; h < acti_out.height(); ++h) {
-          nntrainer::swiglu(
-            acti_out.width(),
-            acti_out.getData<float>() + acti_out.getIndex(b, c, h, 0),
-            gate_out.getData<float>() + gate_out.getIndex(b, c, h, 0),
-            up_out.getData<float>() + up_out.getIndex(b, c, h, 0), alpha);
-        }
+  // Batch processing for better cache utilization and SIMD optimization
+  if (num_tokens > 1) {
+    // Pre-allocate batch tensors
+    nntrainer::TensorDim batch_input_dim({num_tokens, 1, 1, hidden_size},
+                                         input.getTensorType());
+    nntrainer::TensorDim batch_intermediate_dim({num_tokens, 1, 1, intermediate_size},
+                                                input.getTensorType());
+    nntrainer::TensorDim batch_output_dim({num_tokens, 1, 1, hidden_size},
+                                          input.getTensorType());
+    
+    nntrainer::Tensor batch_input(batch_input_dim);
+    nntrainer::Tensor batch_gate_out(batch_intermediate_dim);
+    nntrainer::Tensor batch_up_out(batch_intermediate_dim);
+    nntrainer::Tensor batch_down_out(batch_output_dim);
+    
+    // Gather input tokens
+    #pragma omp parallel for if(num_tokens > 4)
+    for (size_t i = 0; i < num_tokens; ++i) {
+      const unsigned token_idx = token_assignments[i].first;
+      std::memcpy(batch_input.getData<float>() + i * hidden_size,
+                 input.getData<float>() + token_idx * hidden_size,
+                 hidden_size * sizeof(float));
+    }
+    
+    // Batch matrix multiplications
+    batch_input.dot(gate_proj, batch_gate_out);
+    batch_input.dot(up_proj, batch_up_out);
+    
+    // Apply biases and clamp in batch
+    float *gate_data = batch_gate_out.getData<float>();
+    float *up_data = batch_up_out.getData<float>();
+    
+    #pragma omp parallel for if(num_tokens > 2)
+    for (size_t i = 0; i < num_tokens; ++i) {
+      size_t offset = i * intermediate_size;
+      // Gate: add bias and clamp
+      for (size_t j = 0; j < intermediate_size; ++j) {
+        gate_data[offset + j] += gate_bias.getValue<float>(0, 0, 0, j);
+        gate_data[offset + j] = std::min(gate_data[offset + j], limit);
+      }
+      // Up: add bias and clamp
+      for (size_t j = 0; j < intermediate_size; ++j) {
+        up_data[offset + j] += up_bias.getValue<float>(0, 0, 0, j);
+        up_data[offset + j] = std::max(-limit, std::min(limit, up_data[offset + j]));
       }
     }
-
-    // Down projection using optimized dot operation
-    nntrainer::Tensor token_expert_output(token_output_dim);
-    acti_out.dot(down_proj, token_expert_output);
-    token_expert_output.add_i(down_bias);
-
-    // Apply weight and accumulate to expert's output (no critical section
-    // needed)
-    token_expert_output.multiply_i(weight);
-    size_t output_offset = token_idx * hidden_size;
-    nntrainer::Tensor token_output =
-      expert_output.getSharedDataTensor(token_output_dim, output_offset, true);
-
-    token_output.add_i(token_expert_output);
+    
+    // Apply swiglu activation in batch
+    #pragma omp parallel for if(num_tokens > 2)
+    for (size_t i = 0; i < num_tokens; ++i) {
+      size_t offset = i * intermediate_size;
+      float *acti_ptr = gate_data + offset; // Reuse gate buffer
+      float *gate_ptr = gate_data + offset;
+      float *up_ptr = up_data + offset;
+      
+      // Optimized swiglu: (up + 1) * gate * sigmoid(gate * alpha)
+      for (size_t j = 0; j < intermediate_size; ++j) {
+        float gate_val = gate_ptr[j];
+        float up_val = up_ptr[j] + 1.0f;
+        float sigmoid = 1.0f / (1.0f + std::exp(-alpha * gate_val));
+        acti_ptr[j] = gate_val * sigmoid * up_val;
+      }
+    }
+    
+    // Down projection
+    batch_gate_out.dot(down_proj, batch_down_out);
+    
+    // Scatter results with weight and bias
+    #pragma omp parallel for if(num_tokens > 4)
+    for (size_t i = 0; i < num_tokens; ++i) {
+      const unsigned token_idx = token_assignments[i].first;
+      const float weight = token_assignments[i].second;
+      
+      float *out_ptr = expert_output.getData<float>() + token_idx * hidden_size;
+      const float *down_ptr = batch_down_out.getData<float>() + i * hidden_size;
+      
+      for (size_t j = 0; j < hidden_size; ++j) {
+        out_ptr[j] += (down_ptr[j] + down_bias.getValue<float>(0, 0, 0, j)) * weight;
+      }
+    }
+  } else {
+    // Single token processing (original code for edge case)
+    const unsigned token_idx = token_assignments[0].first;
+    const float weight = token_assignments[0].second;
+    
+    nntrainer::TensorDim token_dim({1, 1, 1, hidden_size}, input.getTensorType());
+    nntrainer::TensorDim inter_dim({1, 1, 1, intermediate_size}, input.getTensorType());
+    
+    size_t token_offset = token_idx * hidden_size;
+    nntrainer::Tensor token_input = input.getSharedDataTensor(token_dim, token_offset, true);
+    
+    nntrainer::Tensor gate_out(inter_dim);
+    nntrainer::Tensor up_out(inter_dim);
+    
+    token_input.dot(gate_proj, gate_out);
+    token_input.dot(up_proj, up_out);
+    
+    gate_out.add_i(gate_bias);
+    up_out.add_i(up_bias);
+    
+    // Clamp values
+    float *gate_ptr = gate_out.getData<float>();
+    float *up_ptr = up_out.getData<float>();
+    for (size_t j = 0; j < intermediate_size; ++j) {
+      gate_ptr[j] = std::min(gate_ptr[j], limit);
+      up_ptr[j] = std::max(-limit, std::min(limit, up_ptr[j]));
+    }
+    
+    // Apply swiglu
+    for (size_t j = 0; j < intermediate_size; ++j) {
+      float sigmoid = 1.0f / (1.0f + std::exp(-alpha * gate_ptr[j]));
+      gate_ptr[j] = gate_ptr[j] * sigmoid * (up_ptr[j] + 1.0f);
+    }
+    
+    nntrainer::Tensor output(token_dim);
+    gate_out.dot(down_proj, output);
+    output.add_i(down_bias);
+    output.multiply_i(weight);
+    
+    nntrainer::Tensor token_output = expert_output.getSharedDataTensor(token_dim, token_offset, true);
+    token_output.add_i(output);
   }
 }
 

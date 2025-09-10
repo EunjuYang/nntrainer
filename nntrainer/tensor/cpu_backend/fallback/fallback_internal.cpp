@@ -339,7 +339,28 @@ void __fallback_calc_trigonometric_vals_dup(unsigned int N_half, float *angle,
 }
 
 void __fallback_swiglu(const unsigned int N, float *X, float *Y, float *Z) {
+  // Process multiple elements at once for better cache utilization
+  const unsigned int unroll_factor = 4;
   unsigned int i = 0;
+  
+  // Main loop with unrolling for better instruction-level parallelism
+  for (; i + unroll_factor <= N; i += unroll_factor) {
+    // Prefetch next cache line
+    __builtin_prefetch(Y + i + unroll_factor, 0, 1);
+    __builtin_prefetch(Z + i + unroll_factor, 0, 1);
+    
+    // Process 4 elements at once
+    float y0 = Y[i], y1 = Y[i+1], y2 = Y[i+2], y3 = Y[i+3];
+    float z0 = Z[i], z1 = Z[i+1], z2 = Z[i+2], z3 = Z[i+3];
+    
+    // Compute sigmoid and swiglu
+    X[i]   = (y0 / (1.f + std::exp(-y0))) * z0;
+    X[i+1] = (y1 / (1.f + std::exp(-y1))) * z1;
+    X[i+2] = (y2 / (1.f + std::exp(-y2))) * z2;
+    X[i+3] = (y3 / (1.f + std::exp(-y3))) * z3;
+  }
+  
+  // Handle remaining elements
   while (i < N) {
     X[i] = (Y[i] / (1.f + std::exp(-Y[i]))) * Z[i];
     ++i;
@@ -348,7 +369,28 @@ void __fallback_swiglu(const unsigned int N, float *X, float *Y, float *Z) {
 
 void __fallback_swiglu(const unsigned int N, float *X, float *Y, float *Z,
                        float alpha) {
+  // Process multiple elements at once for better cache utilization
+  const unsigned int unroll_factor = 4;
   unsigned int i = 0;
+  
+  // Main loop with unrolling
+  for (; i + unroll_factor <= N; i += unroll_factor) {
+    // Prefetch next cache line
+    __builtin_prefetch(Y + i + unroll_factor, 0, 1);
+    __builtin_prefetch(Z + i + unroll_factor, 0, 1);
+    
+    // Process 4 elements at once
+    float y0 = Y[i], y1 = Y[i+1], y2 = Y[i+2], y3 = Y[i+3];
+    float z0 = Z[i], z1 = Z[i+1], z2 = Z[i+2], z3 = Z[i+3];
+    
+    // Compute sigmoid with alpha and swiglu
+    X[i]   = (y0 / (1.f + std::exp(-alpha * y0))) * z0;
+    X[i+1] = (y1 / (1.f + std::exp(-alpha * y1))) * z1;
+    X[i+2] = (y2 / (1.f + std::exp(-alpha * y2))) * z2;
+    X[i+3] = (y3 / (1.f + std::exp(-alpha * y3))) * z3;
+  }
+  
+  // Handle remaining elements
   while (i < N) {
     X[i] = (Y[i] / (1.f + std::exp(-alpha * Y[i]))) * Z[i];
     ++i;
@@ -522,7 +564,28 @@ void __fallback_rms_norm_wrt_width_fp16_intrinsic(const float *__restrict X,
 template <>
 void __fallback_clamp(const float *input, float *output, size_t length,
                       float lower_bound, float upper_bound) {
-  for (int i = 0; i < length; ++i) {
+  // Unroll loop for better performance
+  const size_t unroll_factor = 8;
+  size_t i = 0;
+  
+  // Main loop with unrolling
+  for (; i + unroll_factor <= length; i += unroll_factor) {
+    // Prefetch next cache line
+    __builtin_prefetch(input + i + unroll_factor, 0, 1);
+    
+    // Process 8 elements at once
+    output[i]   = std::max(lower_bound, std::min(upper_bound, input[i]));
+    output[i+1] = std::max(lower_bound, std::min(upper_bound, input[i+1]));
+    output[i+2] = std::max(lower_bound, std::min(upper_bound, input[i+2]));
+    output[i+3] = std::max(lower_bound, std::min(upper_bound, input[i+3]));
+    output[i+4] = std::max(lower_bound, std::min(upper_bound, input[i+4]));
+    output[i+5] = std::max(lower_bound, std::min(upper_bound, input[i+5]));
+    output[i+6] = std::max(lower_bound, std::min(upper_bound, input[i+6]));
+    output[i+7] = std::max(lower_bound, std::min(upper_bound, input[i+7]));
+  }
+  
+  // Handle remaining elements
+  for (; i < length; ++i) {
     output[i] = std::clamp(input[i], lower_bound, upper_bound);
   }
 }
