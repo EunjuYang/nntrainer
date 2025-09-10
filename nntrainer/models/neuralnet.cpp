@@ -693,7 +693,8 @@ void NeuralNetwork::load(const std::string &file_path,
       // size_t size = weight->getVariable().getMemoryBytes();
       size_t size = 0;
       if (weight->getVariable().getDataType() == TensorDim::DataType::Q4_0 ||
-          weight->getVariable().getDataType() == TensorDim::DataType::Q6_K) {
+          weight->getVariable().getDataType() == TensorDim::DataType::Q6_K ||
+          weight->getVariable().getDataType() == TensorDim::DataType::FP16) {
         size =
           weight->getVariable().height() * weight->getVariable().width() * 4;
       } else {
@@ -733,7 +734,6 @@ void NeuralNetwork::load(const std::string &file_path,
     auto model_file = checkedOpenStream<std::ifstream>(
       model_file_name, std::ios::in | std::ios::binary);
     model_file_fd = open(model_file_name.c_str(), O_RDONLY | O_DIRECT);
-
 
     /**
     if (exec_mode == ml::train::ExecutionMode::INFERENCE) {
@@ -803,6 +803,7 @@ void NeuralNetwork::load(const std::string &file_path,
       (*iter)->read(model_file, false, exec_mode, fsu_mode);
     }
     // }
+    /*
     try {
       /// this is assuming that the failure is allowed at the end of the file
       /// read. so, after this line, additional read shouldn't be called
@@ -829,7 +830,8 @@ void NeuralNetwork::load(const std::string &file_path,
         std::cerr << "failed to read additional data like optimizer variable, "
                      "iteration, proceeding with default\n";
       }
-    }
+                     */
+    // }
 
     ml_logi("read modelfile: %s",
             (v.size() == 2) ? v[1].c_str() : v[0].c_str());

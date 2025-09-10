@@ -136,7 +136,7 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
   }
 
   /** Tensor for KV-Cache */
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDROID__)
   ml::train::TensorDim cache_key_dim(
     {batch_size, 1, max_timestep, num_heads_KV * head_dim},
     {context.getFormat(), ml::train::TensorDim::DataType::FP16});
@@ -400,7 +400,7 @@ void MHACoreLayer::compute_kcaches(
         fut.get();
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDROID__)
     int num_cache_head = num_head / group_size;
     if (from) {
       tile_size = 300; // the best value on the base test on gauss B1 & B3
@@ -503,7 +503,7 @@ void MHACoreLayer::one_batch_incremental_forwarding(
     apply_rotary_emb_tensor_v2(value_step, b_cache_value_step, head_dim, _from,
                                true);
   } else if (query_step.getDataType() == ml::train::TensorDim::DataType::FP16) {
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDROID__)
     b_cache_value_step.copyData(value_step);
 #else
     NNTR_THROW_IF(true, std::invalid_argument) << "enable-fp16 is not set!";
@@ -578,7 +578,7 @@ void MHACoreLayer::one_batch_incremental_forwarding(
     apply_rotary_emb_tensor_v2(value_step, b_cache_value_step, head_dim, _from,
                                true);
   } else if (query_step.getDataType() == ml::train::TensorDim::DataType::FP16) {
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDROID__)
     b_cache_value_step.copyData(value_step);
 #else
     NNTR_THROW_IF(true, std::invalid_argument) << "enable-fp16 is not set!";
@@ -830,7 +830,7 @@ void MHACoreLayer::apply_rotary_emb_tensor_v2(nntrainer::Tensor &in,
       }
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDROID__)
     std::vector<_FP16> *cos_ = nullptr;
     std::vector<_FP16> *sin_ = nullptr;
 
@@ -885,7 +885,7 @@ void MHACoreLayer::softmax_triangle(nntrainer::Tensor &qk_out, size_t row,
       }
     }
   } else if (qk_out.getDataType() == ml::train::TensorDim::DataType::FP16) {
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDROID__)
     _FP16 *qk_out_ = qk_out.getData<_FP16>();
 
     if (from) {
@@ -940,7 +940,7 @@ void MHACoreLayer::softmax_triangle(nntrainer::Tensor &qk_out, size_t row,
       }
     }
   } else if (qk_out.getDataType() == ml::train::TensorDim::DataType::FP16) {
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDROID__)
     _FP16 *qk_out_ = qk_out.getData<_FP16>();
     _FP16 *sink_step_ = sink_step.getData<_FP16>();
 
@@ -1001,7 +1001,7 @@ void MHACoreLayer::compute_fp16vcache_transposed(
         local_window_size);
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDROID__)
     if (process_all) {
       std::vector<std::future<void>> futures;
       futures.reserve(seq);
@@ -1082,7 +1082,7 @@ void MHACoreLayer::updateTensorsByInputDimensions(
   kv_dim.width(kv_dim.width() / (num_heads_Q / num_heads_KV));
 
   ml::train::TensorDim kv_cache_dim = kv_dim;
-#ifdef ENABLE_FP16
+#if ENABLE_FP16 && defined(__ANDORID__)
   kv_cache_dim.setDataType(ml::train::TensorDim::DataType::FP16);
 #else
   kv_cache_dim.setDataType(ml::train::TensorDim::DataType::UINT16);

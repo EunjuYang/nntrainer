@@ -275,6 +275,53 @@ public:
     nntrainer::RunLayerContext &context,
     std::vector<nntrainer::TensorDim> input_dimensions) override;
 
+  void read(std::ifstream &file, nntrainer::RunLayerContext &context,
+            bool opt_var, ml::train::ExecutionMode mode, bool trainable,
+            nntrainer::TensorDim::DataType definedWeightDataType, bool fsu,
+            size_t start_offset, bool read_from_offset, int file_fd) override {
+
+    // Only read when mode is embedding
+    if (opt_var) {
+      for (unsigned int i = 0; i < context.getNumWeights(); ++i) {
+        if (context.isGradientLastAccess(i) && trainable) {
+          /// @note read optimizer variables
+          for (unsigned int j = 0; j < context.getNumWeightOptVar(i); ++j) {
+            context.getWeightOptVar(i, j).read(file, start_offset,
+                                               read_from_offset, file_fd);
+          }
+        }
+      }
+    } else {
+      for (unsigned int i = 0; i < context.getNumWeights(); ++i) {
+        /// @note shared weights are only be read at the first acecss
+        if (context.isGradientFirstAccess(i)) {
+          // context.getWeight(i).read(file);
+          if (context.getWeight(i).getDataType() ==
+              nntrainer::Tdatatype::FP16) {
+            nntrainer::Tensor &W_fp16 = context.getWeight(i);
+            uint32_t K = W_fp16.width();
+
+            nntrainer::Tensor W_fp32(1, 1, 1, K,
+                                     {ml::train::TensorDim::Format::NCHW,
+                                      ml::train::TensorDim::DataType::FP32});
+            W_fp32.read(file, start_offset, read_from_offset, file_fd);
+            context.getWeight(i).copyData(W_fp32);
+            std::cout << "Name:" << context.getWeight(i).getName()
+                      << "original(FP32)" << W_fp32 << "loaded (FP16)"
+                      << context.getWeight(i);
+
+          } else {
+            context.getWeight(i).read(file);
+          }
+          if (context.isMixedPrecision(i) && trainable &&
+              !context.getWeightFP32(i).empty()) {
+            context.getWeightFP32(i).copyData(context.getWeight(i));
+          }
+        }
+      }
+    }
+  }
+
   inline static const std::string type = "mha_core";
 
 private:
