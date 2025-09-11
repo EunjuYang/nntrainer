@@ -24,8 +24,7 @@
 namespace nntrainer {
 
 PreprocessFlipLayer::PreprocessFlipLayer() :
-  Layer(),
-  preprocess_flip_props(props::FlipDirection()) {}
+  Layer(), preprocess_flip_props(props::FlipDirection()) {}
 
 void PreprocessFlipLayer::finalize(InitLayerContext &context) {
   context.setOutputDimensions(context.getInputDimensions());
