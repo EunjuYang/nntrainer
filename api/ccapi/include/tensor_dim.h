@@ -20,6 +20,7 @@
 #include <iosfwd>
 
 #include <bitset>
+#include <util_func.h>
 #include <vector>
 
 #ifdef ENABLE_FP16
