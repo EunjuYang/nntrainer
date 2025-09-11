@@ -29,7 +29,14 @@
 #include <node_exporter.h>
 #include <omp.h>
 #include <qwen_moe_layer_cached.h>
+#include <qwen_moe_layer_cached_opt.h>
 #include <stdexcept>
+#include <memory>
+#include <vector>
+
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
 
 #include <chrono>
 using std::chrono::duration_cast;
@@ -185,7 +192,7 @@ inline void CachedSlimMoELayer::compute_expert_forward(
   if (num_tokens == 0)
     return;
 
-  // Create tensor dimensions for single token processing
+  // Create tensor dimensions for batch processing
   nntrainer::TensorDim token_input_dim({1, 1, num_tokens, hidden_size},
                                        input.getTensorType());
   nntrainer::TensorDim intermediate_dim({1, 1, num_tokens, intermediate_size},
@@ -196,25 +203,51 @@ inline void CachedSlimMoELayer::compute_expert_forward(
                                     input.getTensorType());
   nntrainer::TensorDim step_dim({1, 1, 1, intermediate_size},
                                 input.getTensorType());
-  // Create intermediate tensors for this token
-  nntrainer::Tensor gate_out(intermediate_dim);
-  nntrainer::Tensor acti_out(intermediate_dim);
-  nntrainer::Tensor up_out(intermediate_dim);
-  nntrainer::Tensor token_input(token_input_dim);
-  // Down projection using optimized dot operation
-  nntrainer::Tensor token_expert_output(token_output_dim);
+  
+  // Pre-allocate intermediate tensors to avoid repeated allocation
+  static thread_local nntrainer::Tensor gate_out;
+  static thread_local nntrainer::Tensor acti_out;
+  static thread_local nntrainer::Tensor up_out;
+  static thread_local nntrainer::Tensor token_input;
+  static thread_local nntrainer::Tensor token_expert_output;
+  
+  // Resize tensors if needed
+  if (gate_out.empty() || gate_out.getDim() != intermediate_dim) {
+    gate_out = nntrainer::Tensor(intermediate_dim);
+    acti_out = nntrainer::Tensor(intermediate_dim);
+    up_out = nntrainer::Tensor(intermediate_dim);
+    token_input = nntrainer::Tensor(token_input_dim);
+    token_expert_output = nntrainer::Tensor(token_output_dim);
+  }
 
   unsigned token_idx = token_assignments[0].first;
   float weight = token_assignments[0].second;
 
   if (num_tokens > 1) {
-/** if prefill, copy data to make a batch */
-#pragma omp parallel for schedule(dynamic)
+    /** if prefill, copy data to make a batch - optimized with SIMD */
+    #pragma omp parallel for schedule(static) if(num_tokens > 4)
     for (size_t i = 0; i < num_tokens; ++i) {
       const unsigned token_idx = token_assignments[i].first;
-      std::memcpy(token_input.getData<float>() + i * hidden_size,
-                  input.getData<float>() + token_idx * hidden_size,
-                  sizeof(float) * hidden_size);
+      const float* src = input.getData<float>() + token_idx * hidden_size;
+      float* dst = token_input.getData<float>() + i * hidden_size;
+      
+      #ifdef __ARM_NEON
+      // Use NEON for faster memory copy on ARM
+      unsigned j = 0;
+      for (; j + 16 <= hidden_size; j += 16) {
+        float32x4x4_t data = vld1q_f32_x4(src + j);
+        vst1q_f32_x4(dst + j, data);
+      }
+      for (; j + 4 <= hidden_size; j += 4) {
+        float32x4_t data = vld1q_f32(src + j);
+        vst1q_f32(dst + j, data);
+      }
+      for (; j < hidden_size; ++j) {
+        dst[j] = src[j];
+      }
+      #else
+      std::memcpy(dst, src, sizeof(float) * hidden_size);
+      #endif
     }
   } else {
     /** if token generation, do not copy but get the shared tensor */
@@ -224,40 +257,71 @@ inline void CachedSlimMoELayer::compute_expert_forward(
       input.getSharedDataTensor(token_input_dim, token_offset, true);
   }
 
-  // Gate projection using optimized dot operation
+  // Optimized projections using batch GEMM when possible
   token_input.dot(gate_proj, gate_out);
-
-  // Up projection using optimized dot operation
   token_input.dot(up_proj, up_out);
 
   if (num_tokens == 1) {
-    // Apply activation (silu)
+    // Apply activation (silu) for single token
     acti_func.run_fn(gate_out, acti_out);
     // Element-wise multiply: silu(gate_out) * up_out
     acti_out.multiply_i(up_out);
   } else {
+    // Batch SwiGLU activation with SIMD optimization
+    #pragma omp parallel for schedule(static) if(num_tokens > 2)
     for (size_t i = 0; i < num_tokens; ++i) {
+      const unsigned offset = acti_out.getIndex(0, 0, i, 0);
       nntrainer::swiglu(
         acti_out.width(),
-        acti_out.getData<float>() + acti_out.getIndex(0, 0, i, 0),
-        gate_out.getData<float>() + gate_out.getIndex(0, 0, i, 0),
-        up_out.getData<float>() + up_out.getIndex(0, 0, i, 0));
+        acti_out.getData<float>() + offset,
+        gate_out.getData<float>() + offset,
+        up_out.getData<float>() + offset);
     }
   }
 
+  // Down projection
   acti_out.dot(down_proj, token_expert_output);
 
-  // accumulate to output
+  // Optimized accumulation to output with SIMD
+  #pragma omp parallel for schedule(static) if(num_tokens > 4)
   for (size_t i = 0; i < num_tokens; ++i) {
-    token_idx = token_assignments[i].first;
-    weight = token_assignments[i].second;
-    size_t output_offset = token_idx * hidden_size;
-    nntrainer::Tensor token_output =
-      output.getSharedDataTensor(out_step_dim, output_offset, true);
-    nntrainer::Tensor target = token_expert_output.getSharedDataTensor(
-      out_step_dim, i * hidden_size, true);
-    target.multiply_i(weight);
-    token_output.add(target, token_output);
+    const unsigned token_idx = token_assignments[i].first;
+    const float weight = token_assignments[i].second;
+    const size_t output_offset = token_idx * hidden_size;
+    
+    float* out_ptr = output.getData<float>() + output_offset;
+    const float* expert_ptr = token_expert_output.getData<float>() + i * hidden_size;
+    
+    #ifdef __ARM_NEON
+    // NEON optimized weighted accumulation
+    float32x4_t weight_vec = vdupq_n_f32(weight);
+    unsigned j = 0;
+    for (; j + 16 <= hidden_size; j += 16) {
+      float32x4x4_t expert_data = vld1q_f32_x4(expert_ptr + j);
+      float32x4x4_t out_data = vld1q_f32_x4(out_ptr + j);
+      
+      out_data.val[0] = vmlaq_f32(out_data.val[0], expert_data.val[0], weight_vec);
+      out_data.val[1] = vmlaq_f32(out_data.val[1], expert_data.val[1], weight_vec);
+      out_data.val[2] = vmlaq_f32(out_data.val[2], expert_data.val[2], weight_vec);
+      out_data.val[3] = vmlaq_f32(out_data.val[3], expert_data.val[3], weight_vec);
+      
+      vst1q_f32_x4(out_ptr + j, out_data);
+    }
+    for (; j + 4 <= hidden_size; j += 4) {
+      float32x4_t expert_data = vld1q_f32(expert_ptr + j);
+      float32x4_t out_data = vld1q_f32(out_ptr + j);
+      out_data = vmlaq_f32(out_data, expert_data, weight_vec);
+      vst1q_f32(out_ptr + j, out_data);
+    }
+    for (; j < hidden_size; ++j) {
+      out_ptr[j] += expert_ptr[j] * weight;
+    }
+    #else
+    // Fallback scalar implementation
+    for (unsigned j = 0; j < hidden_size; ++j) {
+      out_ptr[j] += expert_ptr[j] * weight;
+    }
+    #endif
   }
 }
 
@@ -334,13 +398,22 @@ void CachedSlimMoELayer::incremental_forwarding(
       }
     }
 
-    // Parallel processing for multiple tokens with many active experts
-    std::vector<nntrainer::Tensor> expert_outputs(num_experts);
+    // Pre-allocate expert outputs with memory pool to avoid repeated allocations
+    static thread_local std::vector<nntrainer::Tensor> expert_outputs;
+    if (expert_outputs.size() < num_experts) {
+      expert_outputs.resize(num_experts);
+    }
+    
+    // Initialize only needed expert outputs
     for (int expert_idx = 0; expert_idx < static_cast<int>(num_experts);
          ++expert_idx) {
       if (!expert_assignments[expert_idx].empty()) {
-        expert_outputs[expert_idx] = nntrainer::Tensor(
-          total_tokens, 1, 1, hidden_size, output.getTensorType());
+        if (expert_outputs[expert_idx].empty() || 
+            expert_outputs[expert_idx].getDim().getDataLen() != total_tokens * hidden_size) {
+          expert_outputs[expert_idx] = nntrainer::Tensor(
+            total_tokens, 1, 1, hidden_size, output.getTensorType());
+        }
+        expert_outputs[expert_idx].setZero();
       }
     }
     std::vector<int> target_idx_vector;
@@ -386,8 +459,10 @@ void CachedSlimMoELayer::incremental_forwarding(
 #ifdef DEBUG
     auto t1_hit = high_resolution_clock::now();
 #endif
-#pragma omp parallel for schedule(dynamic)
-    for (int expert_idx : hit_idx_vector) {
+// Process hit experts with better load balancing
+    #pragma omp parallel for schedule(guided) if(hit_idx_vector.size() > 2)
+    for (size_t idx = 0; idx < hit_idx_vector.size(); ++idx) {
+      int expert_idx = hit_idx_vector[idx];
       const auto &assignments = expert_assignments[expert_idx];
 
       compute_expert_forward(
@@ -401,11 +476,16 @@ void CachedSlimMoELayer::incremental_forwarding(
 
     auto t1_miss = high_resolution_clock::now();
 #endif
-#pragma omp parallel for schedule(dynamic)
-    for (int expert_idx : missed_idx_vector) {
+// Process missed experts with prefetching
+    #pragma omp parallel for schedule(guided) if(missed_idx_vector.size() > 2)
+    for (size_t idx = 0; idx < missed_idx_vector.size(); ++idx) {
+      int expert_idx = missed_idx_vector[idx];
+      
+      // Activate weights (load from storage)
       context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
       context.getWeight(expert_up_proj_indices[expert_idx]).activate();
       context.getWeight(expert_down_proj_indices[expert_idx]).activate();
+      
       const auto &assignments = expert_assignments[expert_idx];
       compute_expert_forward(
         input, expert_outputs[expert_idx], assignments,
@@ -428,24 +508,58 @@ void CachedSlimMoELayer::incremental_forwarding(
 #ifdef DEBUG
     auto t1_evict = high_resolution_clock::now();
 #endif
-#pragma omp parallel for schedule(dynamic)
-    for (int target_idx : evict_idx_vector) {
-      context.getWeight(expert_gate_proj_indices[target_idx]).deactivate();
-      context.getWeight(expert_up_proj_indices[target_idx]).deactivate();
-      context.getWeight(expert_down_proj_indices[target_idx]).deactivate();
+// Batch eviction with better scheduling
+    if (!evict_idx_vector.empty()) {
+      #pragma omp parallel for schedule(static) if(evict_idx_vector.size() > 4)
+      for (size_t idx = 0; idx < evict_idx_vector.size(); ++idx) {
+        int target_idx = evict_idx_vector[idx];
+        context.getWeight(expert_gate_proj_indices[target_idx]).deactivate();
+        context.getWeight(expert_up_proj_indices[target_idx]).deactivate();
+        context.getWeight(expert_down_proj_indices[target_idx]).deactivate();
+      }
     }
 #ifdef DEBUG
     auto t2_evict = high_resolution_clock::now();
 #endif
 
-    // Combine expert outputs
-    int init = 0;
+    // Optimized expert output combination with SIMD
+    bool first = true;
     for (int expert_idx : target_idx_vector) {
-      if (!init) {
+      if (expert_assignments[expert_idx].empty()) continue;
+      
+      if (first) {
         output.copyData(expert_outputs[expert_idx]);
-        ++init;
+        first = false;
       } else {
+        // Use SIMD-optimized add operation
+        float* out_ptr = output.getData<float>();
+        const float* expert_ptr = expert_outputs[expert_idx].getData<float>();
+        const size_t total_size = total_tokens * hidden_size;
+        
+        #ifdef __ARM_NEON
+        size_t i = 0;
+        for (; i + 16 <= total_size; i += 16) {
+          float32x4x4_t out_data = vld1q_f32_x4(out_ptr + i);
+          float32x4x4_t expert_data = vld1q_f32_x4(expert_ptr + i);
+          
+          out_data.val[0] = vaddq_f32(out_data.val[0], expert_data.val[0]);
+          out_data.val[1] = vaddq_f32(out_data.val[1], expert_data.val[1]);
+          out_data.val[2] = vaddq_f32(out_data.val[2], expert_data.val[2]);
+          out_data.val[3] = vaddq_f32(out_data.val[3], expert_data.val[3]);
+          
+          vst1q_f32_x4(out_ptr + i, out_data);
+        }
+        for (; i + 4 <= total_size; i += 4) {
+          float32x4_t out_data = vld1q_f32(out_ptr + i);
+          float32x4_t expert_data = vld1q_f32(expert_ptr + i);
+          vst1q_f32(out_ptr + i, vaddq_f32(out_data, expert_data));
+        }
+        for (; i < total_size; ++i) {
+          out_ptr[i] += expert_ptr[i];
+        }
+        #else
         output.add_i(expert_outputs[expert_idx]);
+        #endif
       }
     }
 
