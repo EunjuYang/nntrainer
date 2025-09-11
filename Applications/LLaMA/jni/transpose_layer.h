@@ -64,7 +64,7 @@ public:
    * @copydoc Layer::exportTo(Exporter &exporter, ExportMethods method)
    */
   void exportTo(nntrainer::Exporter &exporter,
-                const ml::train::ExportMethods &method) const override{};
+                const ml::train::ExportMethods &method) const override {};
 
   /**
    * @copydoc Layer::getType()
@@ -74,7 +74,7 @@ public:
   /**
    * @copydoc Layer::setProperty(const std::vector<std::string> &values)
    */
-  void setProperty(const std::vector<std::string> &values) override{};
+  void setProperty(const std::vector<std::string> &values) override {};
 
   static constexpr const char *type = "transpose";
 };

@@ -37,7 +37,7 @@ public:
   /**
    * @brief     Destructor of Reduce Mean Layer
    */
-  ~ReduceMeanLayer(){};
+  ~ReduceMeanLayer() {};
 
   /**
    *  @brief  Move constructor of ReduceMeanLayer.

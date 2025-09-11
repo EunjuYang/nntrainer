@@ -38,7 +38,7 @@ public:
   /**
    * @brief Destructor of Sine Layer
    */
-  ~SineLayer(){};
+  ~SineLayer() {};
 
   /**
    *  @brief  Move constructor of Sine Layer.

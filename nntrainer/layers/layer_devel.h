@@ -193,7 +193,7 @@ public:
   /**
    * @brief    Initialize the layer
    */
-  virtual void initialize(RunLayerContext &context){};
+  virtual void initialize(RunLayerContext &context) {};
 
   /**
    * @brief     Forward Propagation of a layer

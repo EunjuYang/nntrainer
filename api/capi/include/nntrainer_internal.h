@@ -77,11 +77,11 @@ typedef enum {
  * @since_tizen 6.0
  * @return Error type
  */
-#define check_feature_state()                         \
-  do {                                                \
-    int feature_ret = ml_tizen_get_feature_enabled(); \
-    if (ML_ERROR_NONE != feature_ret)                 \
-      return feature_ret;                             \
+#define check_feature_state()                                                  \
+  do {                                                                         \
+    int feature_ret = ml_tizen_get_feature_enabled();                          \
+    if (ML_ERROR_NONE != feature_ret)                                          \
+      return feature_ret;                                                      \
   } while (0);
 
 /**
@@ -171,24 +171,24 @@ typedef struct {
  * @brief Check validity of handle to be not NULL.
  * @since_tizen 6.0
  */
-#define ML_TRAIN_VERIFY_VALID_HANDLE(obj_h)                     \
-  do {                                                          \
-    if (!obj_h) {                                               \
-      ml_loge("Error: Invalid Parameter : argument is empty."); \
-      return ML_ERROR_INVALID_PARAMETER;                        \
-    }                                                           \
+#define ML_TRAIN_VERIFY_VALID_HANDLE(obj_h)                                    \
+  do {                                                                         \
+    if (!obj_h) {                                                              \
+      ml_loge("Error: Invalid Parameter : argument is empty.");                \
+      return ML_ERROR_INVALID_PARAMETER;                                       \
+    }                                                                          \
   } while (0)
 
 /**
  * @brief     Check validity of the user passed arguments
  */
-#define ML_TRAIN_GET_VALID_HANDLE(obj, obj_h, obj_type, obj_name)     \
-  do {                                                                \
-    obj = (obj_type *)obj_h;                                          \
-    if (obj->magic != ML_NNTRAINER_MAGIC) {                           \
-      ml_loge("Error: Invalid Parameter : %s is invalid.", obj_name); \
-      return ML_ERROR_INVALID_PARAMETER;                              \
-    }                                                                 \
+#define ML_TRAIN_GET_VALID_HANDLE(obj, obj_h, obj_type, obj_name)              \
+  do {                                                                         \
+    obj = (obj_type *)obj_h;                                                   \
+    if (obj->magic != ML_NNTRAINER_MAGIC) {                                    \
+      ml_loge("Error: Invalid Parameter : %s is invalid.", obj_name);          \
+      return ML_ERROR_INVALID_PARAMETER;                                       \
+    }                                                                          \
   } while (0)
 
 /**
@@ -196,12 +196,12 @@ typedef struct {
  * @since_tizen 6.0
  * @note Check validity of the user passed arguments and lock the object.
  */
-#define ML_TRAIN_GET_VALID_HANDLE_LOCKED(obj, obj_h, obj_type, obj_name) \
-  do {                                                                   \
-    ML_TRAIN_VERIFY_VALID_HANDLE(obj_h);                                 \
-    std::lock_guard<std::mutex> ml_train_lock(GLOCK);                    \
-    ML_TRAIN_GET_VALID_HANDLE(obj, obj_h, obj_type, obj_name);           \
-    obj->m.lock();                                                       \
+#define ML_TRAIN_GET_VALID_HANDLE_LOCKED(obj, obj_h, obj_type, obj_name)       \
+  do {                                                                         \
+    ML_TRAIN_VERIFY_VALID_HANDLE(obj_h);                                       \
+    std::lock_guard<std::mutex> ml_train_lock(GLOCK);                          \
+    ML_TRAIN_GET_VALID_HANDLE(obj, obj_h, obj_type, obj_name);                 \
+    obj->m.lock();                                                             \
   } while (0)
 
 /**
@@ -221,52 +221,52 @@ typedef struct {
 /**
  * @brief     Reset object magic
  */
-#define ML_TRAIN_RESET_VALIDATED_HANDLE(obj)          \
-  do {                                                \
-    std::lock_guard<std::mutex> ml_train_lock(GLOCK); \
-    obj->magic = 0;                                   \
+#define ML_TRAIN_RESET_VALIDATED_HANDLE(obj)                                   \
+  do {                                                                         \
+    std::lock_guard<std::mutex> ml_train_lock(GLOCK);                          \
+    obj->magic = 0;                                                            \
   } while (0)
 
 /**
  * @brief     Check validity of passed model and lock the object.
  * @since_tizen 6.0
  */
-#define ML_TRAIN_GET_VALID_MODEL_LOCKED(nnmodel, model) \
+#define ML_TRAIN_GET_VALID_MODEL_LOCKED(nnmodel, model)                        \
   ML_TRAIN_GET_VALID_HANDLE_LOCKED(nnmodel, model, ml_train_model, "model")
 
 /**
  * @brief     Check validity of passed model, reset magic and lock the object.
  * @since_tizen 6.0
  */
-#define ML_TRAIN_GET_VALID_MODEL_LOCKED_RESET(nnmodel, model)           \
-  do {                                                                  \
-    ML_TRAIN_VERIFY_VALID_HANDLE(model);                                \
-    std::lock_guard<std::mutex> ml_train_lock(GLOCK);                   \
-    ML_TRAIN_GET_VALID_HANDLE(nnmodel, model, ml_train_model, "model"); \
-    nnmodel->m.lock();                                                  \
-    nnmodel->magic = 0;                                                 \
+#define ML_TRAIN_GET_VALID_MODEL_LOCKED_RESET(nnmodel, model)                  \
+  do {                                                                         \
+    ML_TRAIN_VERIFY_VALID_HANDLE(model);                                       \
+    std::lock_guard<std::mutex> ml_train_lock(GLOCK);                          \
+    ML_TRAIN_GET_VALID_HANDLE(nnmodel, model, ml_train_model, "model");        \
+    nnmodel->m.lock();                                                         \
+    nnmodel->magic = 0;                                                        \
   } while (0)
 
 /**
  * @brief     Check validity of passed layer and lock the object.
  * @since_tizen 6.0
  */
-#define ML_TRAIN_GET_VALID_LAYER_LOCKED(nnlayer, layer) \
+#define ML_TRAIN_GET_VALID_LAYER_LOCKED(nnlayer, layer)                        \
   ML_TRAIN_GET_VALID_HANDLE_LOCKED(nnlayer, layer, ml_train_layer, "layer")
 
 /**
  * @brief     Check validity of passed layer, reset magic and lock the object.
  * @since_tizen 6.0
  */
-#define ML_TRAIN_GET_VALID_LAYER_LOCKED_RESET(nnlayer, layer)            \
-  ML_TRAIN_GET_VALID_HANDLE_LOCKED_RESET(nnlayer, layer, ml_train_layer, \
+#define ML_TRAIN_GET_VALID_LAYER_LOCKED_RESET(nnlayer, layer)                  \
+  ML_TRAIN_GET_VALID_HANDLE_LOCKED_RESET(nnlayer, layer, ml_train_layer,       \
                                          "layer")
 
 /**
  * @brief     Check validity of passed optimizer and lock the object.
  * @since_tizen 6.0
  */
-#define ML_TRAIN_GET_VALID_OPT_LOCKED(nnopt, opt) \
+#define ML_TRAIN_GET_VALID_OPT_LOCKED(nnopt, opt)                              \
   ML_TRAIN_GET_VALID_HANDLE_LOCKED(nnopt, opt, ml_train_optimizer, "optimizer")
 
 /**
@@ -274,31 +274,31 @@ typedef struct {
  * object.
  * @since_tizen 6.0
  */
-#define ML_TRAIN_GET_VALID_OPT_LOCKED_RESET(nnopt, opt)                  \
-  ML_TRAIN_GET_VALID_HANDLE_LOCKED_RESET(nnopt, opt, ml_train_optimizer, \
+#define ML_TRAIN_GET_VALID_OPT_LOCKED_RESET(nnopt, opt)                        \
+  ML_TRAIN_GET_VALID_HANDLE_LOCKED_RESET(nnopt, opt, ml_train_optimizer,       \
                                          "optimizer")
 
 /**
  * @brief     Check validity of passed lr_scheduler and lock the object
  */
-#define ML_TRAIN_GET_VALID_LR_SCHEDULER_LOCKED(nnlrscheduler, lrscheduler) \
-  ML_TRAIN_GET_VALID_HANDLE_LOCKED(nnlrscheduler, lrscheduler,             \
+#define ML_TRAIN_GET_VALID_LR_SCHEDULER_LOCKED(nnlrscheduler, lrscheduler)     \
+  ML_TRAIN_GET_VALID_HANDLE_LOCKED(nnlrscheduler, lrscheduler,                 \
                                    ml_train_lr_scheduler, "lr_scheduler")
 
 /**
  * @brief     Check validity of passed lr_scheduler, reset magic and lock the
  * object
  */
-#define ML_TRAIN_GET_VALID_LR_SCHEDULER_LOCKED_RESET(nnlrscheduler, \
-                                                     lrscheduler)   \
-  ML_TRAIN_GET_VALID_HANDLE_LOCKED_RESET(                           \
+#define ML_TRAIN_GET_VALID_LR_SCHEDULER_LOCKED_RESET(nnlrscheduler,            \
+                                                     lrscheduler)              \
+  ML_TRAIN_GET_VALID_HANDLE_LOCKED_RESET(                                      \
     nnlrscheduler, lrscheduler, ml_train_lr_scheduler, "lr_scheduler")
 
 /**
  * @brief     Check validity of passed dataset and lock the object
  */
-#define ML_TRAIN_GET_VALID_DATASET_LOCKED(nndataset, dataset)            \
-  ML_TRAIN_GET_VALID_HANDLE_LOCKED(nndataset, dataset, ml_train_dataset, \
+#define ML_TRAIN_GET_VALID_DATASET_LOCKED(nndataset, dataset)                  \
+  ML_TRAIN_GET_VALID_HANDLE_LOCKED(nndataset, dataset, ml_train_dataset,       \
                                    "dataset")
 
 /**

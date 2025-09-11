@@ -18,8 +18,7 @@ namespace {}
 
 namespace nntrainer {
 Connection::Connection(const std::string &layer_name, unsigned int idx) :
-  index(idx),
-  name(props::Name(layer_name).get()) {}
+  index(idx), name(props::Name(layer_name).get()) {}
 
 Connection::Connection(const std::string &string_representation) {
   auto &sr = string_representation;

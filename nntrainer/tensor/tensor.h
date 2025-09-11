@@ -94,7 +94,7 @@ public:
   Tensor(size_t d0, size_t d1, size_t d2, size_t d3, Tformat fm = Tformat::NCHW,
          Tdatatype d_type = Tdatatype::FP32,
          QScheme qscheme_ = QScheme::PER_TENSOR_AFFINE) :
-    Tensor(TensorDim(d0, d1, d2, d3, fm, d_type), nullptr, qscheme_){};
+    Tensor(TensorDim(d0, d1, d2, d3, fm, d_type), nullptr, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -108,7 +108,7 @@ public:
   Tensor(size_t d1, size_t d2, size_t d3, Tformat fm = Tformat::NCHW,
          Tdatatype d_type = Tdatatype::FP32,
          QScheme qscheme_ = QScheme::PER_TENSOR_AFFINE) :
-    Tensor(1, d1, d2, d3, fm, d_type, qscheme_){};
+    Tensor(1, d1, d2, d3, fm, d_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor with batch size one and d1 size one
@@ -121,7 +121,7 @@ public:
   Tensor(size_t d2, size_t d3, Tformat fm = Tformat::NCHW,
          Tdatatype d_type = Tdatatype::FP32,
          QScheme qscheme_ = QScheme::PER_TENSOR_AFFINE) :
-    Tensor(1, 1, d2, d3, fm, d_type, qscheme_){};
+    Tensor(1, 1, d2, d3, fm, d_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor with just Width or Channel
@@ -133,7 +133,7 @@ public:
   explicit Tensor(size_t d3, Tformat fm = Tformat::NCHW,
                   Tdatatype d_type = Tdatatype::FP32,
                   QScheme qscheme_ = QScheme::PER_TENSOR_AFFINE) :
-    Tensor(1, 1, 1, d3, fm, d_type, qscheme_){};
+    Tensor(1, 1, 1, d3, fm, d_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -147,7 +147,7 @@ public:
   Tensor(size_t d0, size_t d1, size_t d2, size_t d3,
          ml::train::TensorDim::TensorType t_type,
          QScheme qscheme_ = QScheme::PER_TENSOR_AFFINE) :
-    Tensor(TensorDim(d0, d1, d2, d3, t_type), nullptr, qscheme_){};
+    Tensor(TensorDim(d0, d1, d2, d3, t_type), nullptr, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -160,7 +160,7 @@ public:
   Tensor(size_t d1, size_t d2, size_t d3,
          ml::train::TensorDim::TensorType t_type,
          QScheme qscheme_ = QScheme::PER_TENSOR_AFFINE) :
-    Tensor(1, d1, d2, d3, t_type){};
+    Tensor(1, d1, d2, d3, t_type) {};
 
   /**
    * @brief     Constructor of Tensor with batch size one and d1 size one
@@ -173,7 +173,7 @@ public:
          QScheme qscheme_ = QScheme::PER_TENSOR_AFFINE) :
     Tensor(1, (t_type.format == Tformat::NCHW) ? 1 : d3,
            (t_type.format == Tformat::NCHW) ? d2 : 1,
-           (t_type.format == Tformat::NCHW) ? d3 : d2, t_type, qscheme_){};
+           (t_type.format == Tformat::NCHW) ? d3 : d2, t_type, qscheme_) {};
   /**
    * @brief     Constructor of Tensor with just Width or Channel
    * @param[in] d3 Width (NCHW) or Channel (NHWC)
@@ -183,7 +183,7 @@ public:
   explicit Tensor(size_t d3, ml::train::TensorDim::TensorType t_type,
                   QScheme qscheme_ = QScheme::PER_TENSOR_AFFINE) :
     Tensor(1, (t_type.format == Tformat::NCHW) ? 1 : d3, 1,
-           (t_type.format == Tformat::NCHW) ? d3 : 1, t_type, qscheme_){};
+           (t_type.format == Tformat::NCHW) ? d3 : 1, t_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -201,7 +201,7 @@ public:
    */
   Tensor(std::vector<std::vector<std::vector<float>>> const &d,
          ml::train::TensorDim::TensorType t_type) :
-    Tensor(std::vector<std::decay<decltype(d)>::type>{d}, t_type){};
+    Tensor(std::vector<std::decay<decltype(d)>::type>{d}, t_type) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -211,7 +211,7 @@ public:
    */
   Tensor(std::vector<std::vector<float>> const &d,
          ml::train::TensorDim::TensorType t_type) :
-    Tensor(std::vector<std::decay<decltype(d)>::type>{d}, t_type){};
+    Tensor(std::vector<std::decay<decltype(d)>::type>{d}, t_type) {};
 
 #ifdef ENABLE_FP16
   /**
@@ -235,7 +235,7 @@ public:
    */
   Tensor(std::vector<std::vector<std::vector<_FP16>>> const &d,
          ml::train::TensorDim::TensorType t_type) :
-    Tensor(std::vector<std::decay<decltype(d)>::type>{d}, t_type){};
+    Tensor(std::vector<std::decay<decltype(d)>::type>{d}, t_type) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -245,7 +245,7 @@ public:
    */
   Tensor(std::vector<std::vector<_FP16>> const &d,
          ml::train::TensorDim::TensorType t_type) :
-    Tensor(std::vector<std::decay<decltype(d)>::type>{d}, t_type){};
+    Tensor(std::vector<std::decay<decltype(d)>::type>{d}, t_type) {};
 #endif
 
   /**
@@ -269,7 +269,7 @@ public:
          std::vector<unsigned int> const &zero_points,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, zero_points,
-           t_type, qscheme_){};
+           t_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -282,7 +282,7 @@ public:
          std::vector<unsigned int> const &zero_points,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, zero_points,
-           t_type, qscheme_){};
+           t_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -305,7 +305,7 @@ public:
          std::vector<unsigned int> const &zero_points,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, zero_points,
-           t_type, qscheme_){};
+           t_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -318,7 +318,7 @@ public:
          std::vector<unsigned int> const &zero_points,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, zero_points,
-           t_type, qscheme_){};
+           t_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -341,7 +341,7 @@ public:
          std::vector<unsigned int> const &zero_points,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, zero_points,
-           t_type, qscheme_){};
+           t_type, qscheme_) {};
 
   /**
    * @brief     Constructor of Tensor
@@ -354,7 +354,7 @@ public:
          std::vector<unsigned int> const &zero_points,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, zero_points,
-           t_type, qscheme_){};
+           t_type, qscheme_) {};
 
   /**
    * @brief     Constructor of CharTensor (QINT8)
@@ -379,7 +379,7 @@ public:
          std::vector<float> const &scales,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, t_type,
-           qscheme_){};
+           qscheme_) {};
 
   /**
    * @brief     Constructor of CharTensor (QINT8)
@@ -393,7 +393,7 @@ public:
          std::vector<float> const &scales,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, t_type,
-           qscheme_){};
+           qscheme_) {};
 
   /**
    * @brief     Constructor of CharTensor (QINT16)
@@ -418,7 +418,7 @@ public:
          std::vector<float> const &scales,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, t_type,
-           qscheme_){};
+           qscheme_) {};
 
   /**
    * @brief     Constructor of CharTensor (QINT16)
@@ -432,7 +432,7 @@ public:
          std::vector<float> const &scales,
          ml::train::TensorDim::TensorType t_type, QScheme qscheme_) :
     Tensor(std::vector<std::decay<decltype(d)>::type>{d}, scales, t_type,
-           qscheme_){};
+           qscheme_) {};
 
   /**
    *  @brief  Constructor of Tensor by directly assigning TensorBase.

@@ -95,8 +95,8 @@ namespace {
 
 template <typename To_, typename From_>
 constexpr inline bool concept17_BinaryCastable =
-  sizeof(To_) == sizeof(From_) &&
-  std::is_trivially_copyable_v<From_> &&std::is_trivially_copyable_v<To_>;
+  sizeof(To_) == sizeof(From_) && std::is_trivially_copyable_v<From_> &&
+  std::is_trivially_copyable_v<To_>;
 
 template <class To_, class From_>
 auto compat_bit_cast(const From_ &src) noexcept

@@ -935,13 +935,13 @@ typedef struct _cl_name_version {
 #define CL_VERSION_MINOR(version)                                              \
   (((version) >> CL_VERSION_PATCH_BITS) & CL_VERSION_MINOR_MASK)
 
-#define CL_VERSION_PATCH(version) ((version)&CL_VERSION_PATCH_MASK)
+#define CL_VERSION_PATCH(version) ((version) & CL_VERSION_PATCH_MASK)
 
 #define CL_MAKE_VERSION(major, minor, patch)                                   \
-  ((((major)&CL_VERSION_MAJOR_MASK)                                            \
+  ((((major) & CL_VERSION_MAJOR_MASK)                                          \
     << (CL_VERSION_MINOR_BITS + CL_VERSION_PATCH_BITS)) |                      \
-   (((minor)&CL_VERSION_MINOR_MASK) << CL_VERSION_PATCH_BITS) |                \
-   ((patch)&CL_VERSION_PATCH_MASK))
+   (((minor) & CL_VERSION_MINOR_MASK) << CL_VERSION_PATCH_BITS) |              \
+   ((patch) & CL_VERSION_PATCH_MASK))
 
 /********************************************************************************************************/
 

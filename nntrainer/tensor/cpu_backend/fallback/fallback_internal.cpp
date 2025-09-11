@@ -397,9 +397,9 @@ void __fallback_unpack_q4_0x8_transpose16(const void *src,
             qsT_c0[t * N + r] = w; // column (c*8 + t), row r
           }
         } // off
-      }   // c in tile
-    }     // b
-  }       // c0 tiles
+      } // c in tile
+    } // b
+  } // c0 tiles
 }
 
 template <>

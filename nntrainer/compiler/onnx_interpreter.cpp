@@ -16,7 +16,7 @@
 namespace nntrainer {
 
 void ONNXInterpreter::serialize(const GraphRepresentation &representation,
-                                const std::string &out){};
+                                const std::string &out) {};
 
 GraphRepresentation ONNXInterpreter::deserialize(const std::string &in) {
   // Load and parse onnx file with protobuf

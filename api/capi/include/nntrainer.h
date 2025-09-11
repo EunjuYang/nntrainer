@@ -38,7 +38,7 @@
  * @since_tizen 6.5
  *
  */
-#define TIZEN_DEPRECATED_API \
+#define TIZEN_DEPRECATED_API                                                   \
   __attribute__((__visibility__("default"), deprecated))
 #endif
 

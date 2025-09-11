@@ -22,8 +22,8 @@
 #include <tensor.h>
 #include <tensor_dim.h>
 
-#define EXPECT_IN_RANGE(VAL, MIN, MAX) \
-  EXPECT_GE((VAL), (MIN));             \
+#define EXPECT_IN_RANGE(VAL, MIN, MAX)                                         \
+  EXPECT_GE((VAL), (MIN));                                                     \
   EXPECT_LE((VAL), (MAX))
 
 TEST(nntrainer_Tensor, add_i) {

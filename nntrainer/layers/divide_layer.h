@@ -39,7 +39,7 @@ public:
   /**
    * @brief Destructor of Divide Layer
    */
-  ~DivideLayer(){};
+  ~DivideLayer() {};
 
   /**
    *  @brief  Move constructor of Divide Layer.

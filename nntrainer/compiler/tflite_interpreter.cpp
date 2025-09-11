@@ -26,11 +26,11 @@
 #include <bn_realizer.h>
 #include <fc_layer.h>
 #include <layer_node.h>
-#include <tflite_export_realizer.h>
 #include <nntrainer_error.h>
 #include <node_exporter.h>
 #include <tensor.h>
 #include <tf_schema_generated.h>
+#include <tflite_export_realizer.h>
 #include <tflite_opnode.h>
 
 static constexpr const char *FUNC_TAG = "[TFLITE INTERPRETER] ";

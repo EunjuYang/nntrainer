@@ -36,13 +36,13 @@ public:
    * @brief Construct a new ONNXInterpreter object
    *
    */
-  ONNXInterpreter(){};
+  ONNXInterpreter() {};
 
   /**
    * @brief Destroy the ONNXInterpreter object
    *
    */
-  ~ONNXInterpreter(){};
+  ~ONNXInterpreter() {};
 
   /**
    * @copydoc GraphInterpreter::serialize(const GraphRepresentation

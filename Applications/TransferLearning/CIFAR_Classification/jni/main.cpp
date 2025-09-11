@@ -161,8 +161,8 @@ void getFeature(const string filename, vector<float> &feature_input) {
   int _input = interpreter->inputs()[0];
 
   float *output;
-  std::vector<uint8_t> in = tflite::label_image::read_bmp(filename, &wanted_width,
-                                              &wanted_height, &wanted_channels);
+  std::vector<uint8_t> in = tflite::label_image::read_bmp(
+    filename, &wanted_width, &wanted_height, &wanted_channels);
 
   if (interpreter->AllocateTensors() != kTfLiteOk) {
     std::cout << "Failed to allocate tensors!" << std::endl;

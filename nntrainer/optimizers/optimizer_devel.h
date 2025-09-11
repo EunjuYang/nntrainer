@@ -69,7 +69,7 @@ public:
   /**
    * @brief     finalize optimizer.
    */
-  virtual void finalize(){};
+  virtual void finalize() {};
 
   /**
    * @brief     Read Training optimizer parameters from file

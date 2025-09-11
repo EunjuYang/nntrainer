@@ -26,8 +26,8 @@
 
 #pragma GCC diagnostic ignored "-Wunused-local-typedefs"
 
-#define EXPECT_IN_RANGE(VAL, MIN, MAX) \
-  EXPECT_GE((VAL), (MIN));             \
+#define EXPECT_IN_RANGE(VAL, MIN, MAX)                                         \
+  EXPECT_GE((VAL), (MIN));                                                     \
   EXPECT_LE((VAL), (MAX))
 
 using namespace nntrainer;

@@ -100,14 +100,14 @@ public:
     TensorType() :
       format(Format::NCHW),
       data_type(DataType::FP32),
-      storage_order(StorageOrder::ROW_MAJOR){};
+      storage_order(StorageOrder::ROW_MAJOR) {};
 
     /**
      * @brief     Default creator of Tensor Type with Format & DataType
      */
     TensorType(Format fm, DataType d_type,
                StorageOrder order = StorageOrder::ROW_MAJOR) :
-      format(fm), data_type(d_type), storage_order(order){};
+      format(fm), data_type(d_type), storage_order(order) {};
   };
 
   /**

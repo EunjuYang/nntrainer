@@ -33,7 +33,7 @@ public:
   /**
    * @brief Destroy the Dir Data Loader object
    */
-  ~DirDataLoader(){};
+  ~DirDataLoader() {};
 
   /**
    * @copydoc void DataLoader::next(float **input, float**label, bool *last)

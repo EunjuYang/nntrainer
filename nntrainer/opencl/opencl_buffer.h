@@ -15,9 +15,9 @@
 #define __OPENCL_BUFFER_H__
 
 #include "CL/cl.h"
+#include "noncopyable.h"
 #include "opencl_command_queue_manager.h"
 #include "opencl_context_manager.h"
-#include "noncopyable.h"
 
 namespace nntrainer::opencl {
 
@@ -45,7 +45,7 @@ public:
    * @brief Default constructor
    *
    */
-  Buffer(){};
+  Buffer() {};
 
   /**
    * @brief Construct a new Buffer object

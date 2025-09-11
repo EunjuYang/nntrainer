@@ -147,7 +147,7 @@ public:
    * @brief Construct a new Property object
    *
    */
-  Property() : value(nullptr){};
+  Property() : value(nullptr) {};
 
   /**
    * @brief Construct a new Property object
@@ -720,7 +720,7 @@ public:
   /**
    * @brief Constructor
    */
-  WeightDtype(){};
+  WeightDtype() {};
 
   /**
    * @brief Constructor

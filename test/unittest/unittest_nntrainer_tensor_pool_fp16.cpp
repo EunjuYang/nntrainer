@@ -20,11 +20,11 @@
 #include <optimized_v1_planner.h>
 #include <tensor_pool.h>
 
-#define FP32_                       \
-  nntrainer::TensorDim::TensorType( \
+#define FP32_                                                                  \
+  nntrainer::TensorDim::TensorType(                                            \
     {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32})
-#define FP16_                       \
-  nntrainer::TensorDim::TensorType( \
+#define FP16_                                                                  \
+  nntrainer::TensorDim::TensorType(                                            \
     {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP16})
 
 constexpr unsigned int MEM_BYTES = 128;

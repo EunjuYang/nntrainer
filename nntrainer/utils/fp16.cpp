@@ -55,7 +55,7 @@ uint32_t fp32_to_bits(float f) {
 }
 
 uint16_t compute_fp32_to_fp16(float f) {
-#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) || \
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) ||              \
   defined(__GNUC__) && !defined(__STRICT_ANSI__)
   const float scale_to_inf = 0x1.0p+112f;
   const float scale_to_zero = 0x1.0p-110f;
@@ -87,7 +87,7 @@ float compute_fp16_to_fp32(uint16_t h) {
   const uint32_t sign = w & UINT32_C(0x80000000);
   const uint32_t two_w = w + w;
   const uint32_t exp_offset = UINT32_C(0xE0) << 23;
-#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) || \
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 199901L) ||              \
   defined(__GNUC__) && !defined(__STRICT_ANSI__)
   const float exp_scale = 0x1.0p-112f;
 #else

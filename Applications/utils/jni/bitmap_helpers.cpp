@@ -72,8 +72,8 @@ uint8_t *decode_bmp(const uint8_t *input, int row_size, uint8_t *const output,
   return output;
 }
 
-std::vector<uint8_t> read_bmp(const std::string &input_bmp_name, int *width, int *height,
-                  int *channels) {
+std::vector<uint8_t> read_bmp(const std::string &input_bmp_name, int *width,
+                              int *height, int *channels) {
   int begin, end;
 
   std::ifstream file(input_bmp_name, std::ios::in | std::ios::binary);
@@ -110,8 +110,8 @@ std::vector<uint8_t> read_bmp(const std::string &input_bmp_name, int *width, int
 
   const uint8_t *bmp_pixels = &img_bytes[header_size];
 
-  decode_bmp(bmp_pixels, row_size, output.data(), *width, abs(*height), *channels,
-             top_down);
+  decode_bmp(bmp_pixels, row_size, output.data(), *width, abs(*height),
+             *channels, top_down);
 
   delete[] img_bytes;
 

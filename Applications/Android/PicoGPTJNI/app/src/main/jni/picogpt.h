@@ -34,11 +34,11 @@
 #endif
 
 #include <android/log.h>
-#define ANDROID_LOG_E(fmt, ...) \
+#define ANDROID_LOG_E(fmt, ...)                                                \
   __android_log_print(ANDROID_LOG_ERROR, "nntrainer", fmt, ##__VA_ARGS__)
-#define ANDROID_LOG_I(fmt, ...) \
+#define ANDROID_LOG_I(fmt, ...)                                                \
   __android_log_print(ANDROID_LOG_INFO, "nntrainer", fmt, ##__VA_ARGS__)
-#define ANDROID_LOG_D(fmt, ...) \
+#define ANDROID_LOG_D(fmt, ...)                                                \
   __android_log_print(ANDROID_LOG_DEBUG, "nntrainer", fmt, ##__VA_ARGS__)
 
 using LayerHandle = std::shared_ptr<ml::train::Layer>;
@@ -84,7 +84,6 @@ ml::train::Model *createPicogpt();
  * @return string display string
  */
 std::string displayProgress(const int count, float loss, int batch_size);
-
 
 /**
  * @brief this is main for android jni interface to train

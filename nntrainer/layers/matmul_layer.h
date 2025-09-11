@@ -37,7 +37,7 @@ public:
   /**
    * @brief Destructor of MatMul Layer
    */
-  ~MatMulLayer(){};
+  ~MatMulLayer() {};
 
   /**
    *  @brief  Move constructor of MatMul Layer.

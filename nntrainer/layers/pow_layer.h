@@ -38,7 +38,7 @@ public:
   /**
    * @brief Destructor of Pow Layer
    */
-  ~PowLayer(){};
+  ~PowLayer() {};
 
   /**
    *  @brief  Move constructor of Pow Layer.

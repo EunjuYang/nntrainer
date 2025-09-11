@@ -35,7 +35,7 @@ public:
   /**
    * @brief     Constructor of Layer Class
    */
-  LayerImplCl() : LayerImpl(){};
+  LayerImplCl() : LayerImpl() {};
 
   /**
    * @brief     Destructor of Layer Class

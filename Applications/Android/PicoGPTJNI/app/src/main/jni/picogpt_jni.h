@@ -47,8 +47,7 @@ JNIEXPORT jboolean JNICALL
 Java_com_applications_picogptjni_MainActivity_modelDestroyed(JNIEnv *, jobject);
 
 JNIEXPORT jstring JNICALL
-Java_com_applications_picogptjni_MainActivity_getInferResult(JNIEnv *,
-							     jobject);
+Java_com_applications_picogptjni_MainActivity_getInferResult(JNIEnv *, jobject);
 
 #ifdef __cplusplus
 }

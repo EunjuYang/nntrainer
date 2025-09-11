@@ -33,8 +33,7 @@ public:
    * @param pluggable LayerPluggable structure from the symbol
    */
   PluggedLayer(const nntrainer::LayerPluggable *pluggable) :
-    layerImpl(pluggable->createfunc()),
-    destroy_func(pluggable->destroyfunc) {
+    layerImpl(pluggable->createfunc()), destroy_func(pluggable->destroyfunc) {
     NNTR_THROW_IF(layerImpl == nullptr, std::invalid_argument)
       << "either create_func_ failed or cannot dynamic cast to layer";
   }

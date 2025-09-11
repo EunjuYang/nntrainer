@@ -105,9 +105,7 @@ nntrainer::Layer *create_reorg_layer() {
   return layer;
 }
 
-void destroy_reorg_layer(nntrainer::Layer *layer) {
-  delete layer;
-}
+void destroy_reorg_layer(nntrainer::Layer *layer) { delete layer; }
 
 extern "C" {
 nntrainer::LayerPluggable ml_train_layer_pluggable{create_reorg_layer,

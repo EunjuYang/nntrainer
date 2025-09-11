@@ -214,24 +214,24 @@ int data_run_inference(appdata_s *ad);
 #endif
 
 #if !defined(_D)
-#define LOG_D(fmt, arg...)                                                 \
-  dlog_print(DLOG_DEBUG, LOG_TAG, "[%s:%d] " fmt "\n", __func__, __LINE__, \
+#define LOG_D(fmt, arg...)                                                     \
+  dlog_print(DLOG_DEBUG, LOG_TAG, "[%s:%d] " fmt "\n", __func__, __LINE__,     \
              ##arg)
 #endif
 
 #if !defined(_I)
-#define LOG_I(fmt, arg...) \
+#define LOG_I(fmt, arg...)                                                     \
   dlog_print(DLOG_INFO, LOG_TAG, "[%s:%d] " fmt "\n", __func__, __LINE__, ##arg)
 #endif
 
 #if !defined(_W)
-#define LOG_W(fmt, arg...) \
+#define LOG_W(fmt, arg...)                                                     \
   dlog_print(DLOG_WARN, LOG_TAG, "[%s:%d] " fmt "\n", __func__, __LINE__, ##arg)
 #endif
 
 #if !defined(_E)
-#define LOG_E(fmt, arg...)                                                 \
-  dlog_print(DLOG_ERROR, LOG_TAG, "[%s:%d] " fmt "\n", __func__, __LINE__, \
+#define LOG_E(fmt, arg...)                                                     \
+  dlog_print(DLOG_ERROR, LOG_TAG, "[%s:%d] " fmt "\n", __func__, __LINE__,     \
              ##arg)
 #endif
 

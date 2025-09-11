@@ -23,7 +23,7 @@ FlatBufferOpNode::FlatBufferOpNode() :
   is_output(false),
   is_virtual(false),
   op_type(nntr::BuiltinOperator_ADD),
-  builtin_option_type(nntr::BuiltinOptions_NONE){};
+  builtin_option_type(nntr::BuiltinOptions_NONE) {};
 
 void FlatBufferOpNode::setLayerNode(const LayerNode &layer) {
   is_input = (layer.getNumInputConnections() == 0);

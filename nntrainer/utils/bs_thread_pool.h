@@ -157,7 +157,7 @@ struct version {
 // In C++20 and later we can use the spaceship operator `<=>` to automatically
 // generate comparison operators. In C++17 we have to define them manually.
 #ifdef __cpp_impl_three_way_comparison
-  std::strong_ordering operator<=>(const version &) const = default;
+  std::strong_ordering operator<= > (const version &) const = default;
 #else
   [[nodiscard]] constexpr friend bool operator==(const version &lhs,
                                                  const version &rhs) noexcept {
@@ -612,7 +612,7 @@ private:
  * `BS::thread_pool`.
  */
 struct wait_deadlock : public std::runtime_error {
-  wait_deadlock() : std::runtime_error("BS::wait_deadlock"){};
+  wait_deadlock() : std::runtime_error("BS::wait_deadlock") {};
 };
 #endif
 

@@ -203,10 +203,10 @@ private:
 
 } // namespace nntrainer
 
-#define TRACE_MEMORY_POINT(msg) \
+#define TRACE_MEMORY_POINT(msg)                                                \
   nntrainer::MemoryTracer::getInstance()->tracePoint(msg)
 #define TRACE_MEMORY() *(nntrainer::MemoryTracer::getInstance())
-#define TRACE_TIME_POINT(msg) \
+#define TRACE_TIME_POINT(msg)                                                  \
   nntrainer::TimeTracer::getInstance()->tracePoint(msg)
 #define TRACE_TIME() *(nntrainer::TimeTracer::getInstance())
 

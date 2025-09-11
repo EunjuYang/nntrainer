@@ -98,7 +98,6 @@ auto ln_axis_1_2_3_w16a16 = LayerGoldenTestParamType(
 GTEST_PARAMETER_TEST(LayerNormalization16, LayerGoldenTest,
                      ::testing::Values(ln_axis_1_w16a16, ln_axis_2_w16a16,
                                        ln_axis_3_w16a16, ln_axis_1_2_w16a16,
-                                       ln_axis_2_3_w16a16,
-                                       ln_axis_1_3_w16a16,
+                                       ln_axis_2_3_w16a16, ln_axis_1_3_w16a16,
                                        ln_axis_1_2_3_w16a16));
 #endif

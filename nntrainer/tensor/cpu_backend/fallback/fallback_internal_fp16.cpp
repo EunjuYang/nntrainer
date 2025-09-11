@@ -92,7 +92,7 @@
         }                                                                      \
         C[m * ldc + n] = (alpha * c);                                          \
         if (beta != 0.0f) {                                                    \
-          C[m * ldc + n] += (beta)*c_old;                                      \
+          C[m * ldc + n] += (beta) * c_old;                                    \
         }                                                                      \
       }                                                                        \
     }                                                                          \
@@ -127,7 +127,7 @@
         }                                                                      \
         C[m * ldc + n] = (alpha * c);                                          \
         if (beta != 0.0f) {                                                    \
-          C[m * ldc + n] += (beta)*c_old;                                      \
+          C[m * ldc + n] += (beta) * c_old;                                    \
         }                                                                      \
       }                                                                        \
     }                                                                          \

@@ -29,12 +29,12 @@
 #include <sstream>
 #include <stdexcept>
 
-#define NNTR_THROW_IF(pred, err) \
-  if ((pred))                    \
+#define NNTR_THROW_IF(pred, err)                                               \
+  if ((pred))                                                                  \
     nntrainer::exception::ErrorNotification<err> {}
 
-#define NNTR_THROW_IF_CLEANUP(pred, err, cleanup_func) \
-  if ((pred))                                          \
+#define NNTR_THROW_IF_CLEANUP(pred, err, cleanup_func)                         \
+  if ((pred))                                                                  \
     nntrainer::exception::ErrorNotification<err> { cleanup_func }
 
 #ifdef _WIN32

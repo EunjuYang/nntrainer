@@ -66,7 +66,7 @@ DataBuffer::DataBuffer(std::unique_ptr<DataProducer> &&producer_) :
   rng.seed(0);
 }
 
-DataBuffer::~DataBuffer(){};
+DataBuffer::~DataBuffer() {};
 
 std::future<std::shared_ptr<IterationQueue>>
 DataBuffer::startFetchWorker(const std::vector<TensorDim> &input_dims,

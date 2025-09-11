@@ -70,7 +70,7 @@ public:
    * @param out output file name
    */
   virtual void serialize_v1(const NetworkGraph &representation,
-                            const std::string &out){};
+                            const std::string &out) {};
 
   /**
    * @brief graph representation

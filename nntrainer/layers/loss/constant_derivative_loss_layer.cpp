@@ -23,7 +23,7 @@ static constexpr int SINGLE_INOUT_IDX = 0;
 static constexpr float value = 1.0f;
 
 ConstantDerivativeLossLayer::ConstantDerivativeLossLayer() : LossLayer() {}
-ConstantDerivativeLossLayer::~ConstantDerivativeLossLayer(){};
+ConstantDerivativeLossLayer::~ConstantDerivativeLossLayer() {};
 
 void ConstantDerivativeLossLayer::forwarding(RunLayerContext &context,
                                              bool training) {

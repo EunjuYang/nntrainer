@@ -51,7 +51,7 @@ public:
   explicit Tensor(
     const TensorDim &dim,
     const nntrainer::Initializer init = nntrainer::Initializer::ZEROS,
-    bool ng = false, std::string name = ""){};
+    bool ng = false, std::string name = "") {};
 
   /**
    * @brief Swap for weight

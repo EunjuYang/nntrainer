@@ -25,7 +25,7 @@ ParallelBatch::ParallelBatch(unsigned int batch_size) :
   cb(nullptr),
   batch(batch_size),
   num_workers(nntr_num_threads > batch ? 1 : nntr_num_threads),
-  user_data_prop(new props::PropsUserData(nullptr)){};
+  user_data_prop(new props::PropsUserData(nullptr)) {};
 
 ParallelBatch::ParallelBatch(threaded_cb threaded_cb_, unsigned int batch_size,
                              void *user_data_) :

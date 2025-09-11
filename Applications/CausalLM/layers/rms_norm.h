@@ -85,7 +85,7 @@ public:
    */
   WIN_EXPORT void
   exportTo(nntrainer::Exporter &exporter,
-           const ml::train::ExportMethods &method) const override{};
+           const ml::train::ExportMethods &method) const override {};
 
   /**
    * @copydoc Layer::getType()

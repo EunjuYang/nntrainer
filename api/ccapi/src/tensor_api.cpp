@@ -22,8 +22,7 @@ namespace train {
 
 Tensor::Tensor(const TensorDim &dim, const iTensor::Initializer init, bool ng,
                std::string name) :
-  Var_Grad(dim, init, ng, false, name),
-  src_layer(nullptr) {}
+  Var_Grad(dim, init, ng, false, name), src_layer(nullptr) {}
 
 } // namespace train
 } // namespace ml

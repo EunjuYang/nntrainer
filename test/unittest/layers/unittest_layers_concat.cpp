@@ -58,7 +58,6 @@ auto concat_dim1_w16a16 = LayerGoldenTestParamType(
   LayerGoldenTestParamOptions::DEFAULT, "nchw", "fp16", "fp16");
 
 GTEST_PARAMETER_TEST(Concat16, LayerGoldenTest,
-                     ::testing::Values(concat_dim3_w16a16,
-                                       concat_dim2_w16a16,
+                     ::testing::Values(concat_dim3_w16a16, concat_dim2_w16a16,
                                        concat_dim1_w16a16));
 #endif

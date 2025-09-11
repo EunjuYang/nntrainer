@@ -28,8 +28,7 @@ namespace layers {
 static constexpr size_t SINGLE_INOUT_IDX = 0;
 
 CenteringLayer::CenteringLayer(const std::string &feature_path_) :
-  Layer(),
-  feature_path(feature_path_) {}
+  Layer(), feature_path(feature_path_) {}
 
 void CenteringLayer::setProperty(const std::vector<std::string> &values) {
   const std::string FEATURE_PATH("feature_path");

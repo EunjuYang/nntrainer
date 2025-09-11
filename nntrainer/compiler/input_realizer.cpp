@@ -22,8 +22,7 @@
 namespace nntrainer {
 InputRealizer::InputRealizer(const std::vector<Connection> &start_conns,
                              const std::vector<Connection> &input_conns) :
-  start_conns(start_conns),
-  input_conns(input_conns) {
+  start_conns(start_conns), input_conns(input_conns) {
   NNTR_THROW_IF(start_conns.size() != input_conns.size(), std::invalid_argument)
     << "start connection size is not same input_conns size";
 }

@@ -39,7 +39,7 @@ public:
   /**
    * @brief Destructor of Multiply Layer
    */
-  ~MultiplyLayer(){};
+  ~MultiplyLayer() {};
 
   /**
    *  @brief  Move constructor of Multiply Layer.

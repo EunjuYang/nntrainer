@@ -179,9 +179,8 @@ public:
     auto to_tensors = [](sharedConstTensors &sts) {
       std::vector<Tensor> ts;
       ts.reserve(sts.size());
-      std::transform(
-        sts.begin(), sts.end(), std::back_inserter(ts),
-        [](const auto &ts) -> const auto & { return *ts; });
+      std::transform(sts.begin(), sts.end(), std::back_inserter(ts),
+                     [](const auto &ts) -> const auto & { return *ts; });
       return ts;
     };
 

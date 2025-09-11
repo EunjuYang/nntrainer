@@ -20,8 +20,7 @@
 namespace nntrainer {
 
 FuncDataProducer::FuncDataProducer(datagen_cb datagen_cb, void *user_data_) :
-  cb(datagen_cb),
-  user_data_prop(new props::PropsUserData(user_data_)) {}
+  cb(datagen_cb), user_data_prop(new props::PropsUserData(user_data_)) {}
 
 FuncDataProducer::~FuncDataProducer() {}
 

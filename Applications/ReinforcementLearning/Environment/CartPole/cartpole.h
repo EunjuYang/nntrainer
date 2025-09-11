@@ -59,7 +59,7 @@ public:
   /**
    * @brief     Destructor of CartPole
    */
-  ~CartPole(){};
+  ~CartPole() {};
 
   /**
    * @brief     Initialization fo CarPole variables

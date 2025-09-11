@@ -50,7 +50,7 @@ public:
   /**
    * @brief     Destructor of ActiFunc
    */
-  ~ActiFunc(){};
+  ~ActiFunc() {};
 
   /**
    * @brief setActivation by preset ActivationType

@@ -38,7 +38,7 @@ public:
   /**
    * @brief Destructor of Sub Layer
    */
-  ~SubtractLayer(){};
+  ~SubtractLayer() {};
 
   /**
    *  @brief  Move constructor of Sub Layer.

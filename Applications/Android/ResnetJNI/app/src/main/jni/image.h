@@ -32,10 +32,7 @@ public:
    * @param stride stride of image
    */
   Image(int width, int height, int channels, int stride) :
-    width_(width),
-    height_(height),
-    channels_(channels),
-    stride_(stride) {
+    width_(width), height_(height), channels_(channels), stride_(stride) {
     this->pixels_ = std::make_unique<uint8_t[]>(width * height * channels);
   }
 

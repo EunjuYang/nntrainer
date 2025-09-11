@@ -18,7 +18,6 @@
 #include <connection.h>
 #include <flatten_realizer.h>
 #include <input_realizer.h>
-#include <tflite_export_realizer.h>
 #include <multiout_realizer.h>
 #include <nntrainer_error.h>
 #include <previous_input_realizer.h>
@@ -26,6 +25,7 @@
 #include <recurrent_realizer.h>
 #include <remap_realizer.h>
 #include <slice_realizer.h>
+#include <tflite_export_realizer.h>
 
 #include <compiler_test_util.h>
 #include <nntrainer_test_util.h>

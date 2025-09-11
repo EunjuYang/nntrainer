@@ -37,8 +37,7 @@ public:
   void forwarding(RunLayerContext &context, bool training = true) override {
     /** do nothing */
   }
-  void calcDerivative(RunLayerContext &context) override { /** do nothing */
-  }
+  void calcDerivative(RunLayerContext &context) override { /** do nothing */ }
 
   void setProperty(const std::vector<std::string> &values) override {
     LayerImpl::setProperty(values);

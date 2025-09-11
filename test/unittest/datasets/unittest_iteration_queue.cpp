@@ -110,7 +110,7 @@ public:
    * @brief do here if any memory needs to be released
    *
    */
-  virtual void TearDown(){};
+  virtual void TearDown() {};
 
 protected:
   /**

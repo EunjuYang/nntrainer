@@ -37,7 +37,7 @@ public:
   /**
    * @brief Destructor of Tangent Layer
    */
-  ~TangentLayer(){};
+  ~TangentLayer() {};
 
   /**
    *  @brief  Move constructor of Tangent Layer.

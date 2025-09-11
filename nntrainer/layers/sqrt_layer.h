@@ -38,7 +38,7 @@ public:
   /**
    * @brief Destructor of SQRT Layer
    */
-  ~SQRTLayer(){};
+  ~SQRTLayer() {};
 
   /**
    *  @brief  Move constructor of SQRT Layer.

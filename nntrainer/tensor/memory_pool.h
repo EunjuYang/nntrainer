@@ -223,15 +223,15 @@ public:
    *
    * @param path FSU weight file path
    */
-  virtual void setFsuWeightPath(std::string path){};
+  virtual void setFsuWeightPath(std::string path) {};
 
   /**
    * @brief set weight file offset for FSU loading
    *
    * @param offsets weight file offset
    */
-  virtual void
-  setWeightOffset(std::vector<std::pair<size_t, size_t>> offsets){};
+  virtual void setWeightOffset(std::vector<std::pair<size_t, size_t>> offsets) {
+  };
 
 protected:
   /**

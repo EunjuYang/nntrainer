@@ -16,8 +16,7 @@ namespace nntrainer {
 
 RemapRealizer::RemapRealizer(
   std::function<void(std::string &, unsigned &)> remap_connection_function) :
-  remap_fn(nullptr),
-  remap_connection_fn(remap_connection_function) {
+  remap_fn(nullptr), remap_connection_fn(remap_connection_function) {
   if (!remap_connection_fn) {
     throw std::invalid_argument("remap function is not given!");
   }
@@ -25,8 +24,7 @@ RemapRealizer::RemapRealizer(
 
 RemapRealizer::RemapRealizer(
   std::function<void(std::string &)> remap_function) :
-  remap_fn(remap_function),
-  remap_connection_fn(nullptr) {
+  remap_fn(remap_function), remap_connection_fn(nullptr) {
   if (!remap_fn) {
     throw std::invalid_argument("remap function is not given!");
   }

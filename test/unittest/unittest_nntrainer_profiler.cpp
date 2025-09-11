@@ -28,9 +28,7 @@ using namespace nntrainer::profile;
 class MockProfileListener : public ProfileListener {
 public:
   MockProfileListener() :
-    ProfileListener(),
-    time_event_cnt(0),
-    memory_alloc(0) {
+    ProfileListener(), time_event_cnt(0), memory_alloc(0) {
     ON_CALL(*this, notify)
       .WillByDefault(
         [&](PROFILE_EVENT event, const std::shared_ptr<ProfileEventData> data) {

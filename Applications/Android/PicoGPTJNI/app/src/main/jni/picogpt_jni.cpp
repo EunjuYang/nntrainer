@@ -22,7 +22,7 @@ float val_accu = 0.0;
 
 JNIEXPORT jlong JNICALL
 Java_com_applications_picogptjni_MainActivity_createModel(JNIEnv *env,
-                                                         jobject j_obj) {
+                                                          jobject j_obj) {
   ml::train::Model *model_ = createPicogpt();
   return reinterpret_cast<jlong>(model_);
 }
@@ -42,7 +42,6 @@ Java_com_applications_picogptjni_MainActivity_inferPicoGPT(
   //   env->ReleaseStringUTFChars(j_str, str);
   // }
 
-  
   const char *str = env->GetStringUTFChars(path_, 0);
   size_t str_len = strlen(str);
 
@@ -68,21 +67,20 @@ Java_com_applications_picogptjni_MainActivity_inferPicoGPT(
   //   delete[] argv[i];
   // }
   // delete[] argv;
-  
+
   return ret;
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_applications_picogptjni_MainActivity_modelDestroyed(JNIEnv *env,
-                                                            jobject j_obj) {
+                                                             jobject j_obj) {
 
   return modelDestroyed();
 }
 
-
 JNIEXPORT jstring JNICALL
 Java_com_applications_picogptjni_MainActivity_getInferResult(JNIEnv *env,
-                                                              jobject j_obj) {
+                                                             jobject j_obj) {
 
   jstring ret = (env)->NewStringUTF(getInferResult().c_str());
 

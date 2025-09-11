@@ -37,7 +37,7 @@ public:
   /**
    * @brief Destructor of Neg Layer
    */
-  ~NegLayer(){};
+  ~NegLayer() {};
 
   /**
    *  @brief  Move constructor of Neg Layer.

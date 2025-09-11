@@ -33,7 +33,7 @@ TfOpNode::TfOpNode() :
   /// @todo distinguish between uninitialized and ADD operator.
   op_type(tflite::BuiltinOperator_ADD),
   builtin_ops(),
-  builtin_option_type(tflite::BuiltinOptions_NONE){};
+  builtin_option_type(tflite::BuiltinOptions_NONE) {};
 
 void TfOpNode::setLayerNode(const LayerNode &layer) {
   is_input = layer.getNumInputConnections() == 0;

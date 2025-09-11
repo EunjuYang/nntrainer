@@ -46,7 +46,7 @@ std::mutex GLOCK;
 /**
  * @brief   Adopt the lock to the current scope for the object
  */
-#define ML_TRAIN_ADOPT_LOCK(obj, obj_lock) \
+#define ML_TRAIN_ADOPT_LOCK(obj, obj_lock)                                     \
   std::lock_guard<std::mutex> obj_lock(obj->m, std::adopt_lock)
 
 /**

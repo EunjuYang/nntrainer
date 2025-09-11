@@ -37,7 +37,7 @@ public:
   /**
    * @brief Destructor of Cosine Layer
    */
-  ~CosineLayer(){};
+  ~CosineLayer() {};
 
   /**
    *  @brief  Move constructor of Cosine Layer.

@@ -42,9 +42,7 @@ SliceRealizer::realize(const GraphRepresentation &reference) {
   struct NodeInfo {
     NodeInfo() : NodeInfo(nullptr) {}
     NodeInfo(std::shared_ptr<LayerNode> node) :
-      node(node),
-      is_visited(false),
-      to_be_added(false) {}
+      node(node), is_visited(false), to_be_added(false) {}
     std::shared_ptr<LayerNode> node; /**< set this if not visited */
     bool is_visited;                 /**< set this if visited */
     bool to_be_added;                /**< set this if it is to be added */

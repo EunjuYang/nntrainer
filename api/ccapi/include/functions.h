@@ -26,226 +26,213 @@
 namespace ml {
 namespace train {
 
-    class Function;
+class Function;
 
-    /**
-     * @brief TensorCore for graph configuration.
-     */
-    class TensorNode {
-    public:
-        bool is_leaf = true;
-        bool requires_grad = false;
-        std::shared_ptr<Function> creator = nullptr;
+/**
+ * @brief TensorCore for graph configuration.
+ */
+class TensorNode {
+public:
+  bool is_leaf = true;
+  bool requires_grad = false;
+  std::shared_ptr<Function> creator = nullptr;
 
-        /**
-         * @brief Construct a new TensorNode
-         */
-        TensorNode(): is_leaf(true), requires_grad(false) {}
+  /**
+   * @brief Construct a new TensorNode
+   */
+  TensorNode() : is_leaf(true), requires_grad(false) {}
 
-        /**
-         * @brief Construct a new TensorNode from Function
-         */
-        TensorNode(std::shared_ptr<Function> &func):
-            is_leaf(false), requires_grad(true), creator(func) {}
-    };
+  /**
+   * @brief Construct a new TensorNode from Function
+   */
+  TensorNode(std::shared_ptr<Function> &func) :
+    is_leaf(false), requires_grad(true), creator(func) {}
+};
 
-    /**
-     * @brief Tensor API for users
-     */
-    class Tensor {
-    private:
-        std::shared_ptr<TensorNode> node = nullptr;
-    public:
-        /**
-         * @brief Construct a new Tensor
-         */
-        Tensor() {
-            node = std::make_shared<TensorNode>();
-        }
+/**
+ * @brief Tensor API for users
+ */
+class Tensor {
+private:
+  std::shared_ptr<TensorNode> node = nullptr;
 
-        /**
-         * @brief Construct a new Tensor from Function
-         */
-        Tensor(std::shared_ptr<Function> &func) {
-            node = std::make_shared<TensorNode>(func);
-        }
+public:
+  /**
+   * @brief Construct a new Tensor
+   */
+  Tensor() { node = std::make_shared<TensorNode>(); }
 
-        /**
-         * @brief Construct a new Tensor using TensorNode
-         */
-        Tensor(std::shared_ptr<TensorNode> &node) {
-            node = node;
-        }
+  /**
+   * @brief Construct a new Tensor from Function
+   */
+  Tensor(std::shared_ptr<Function> &func) {
+    node = std::make_shared<TensorNode>(func);
+  }
 
-        /**
-         * @brief Check if the tensor is a leaf tensor
-         */
-        bool is_leaf() {
-            return node->is_leaf;            
-        }
+  /**
+   * @brief Construct a new Tensor using TensorNode
+   */
+  Tensor(std::shared_ptr<TensorNode> &node) { node = node; }
 
-        /**
-         * @brief Check if the tensor requires gradients
-         */
-        bool get_requires_grad() {            
-            return node->requires_grad;
-        }
+  /**
+   * @brief Check if the tensor is a leaf tensor
+   */
+  bool is_leaf() { return node->is_leaf; }
 
-        /**
-         * @brief Set the requires_grad flag of the tensor
-         */
-        bool set_requires_grad(bool requires_grad) {
-            return node->requires_grad = requires_grad;
-        }
+  /**
+   * @brief Check if the tensor requires gradients
+   */
+  bool get_requires_grad() { return node->requires_grad; }
 
-        /**
-         * @brief Return the creator function of the tensor
-         */
-        std::shared_ptr<Function> get_creator() {
-            return node->creator;
-        }
+  /**
+   * @brief Set the requires_grad flag of the tensor
+   */
+  bool set_requires_grad(bool requires_grad) {
+    return node->requires_grad = requires_grad;
+  }
 
-        /**
-         * @brief Return the tensor node
-         */
-        std::shared_ptr<TensorNode> get_node() {
-            return node;
-        }
-    };
+  /**
+   * @brief Return the creator function of the tensor
+   */
+  std::shared_ptr<Function> get_creator() { return node->creator; }
 
-    /**
-     * @brief Function(operation) API
-     */
-    class Function {
-    private:
-        /**
-         * @brief Keep input tensors of the function
-         */
-        std::vector<std::shared_ptr<TensorNode>> inputs;
+  /**
+   * @brief Return the tensor node
+   */
+  std::shared_ptr<TensorNode> get_node() { return node; }
+};
 
-        /**
-         * @brief Keep output tensors of the function
-         */
-        std::vector<std::shared_ptr<TensorNode>> outputs;
-    public:
-        std::string op_type = "";
+/**
+ * @brief Function(operation) API
+ */
+class Function {
+private:
+  /**
+   * @brief Keep input tensors of the function
+   */
+  std::vector<std::shared_ptr<TensorNode>> inputs;
 
-        /**
-         * @brief Forwarding operation for graph configurations
-         */
-        std::vector<Tensor> forward(std::shared_ptr<Function> &func,
-                                    std::vector<Tensor> xs, int num_output_tensors=1) {
-            std::vector<Tensor> ys = std::vector<Tensor>();
-            
-            for (int i=0; i < (int)xs.size(); ++i) {
-                inputs.push_back(xs[i].get_node());
-            }            
-            
-            for (int i=0; i < num_output_tensors; ++i) {
-                Tensor t = Tensor(func);
-                outputs.push_back(t.get_node());
-                ys.push_back(t);
-            }
-            
-            return ys;
-        }
+  /**
+   * @brief Keep output tensors of the function
+   */
+  std::vector<std::shared_ptr<TensorNode>> outputs;
 
-        /**
-         * @brief Get input tensors of the function
-         */
-        std::vector<std::shared_ptr<TensorNode>> get_inputs() {
-            return inputs;
-        }
+public:
+  std::string op_type = "";
 
-        /**
-         * @brief Get output tensors of the function
-         */
-        std::vector<std::shared_ptr<TensorNode>> get_outputs() {
-            return outputs;
-        }
-    };
+  /**
+   * @brief Forwarding operation for graph configurations
+   */
+  std::vector<Tensor> forward(std::shared_ptr<Function> &func,
+                              std::vector<Tensor> xs,
+                              int num_output_tensors = 1) {
+    std::vector<Tensor> ys = std::vector<Tensor>();
 
-    /**
-     * @brief Add Function Class
-     */
-    class Add : public Function {
-    public:
-        Add(): Function() { op_type = "add"; }
-    };
+    for (int i = 0; i < (int)xs.size(); ++i) {
+      inputs.push_back(xs[i].get_node());
+    }
 
-    /**
-     * @brief Sub Function Class
-     */
-    class Sub : public Function {
-    public:
-        Sub(): Function() { op_type = "sub"; }
-    };
+    for (int i = 0; i < num_output_tensors; ++i) {
+      Tensor t = Tensor(func);
+      outputs.push_back(t.get_node());
+      ys.push_back(t);
+    }
 
-    /**
-     * @brief Mul Function Class
-     */
-    class Mul : public Function {
-    public:
-        Mul(): Function() { op_type = "mul"; }
-    };
+    return ys;
+  }
 
-    /**
-     * @brief Div Function Class
-     */
-    class Div : public Function {
-    public:
-        Div(): Function() { op_type = "div"; }
-    };
+  /**
+   * @brief Get input tensors of the function
+   */
+  std::vector<std::shared_ptr<TensorNode>> get_inputs() { return inputs; }
 
-    /**
-     * @brief Pow Function Class
-     */
-    class Pow : public Function {
-    public:
-        Pow(): Function() { op_type = "pow"; }
-    };
+  /**
+   * @brief Get output tensors of the function
+   */
+  std::vector<std::shared_ptr<TensorNode>> get_outputs() { return outputs; }
+};
 
-    /**
-     * @brief Add operation api
-     */
-    Tensor add(Tensor &x1, Tensor &x2) {
-        std::shared_ptr<Function> f = std::make_shared<Add>();
-        return f->forward(f, {x1, x2})[0];
-    };
+/**
+ * @brief Add Function Class
+ */
+class Add : public Function {
+public:
+  Add() : Function() { op_type = "add"; }
+};
 
-    /**
-     * @brief Sub operation api
-     */
-    Tensor sub(Tensor &x1, Tensor &x2) {
-        std::shared_ptr<Function> f = std::make_shared<Sub>();
-        return f->forward(f, {x1, x2})[0];
-    };
+/**
+ * @brief Sub Function Class
+ */
+class Sub : public Function {
+public:
+  Sub() : Function() { op_type = "sub"; }
+};
 
-    /**
-     * @brief Mul operation api
-     */
-    Tensor mul(Tensor &x1, Tensor &x2) {
-        std::shared_ptr<Function> f = std::make_shared<Mul>();
-        return f->forward(f, {x1, x2})[0];
-    };
+/**
+ * @brief Mul Function Class
+ */
+class Mul : public Function {
+public:
+  Mul() : Function() { op_type = "mul"; }
+};
 
-    /**
-     * @brief Div operation api
-     */
-    Tensor div(Tensor &x1, Tensor &x2) {
-        std::shared_ptr<Function> f = std::make_shared<Div>();
-        return f->forward(f, {x1, x2})[0];
-    };
+/**
+ * @brief Div Function Class
+ */
+class Div : public Function {
+public:
+  Div() : Function() { op_type = "div"; }
+};
 
-    /**
-     * @brief Pow operation api
-     */
-    Tensor pow(Tensor &x) {
-        std::shared_ptr<Function> f = std::make_shared<Pow>();
-        return f->forward(f, {x})[0];
-    };
+/**
+ * @brief Pow Function Class
+ */
+class Pow : public Function {
+public:
+  Pow() : Function() { op_type = "pow"; }
+};
 
-}
-}
+/**
+ * @brief Add operation api
+ */
+Tensor add(Tensor &x1, Tensor &x2) {
+  std::shared_ptr<Function> f = std::make_shared<Add>();
+  return f->forward(f, {x1, x2})[0];
+};
+
+/**
+ * @brief Sub operation api
+ */
+Tensor sub(Tensor &x1, Tensor &x2) {
+  std::shared_ptr<Function> f = std::make_shared<Sub>();
+  return f->forward(f, {x1, x2})[0];
+};
+
+/**
+ * @brief Mul operation api
+ */
+Tensor mul(Tensor &x1, Tensor &x2) {
+  std::shared_ptr<Function> f = std::make_shared<Mul>();
+  return f->forward(f, {x1, x2})[0];
+};
+
+/**
+ * @brief Div operation api
+ */
+Tensor div(Tensor &x1, Tensor &x2) {
+  std::shared_ptr<Function> f = std::make_shared<Div>();
+  return f->forward(f, {x1, x2})[0];
+};
+
+/**
+ * @brief Pow operation api
+ */
+Tensor pow(Tensor &x) {
+  std::shared_ptr<Function> f = std::make_shared<Pow>();
+  return f->forward(f, {x})[0];
+};
+
+} // namespace train
+} // namespace ml
 
 #endif // __ML_TRAIN_FUNCTIONS_H__
