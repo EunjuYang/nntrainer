@@ -115,9 +115,14 @@ if arch == 'arm' or arch == 'aarch64' or get_option('platform') == 'android'
   endif
 elif arch == 'x86' or arch == 'x86_64'
   message('Build for X86 architecture')
-  if cxx_compiler_id == 'msvc'
+  if cxx_compiler_id == 'msvc' or host_machine.system() == 'windows'
     add_project_arguments(['/arch:AVX2'], language: ['c','cpp'])
-   add_project_arguments(['cpp_args=/MT'], language: ['c','cpp'] )
+    # Define target architecture for Windows SDK
+    if arch == 'x86_64'
+      add_project_arguments(['-D_AMD64_', '-D_M_AMD64', '-D_M_X64', '-D_WIN64'], language: ['c','cpp'])
+    elif arch == 'x86'
+      add_project_arguments(['-D_X86_', '-D_M_IX86', '-D_WIN32'], language: ['c','cpp'])
+    endif
   else
     add_project_arguments(['-march=native'], language: ['c','cpp'])
     add_project_arguments(['-mavx2', '-mfma'], language: ['c','cpp'])

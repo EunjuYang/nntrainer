@@ -28,6 +28,15 @@
 #ifndef BS_THREAD_POOL_HPP
 #define BS_THREAD_POOL_HPP
 
+// Fix for Windows min/max macros
+#if defined(_WIN32)
+#ifdef max
+#undef max
+#undef min
+#endif
+#define NOMINMAX
+#endif
+
 // We need to include <version> since if we're using `import std` it will not
 // define any feature-test macros, including `__cpp_lib_modules`, which we need
 // to check if `import std` is supported in the first place.
