@@ -20,6 +20,11 @@
 #include <cpu_backend.h>
 
 #if defined(_WIN32)
+#ifdef max
+#undef max
+#undef min
+#endif
+#define NOMINMAX
 #define _USE_MATH_DEFINES
 #include <math.h>
 #endif

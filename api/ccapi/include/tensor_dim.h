@@ -20,8 +20,15 @@
 #include <iosfwd>
 
 #include <bitset>
-#include <util_func.h>
 #include <vector>
+
+#if defined(_WIN32)
+#ifdef max
+#undef max
+#undef min
+#endif
+#define NOMINMAX
+#endif
 
 #ifdef ENABLE_FP16
 #ifdef USE__FP16
