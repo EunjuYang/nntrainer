@@ -1,331 +1,423 @@
 # NNTrainer Meson Build Options Guide
 
-이 문서는 NNTrainer 프로젝트의 Meson 빌드 시스템에서 사용할 수 있는 모든 옵션들에 대한 상세한 설명을 제공합니다.
+This document provides a comprehensive guide to all available Meson build options for the NNTrainer project.
 
-## 목차
+## Table of Contents
 
-- [플랫폼 설정](#플랫폼-설정)
-- [API 설정](#api-설정)
-- [애플리케이션 및 테스트](#애플리케이션-및-테스트)
-- [백엔드 가속](#백엔드-가속)
-- [디버깅 및 프로파일링](#디버깅-및-프로파일링)
-- [ML API 통합](#ml-api-통합)
-- [고급 설정](#고급-설정)
-- [예제 사용법](#예제-사용법)
+- [Quick Reference Tables](#quick-reference-tables)
+- [Platform Configuration](#platform-configuration)
+- [API Configuration](#api-configuration)
+- [Applications and Testing](#applications-and-testing)
+- [Backend Acceleration](#backend-acceleration)
+- [Debugging and Profiling](#debugging-and-profiling)
+- [ML API Integration](#ml-api-integration)
+- [Advanced Configuration](#advanced-configuration)
+- [Usage Examples](#usage-examples)
 
-## 플랫폼 설정
+## Quick Reference Tables
+
+### Platform Configuration
+
+| Option | Type | Default | Choices | Description |
+|--------|------|---------|---------|-------------|
+| `platform` | combo | `none` | `none`, `tizen`, `yocto`, `android`, `windows` | Target platform for build |
+| `tizen-version-major` | integer | 9999 | 4-9999 | Tizen major version (9999 = not Tizen) |
+| `tizen-version-minor` | integer | 0 | 0-9999 | Tizen minor version |
+| `enable-tizen-feature-check` | boolean | true | - | Enable Tizen feature checking |
+
+### API Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable-capi` | feature | `auto` | Enable C API (requires enable-ccapi) |
+| `enable-ccapi` | boolean | true | Enable C++ API |
+
+### Applications and Testing
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable-app` | boolean | true | Build example applications |
+| `install-app` | boolean | true | Install built applications |
+| `enable-test` | boolean | true | Build unit tests |
+| `test-timeout` | integer | 60 | Test timeout in seconds |
+| `reduce-tolerance` | boolean | true | Reduce test tolerance |
+| `enable-long-test` | boolean | false | Enable long-running tests |
+
+### Backend Acceleration
+
+| Option | Type | Default | Range | Description |
+|--------|------|---------|-------|-------------|
+| `enable-blas` | boolean | true | - | Enable OpenBLAS acceleration |
+| `openblas-num-threads` | integer | 0 | 0-9999 | OpenBLAS thread count (0=auto) |
+| `enable-cublas` | boolean | false | - | Enable NVIDIA CUDA cuBLAS |
+| `enable-opencl` | boolean | false | - | Enable OpenCL GPU acceleration |
+| `opencl-kernel-path` | string | `nntrainer_opencl_kernels` | - | OpenCL kernel files path |
+| `enable-openmp` | boolean | true | - | Enable OpenMP parallel processing |
+| `omp-num-threads` | integer | 6 | 0-9999 | OpenMP thread count |
+| `nntr-num-threads` | integer | 1 | 0-9999 | NNTrainer internal thread count |
+| `enable-fp16` | boolean | false | - | Enable 16-bit floating point |
+| `enable-biqgemm` | boolean | false | - | Enable BiQGEMM quantized operations |
+| `biqgemm-path` | string | `../BiQGEMM` | - | BiQGEMM library path |
+| `hgemm-experimental-kernel` | boolean | false | - | Enable experimental half-precision GEMM |
+| `enable-mmap` | boolean | true | - | Enable memory mapping |
+| `mmap-read` | boolean | true | - | Use memory mapping for file reading |
+
+### Debugging and Profiling
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable-debug` | boolean | false | Enable debug mode |
+| `enable-profile` | boolean | false | Enable performance profiling |
+| `enable-trace` | boolean | false | Enable execution tracing |
+| `enable-logging` | boolean | true | Enable logging functionality |
+| `enable-benchmarks` | boolean | false | Build benchmark programs |
+
+### ML API Integration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `ml-api-support` | feature | `auto` | Enable ML API integration |
+| `capi-ml-common-actual` | string | `capi-ml-common` | ML Common API dependency name |
+| `capi-ml-inference-actual` | string | `capi-ml-inference` | ML Inference API dependency name |
+| `enable-nnstreamer-backbone` | boolean | false | Enable NNStreamer backbone |
+| `enable-nnstreamer-tensor-filter` | feature | `auto` | Build NNStreamer tensor filter plugin |
+| `enable-nnstreamer-tensor-trainer` | feature | `auto` | Build NNStreamer tensor trainer plugin |
+| `nnstreamer-subplugin-install-path` | string | `lib/nnstreamer` | NNStreamer subplugin install path |
+
+### Backend Interpreters
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable-tflite-backbone` | boolean | true | Enable TensorFlow Lite backbone |
+| `enable-tflite-interpreter` | boolean | true | Enable TensorFlow Lite interpreter |
+| `enable-onnx-interpreter` | boolean | false | Enable ONNX interpreter |
+| `enable-ggml` | boolean | false | Enable GGML backend |
+| `ggml-thread-backend` | string | `mixed` | GGML thread backend type |
+
+### Advanced Configuration
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enable-transformer` | boolean | false | Enable Transformer model support |
+| `enable-npu` | boolean | false | Enable NPU (Neural Processing Unit) |
+| `use_gym` | boolean | false | Enable OpenAI Gym environment |
+| `enable-fsu` | boolean | false | Enable Flash Storage Utilization |
+| `fsu-path` | string | '' | FSU path |
+| `libiomp_root` | string | `./libiomp_win` | Intel OpenMP library root (Windows) |
+
+## Platform Configuration
 
 ### `platform`
-- **타입**: combo (선택형)
-- **선택지**: `none`, `tizen`, `yocto`, `android`, `windows`
-- **기본값**: `none`
-- **설명**: 빌드 대상 플랫폼을 지정합니다.
-  - `none`: 일반적인 Linux/Unix 환경
-  - `tizen`: Samsung Tizen OS용 빌드
-  - `yocto`: Yocto Project 기반 임베디드 시스템
-  - `android`: Android NDK 빌드
-  - `windows`: Windows 플랫폼
+- **Type**: combo
+- **Default**: `none`
+- **Choices**: `none`, `tizen`, `yocto`, `android`, `windows`
+- **Description**: Specifies the target platform for building.
+  - `none`: Generic Linux/Unix environment
+  - `tizen`: Samsung Tizen OS build
+  - `yocto`: Yocto Project-based embedded systems
+  - `android`: Android NDK build
+  - `windows`: Windows platform
 
-**사용 예시**:
+**Usage Example**:
 ```bash
 meson setup build -Dplatform=android
 ```
 
-### Tizen 관련 옵션
+### Tizen-Related Options
 
 #### `tizen-version-major`
-- **타입**: integer
-- **범위**: 4 ~ 9999
-- **기본값**: 9999 (Tizen이 아님을 의미)
-- **설명**: Tizen 메이저 버전을 지정합니다.
+- **Type**: integer
+- **Range**: 4 ~ 9999
+- **Default**: 9999 (indicates not Tizen)
+- **Description**: Specifies the Tizen major version.
 
 #### `tizen-version-minor`
-- **타입**: integer
-- **범위**: 0 ~ 9999
-- **기본값**: 0
-- **설명**: Tizen 마이너 버전을 지정합니다.
+- **Type**: integer
+- **Range**: 0 ~ 9999
+- **Default**: 0
+- **Description**: Specifies the Tizen minor version.
 
 #### `enable-tizen-feature-check`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: Tizen 플랫폼에서 기능 검사를 활성화합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Enables feature checking on Tizen platform.
 
-## API 설정
+## API Configuration
 
 ### `enable-capi`
-- **타입**: feature
-- **기본값**: `auto`
-- **설명**: C API를 활성화합니다. NNStreamer와의 연동을 위해 필요합니다.
-- **의존성**: `enable-ccapi`가 활성화되어야 함
+- **Type**: feature
+- **Default**: `auto`
+- **Description**: Enables C API. Required for NNStreamer integration.
+- **Dependencies**: `enable-ccapi` must be enabled
 
 ### `enable-ccapi`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: C++ API를 활성화합니다. CAPI 사용 시 필수입니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Enables C++ API. Required when using CAPI.
 
-## 애플리케이션 및 테스트
+## Applications and Testing
 
 ### `enable-app`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: 예제 애플리케이션들을 빌드합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Builds example applications.
 
 ### `install-app`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: 빌드된 애플리케이션들을 설치합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Installs built applications.
 
 ### `enable-test`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: 단위 테스트를 빌드합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Builds unit tests.
 
 ### `test-timeout`
-- **타입**: integer
-- **기본값**: 60
-- **설명**: 테스트 타임아웃 시간(초)을 설정합니다.
+- **Type**: integer
+- **Default**: 60
+- **Description**: Sets test timeout in seconds.
 
 ### `reduce-tolerance`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: 테스트에서 허용 오차를 줄입니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Reduces tolerance in tests.
 
 ### `enable-long-test`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: 시간이 오래 걸리는 테스트들을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables long-running tests.
 
-## 백엔드 가속
+## Backend Acceleration
 
-### BLAS 가속
+### BLAS Acceleration
 
 #### `enable-blas`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: OpenBLAS를 사용한 선형대수 연산 가속을 활성화합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Enables linear algebra acceleration using OpenBLAS.
 
 #### `openblas-num-threads`
-- **타입**: integer
-- **범위**: 0 ~ 9999
-- **기본값**: 0 (자동)
-- **설명**: OpenBLAS에서 사용할 스레드 수를 지정합니다.
+- **Type**: integer
+- **Range**: 0 ~ 9999
+- **Default**: 0 (automatic)
+- **Description**: Specifies the number of threads for OpenBLAS.
 
-### CUDA 가속
+### CUDA Acceleration
 
 #### `enable-cublas`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: NVIDIA CUDA cuBLAS를 사용한 GPU 가속을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables GPU acceleration using NVIDIA CUDA cuBLAS.
 
-### OpenCL 가속
+### OpenCL Acceleration
 
 #### `enable-opencl`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: OpenCL을 사용한 GPU 가속을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables GPU acceleration using OpenCL.
 
 #### `opencl-kernel-path`
-- **타입**: string
-- **기본값**: `nntrainer_opencl_kernels`
-- **설명**: OpenCL 커널 파일들의 경로를 지정합니다.
+- **Type**: string
+- **Default**: `nntrainer_opencl_kernels`
+- **Description**: Specifies the path to OpenCL kernel files.
 
-### 멀티스레딩
+### Multi-threading
 
 #### `enable-openmp`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: OpenMP를 사용한 병렬 처리를 활성화합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Enables parallel processing using OpenMP.
 
 #### `omp-num-threads`
-- **타입**: integer
-- **범위**: 0 ~ 9999
-- **기본값**: 6
-- **설명**: OpenMP에서 사용할 스레드 수를 지정합니다.
+- **Type**: integer
+- **Range**: 0 ~ 9999
+- **Default**: 6
+- **Description**: Specifies the number of threads for OpenMP.
 
 #### `nntr-num-threads`
-- **타입**: integer
-- **범위**: 0 ~ 9999
-- **기본값**: 1
-- **설명**: NNTrainer 내부에서 사용할 스레드 수를 지정합니다.
+- **Type**: integer
+- **Range**: 0 ~ 9999
+- **Default**: 1
+- **Description**: Specifies the number of threads for NNTrainer internals.
 
-### 특수 최적화
+### Special Optimizations
 
 #### `enable-fp16`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: 16비트 부동소수점 연산을 활성화합니다. (ARM, x86_64에서 지원)
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables 16-bit floating point operations (supported on ARM, x86_64).
 
 #### `enable-biqgemm`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: BiQGEMM 라이브러리를 사용한 양자화 행렬 곱셈을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables quantized matrix multiplication using BiQGEMM library.
 
 #### `biqgemm-path`
-- **타입**: string
-- **기본값**: `../BiQGEMM`
-- **설명**: BiQGEMM 라이브러리의 경로를 지정합니다.
+- **Type**: string
+- **Default**: `../BiQGEMM`
+- **Description**: Specifies the path to BiQGEMM library.
 
 #### `hgemm-experimental-kernel`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: 실험적인 half-precision GEMM 커널을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables experimental half-precision GEMM kernel.
 
-### 메모리 관리
+### Memory Management
 
 #### `enable-mmap`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: 메모리 매핑을 활성화합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Enables memory mapping.
 
 #### `mmap-read`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: 파일 읽기에 메모리 매핑을 사용합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Uses memory mapping for file reading.
 
-## 디버깅 및 프로파일링
+## Debugging and Profiling
 
 ### `enable-debug`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: 디버그 모드를 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables debug mode.
 
 ### `enable-profile`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: 성능 프로파일링을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables performance profiling.
 
 ### `enable-trace`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: 실행 추적을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables execution tracing.
 
 ### `enable-logging`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: 로깅 기능을 활성화합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Enables logging functionality.
 
 ### `enable-benchmarks`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: 벤치마크 프로그램들을 빌드합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Builds benchmark programs.
 
-## ML API 통합
+## ML API Integration
 
 ### `ml-api-support`
-- **타입**: feature
-- **기본값**: `auto`
-- **설명**: ML API와의 통합을 활성화합니다. NNStreamer와의 연동에 필요합니다.
+- **Type**: feature
+- **Default**: `auto`
+- **Description**: Enables ML API integration. Required for NNStreamer integration.
 
 ### `capi-ml-common-actual`
-- **타입**: string
-- **기본값**: `capi-ml-common`
-- **설명**: ML Common API 의존성의 실제 이름을 지정합니다.
+- **Type**: string
+- **Default**: `capi-ml-common`
+- **Description**: Specifies the actual name of ML Common API dependency.
 
 ### `capi-ml-inference-actual`
-- **타입**: string
-- **기본값**: `capi-ml-inference`
-- **설명**: ML Inference API 의존성의 실제 이름을 지정합니다.
+- **Type**: string
+- **Default**: `capi-ml-inference`
+- **Description**: Specifies the actual name of ML Inference API dependency.
 
-### NNStreamer 통합
+### NNStreamer Integration
 
 #### `enable-nnstreamer-backbone`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: NNStreamer 백본을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables NNStreamer backbone.
 
 #### `enable-nnstreamer-tensor-filter`
-- **타입**: feature
-- **기본값**: `auto`
-- **설명**: NNStreamer tensor filter 플러그인을 빌드합니다.
+- **Type**: feature
+- **Default**: `auto`
+- **Description**: Builds NNStreamer tensor filter plugin.
 
 #### `enable-nnstreamer-tensor-trainer`
-- **타입**: feature
-- **기본값**: `auto`
-- **설명**: NNStreamer tensor trainer 플러그인을 빌드합니다.
+- **Type**: feature
+- **Default**: `auto`
+- **Description**: Builds NNStreamer tensor trainer plugin.
 
 #### `nnstreamer-subplugin-install-path`
-- **타입**: string
-- **기본값**: `lib/nnstreamer`
-- **설명**: NNStreamer 서브플러그인 설치 경로를 지정합니다.
+- **Type**: string
+- **Default**: `lib/nnstreamer`
+- **Description**: Specifies NNStreamer subplugin installation path.
 
-## 백엔드 인터프리터
+## Backend Interpreters
 
 ### `enable-tflite-backbone`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: TensorFlow Lite 백본을 활성화합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Enables TensorFlow Lite backbone.
 
 ### `enable-tflite-interpreter`
-- **타입**: boolean
-- **기본값**: true
-- **설명**: TensorFlow Lite 인터프리터를 활성화합니다.
+- **Type**: boolean
+- **Default**: true
+- **Description**: Enables TensorFlow Lite interpreter.
 
 ### `enable-onnx-interpreter`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: ONNX 인터프리터를 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables ONNX interpreter.
 
 ### `enable-ggml`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: GGML(Georgi Gerganov Machine Learning) 백엔드를 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables GGML (Georgi Gerganov Machine Learning) backend.
 
 #### `ggml-thread-backend`
-- **타입**: string
-- **기본값**: `mixed`
-- **설명**: GGML 스레드 백엔드 타입을 지정합니다.
+- **Type**: string
+- **Default**: `mixed`
+- **Description**: Specifies GGML thread backend type.
 
-## 고급 설정
+## Advanced Configuration
 
 ### `enable-transformer`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: Transformer 모델 지원을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables Transformer model support.
 
 ### `enable-npu`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: NPU(Neural Processing Unit) 지원을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables NPU (Neural Processing Unit) support.
 
 ### `use_gym`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: OpenAI Gym 환경 지원을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables OpenAI Gym environment support.
 
 ### Flash Storage Utilization
 
 #### `enable-fsu`
-- **타입**: boolean
-- **기본값**: false
-- **설명**: Flash Storage Utilization을 활성화합니다.
+- **Type**: boolean
+- **Default**: false
+- **Description**: Enables Flash Storage Utilization.
 
 #### `fsu-path`
-- **타입**: string
-- **기본값**: '' (빈 문자열)
-- **설명**: FSU 경로를 지정합니다.
+- **Type**: string
+- **Default**: '' (empty string)
+- **Description**: Specifies FSU path.
 
-### Windows 전용 설정
+### Windows-Specific Configuration
 
 #### `libiomp_root`
-- **타입**: string
-- **기본값**: `./libiomp_win`
-- **설명**: Windows에서 Intel OpenMP 라이브러리의 루트 경로를 지정합니다.
+- **Type**: string
+- **Default**: `./libiomp_win`
+- **Description**: Specifies Intel OpenMP library root path on Windows.
 
-## 예제 사용법
+## Usage Examples
 
-### 기본 빌드
+### Basic Build
 ```bash
 meson setup build
 ninja -C build
 ```
 
-### Android 빌드
+### Android Build
 ```bash
 meson setup build -Dplatform=android -Denable-app=false
 ninja -C build
 ```
 
-### 고성능 빌드 (모든 가속 활성화)
+### High-Performance Build (All Accelerations Enabled)
 ```bash
 meson setup build \
   -Denable-blas=true \
@@ -336,7 +428,7 @@ meson setup build \
 ninja -C build
 ```
 
-### 개발자 빌드 (디버깅 활성화)
+### Developer Build (Debug Enabled)
 ```bash
 meson setup build \
   -Denable-debug=true \
@@ -347,7 +439,7 @@ meson setup build \
 ninja -C build
 ```
 
-### Tizen 빌드
+### Tizen Build
 ```bash
 meson setup build \
   -Dplatform=tizen \
@@ -357,7 +449,7 @@ meson setup build \
 ninja -C build
 ```
 
-### 최소 빌드 (임베디드 환경)
+### Minimal Build (Embedded Environment)
 ```bash
 meson setup build \
   -Denable-app=false \
@@ -368,26 +460,89 @@ meson setup build \
 ninja -C build
 ```
 
-## 주의사항
+### GPU Acceleration Build
+```bash
+meson setup build \
+  -Denable-opencl=true \
+  -Denable-cublas=true \
+  -Denable-fp16=true
+ninja -C build
+```
 
-1. **의존성 관계**: 일부 옵션들은 서로 의존관계가 있습니다.
-   - `enable-capi`를 사용하려면 `enable-ccapi`가 활성화되어야 합니다.
-   - `mmap-read`와 `enable-transformer`는 동시에 사용할 수 없습니다.
+### NNStreamer Integration Build
+```bash
+meson setup build \
+  -Dml-api-support=enabled \
+  -Denable-capi=enabled \
+  -Denable-nnstreamer-backbone=true \
+  -Denable-nnstreamer-tensor-filter=enabled \
+  -Denable-nnstreamer-tensor-trainer=enabled
+ninja -C build
+```
 
-2. **플랫폼별 제한사항**:
-   - Android에서는 일부 테스트와 애플리케이션이 지원되지 않습니다.
-   - Windows에서는 추가적인 라이브러리 설정이 필요할 수 있습니다.
+## Build Configuration Matrix
 
-3. **성능 고려사항**:
-   - 디버깅 옵션들은 성능에 영향을 줄 수 있으므로 프로덕션 빌드에서는 비활성화하는 것을 권장합니다.
-   - 스레드 수 설정은 시스템의 CPU 코어 수에 맞춰 조정하세요.
+The following table shows recommended configurations for different use cases:
 
-4. **메모리 사용량**:
-   - `enable-fp16`은 메모리 사용량을 줄일 수 있지만 정확도에 영향을 줄 수 있습니다.
-   - `enable-mmap`은 대용량 모델 로딩 시 메모리 효율성을 향상시킵니다.
+| Use Case | Platform | Key Options | Description |
+|----------|----------|-------------|-------------|
+| **Production Server** | `none` | `-Denable-blas=true -Denable-openmp=true -Denable-logging=false` | High performance, minimal logging |
+| **Mobile Development** | `android` | `-Denable-app=false -Denable-test=false -Denable-fp16=true` | Optimized for mobile resources |
+| **Embedded IoT** | `none` | `-Denable-app=false -Denable-blas=false -Denable-openmp=false` | Minimal resource usage |
+| **Research/Development** | `none` | `-Denable-debug=true -Denable-profile=true -Denable-benchmarks=true` | Full debugging and profiling |
+| **Tizen Application** | `tizen` | `-Denable-capi=enabled -Denable-tizen-feature-check=true` | Tizen-specific features |
+| **NNStreamer Pipeline** | `none` | `-Dml-api-support=enabled -Denable-nnstreamer-backbone=true` | NNStreamer integration |
 
-## 더 많은 정보
+## Important Notes
 
-- [NNTrainer 공식 문서](https://github.com/nnstreamer/nntrainer)
-- [빌드 가이드](docs/getting-started.md)
-- [예제 실행 방법](docs/how-to-run-examples.md)
+### 1. **Dependency Requirements**
+Some options have interdependencies:
+- `enable-capi` requires `enable-ccapi` to be enabled
+- `mmap-read` and `enable-transformer` cannot be used simultaneously
+- GPU acceleration options require appropriate drivers and libraries
+
+### 2. **Platform-Specific Limitations**
+- **Android**: Some tests and applications are not supported
+- **Windows**: Additional library setup may be required
+- **Tizen**: Requires specific Tizen SDK and feature permissions
+
+### 3. **Performance Considerations**
+- Debug options can significantly impact performance in production builds
+- Thread count should be adjusted based on available CPU cores
+- GPU acceleration requires compatible hardware and drivers
+
+### 4. **Memory Usage**
+- `enable-fp16` reduces memory usage but may affect accuracy
+- `enable-mmap` improves memory efficiency for large model loading
+- Backend interpreters (TFLite, ONNX, GGML) have different memory footprints
+
+### 5. **Build Time and Size**
+- Enabling all features increases build time and binary size
+- Consider disabling unused features for production builds
+- Test builds benefit from parallel compilation (`ninja -j$(nproc)`)
+
+## Troubleshooting
+
+### Common Build Issues
+
+| Issue | Likely Cause | Solution |
+|-------|--------------|----------|
+| OpenBLAS not found | Missing system dependencies | Install `libopenblas-dev` or use subproject |
+| CUDA compilation fails | Missing CUDA toolkit | Install NVIDIA CUDA SDK |
+| Test timeouts | Insufficient system resources | Increase `test-timeout` value |
+| Android build fails | NDK not configured | Set up Android NDK environment |
+
+### Environment Variables
+
+Some options can be influenced by environment variables:
+- `CC`, `CXX`: Compiler selection
+- `CFLAGS`, `CXXFLAGS`: Additional compilation flags  
+- `LDFLAGS`: Additional linking flags
+- `PKG_CONFIG_PATH`: Package configuration paths
+
+## Additional Resources
+
+- [NNTrainer Official Documentation](https://github.com/nnstreamer/nntrainer)
+- [Build Guide](docs/getting-started.md)
+- [Example Usage](docs/how-to-run-examples.md)
+- [Contributing Guidelines](CONTRIBUTING.md)
