@@ -119,17 +119,17 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
   /** Weight for Sink */
   use_sink = std::get<props::UseSink>(mha_core_props).get();
   if (use_sink) {
-#if ENABLE_FP16 && defined(__ANDROID__)
+    // #if ENABLE_FP16 && defined(__ANDROID__)
     nntrainer::TensorDim sink_dim(
       1, 1, 1, num_heads_Q,
       nntrainer::TensorDim::TensorType(context.getFormat(),
                                        ml::train::TensorDim::DataType::FP16));
-#else
-    nntrainer::TensorDim sink_dim(
-      1, 1, 1, num_heads_Q,
-      nntrainer::TensorDim::TensorType(context.getFormat(),
-                                       context.getActivationDataType()));
-#endif
+    // #else
+    // nntrainer::TensorDim sink_dim(
+    // 1, 1, 1, num_heads_Q,
+    // nntrainer::TensorDim::TensorType(context.getFormat(),
+    //  context.getActivationDataType()));
+    // #endif
     sink_idx = context.requestWeight(sink_dim, nntrainer::Initializer::ZEROS,
                                      nntrainer::WeightRegularizer::NONE, 0.0f,
                                      0.0f, "sink");

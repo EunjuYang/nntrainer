@@ -209,7 +209,7 @@ int main(int argc, char *argv[]) {
 #endif
     // printMemoryUsage();
     // model->save_weight("qwen3-30b-moe-q6k-q40-q40-fp32-qkv-parallel-x86.bin");
-    model->save_weight("gpt-moe-fp32-q40-q40-fp16sink-fp32-arm.bin");
+    model->save_weight("gpt-moe-q40-q40-q40-fp16sink-fp32-arm.bin");
 
   } catch (const std::exception &e) {
     std::cerr << "\n[!] FATAL ERROR: " << e.what() << "\n";

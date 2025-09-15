@@ -135,6 +135,13 @@ void EmbeddingLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
           (void *)((char *)weight.getData<uint8_t>() +
                    (210 * num_blocks_per_row) * embed_idx),
           out_tensor.getData(), out_dim);
+      } else if (weight.getDataType() == nntrainer::TensorDim::DataType::Q4_0) {
+        ///@note this should be replaced with quantizer operation
+        int num_blocks_per_row = (weight.width() + 32 - 1) / 32;
+        nntrainer::dequantize_row_q4_0(
+          (void *)((char *)weight.getData<uint8_t>() +
+                   (18 * num_blocks_per_row) * embed_idx),
+          out_tensor.getData(), out_dim);
       } else {
         out_tensor.copyData(cur_weight);
       }
@@ -184,6 +191,21 @@ void EmbeddingLayer::read(std::ifstream &file,
           nntrainer::quantize_q6_K(W_fp32.getData<float>(),
                                    (void *)W_q6k.getData<uint8_t>(), N, K,
                                    nullptr);
+        } else if (context.getWeight(i).getDataType() ==
+                   nntrainer::Tdatatype::Q4_0) {
+          std::cout << "[Q4_0]" << std::endl;
+          nntrainer::Tensor W_q40 = context.getWeight(i);
+          uint32_t K = W_q40.height();
+          uint32_t N = W_q40.width();
+
+          nntrainer::Tensor W_fp32(1, 1, K, N,
+                                   {ml::train::TensorDim::Format::NCHW,
+                                    ml::train::TensorDim::DataType::FP32});
+          W_fp32.read(file, start_offset, read_from_offset, file_fd);
+
+          const float *src_ptr = W_fp32.getData<float>();
+          nntrainer::quantize_q4_0(src_ptr, (void *)W_q40.getData<uint8_t>(), N,
+                                   K, nullptr);
         } else {
           context.getWeight(i).read(file);
         }
