@@ -48,6 +48,7 @@
 #include <layer.h>
 #include <model.h>
 #include <random>
+#include <tuple>
 
 #include <limits.h>
 
@@ -101,8 +102,9 @@ public:
 
   /**
    * @brief run the CausalLM model
+   * @return <num_token, prefill_duration, prefill_tps, num_gen_token, tg_duration, tg_tps>
    */
-  void run(const WSTR prompt, bool do_sample = false,
+  std::tuple<int, int, float, int, int, float> run(const WSTR prompt, bool do_sample = false,
            const WSTR system_prompt = "", const WSTR tail_prompt = "");
 
 protected:

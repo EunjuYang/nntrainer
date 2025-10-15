@@ -49,11 +49,44 @@ using json = nlohmann::json;
 std::atomic<size_t> peak_rss_kb{0};
 std::atomic<bool> tracking_enabled{true};
 
-void printMemoryUsage() {
+// CSV 파일에 튜플 데이터를 추가하는 함수  
+void appendTupleToCSV(const std::string& filename, const std::tuple<int, float, float, int, float, float, int>& data) {  
+    std::ofstream outfile;  
+      
+    // 파일을 append 모드로 열기  
+    outfile.open(filename, std::ios_base::app);  
+      
+    if (!outfile.is_open()) {  
+        std::cerr << "Error: Could not open file " << filename << std::endl;  
+        return;  
+    }  
+      
+    // 새 줄로 시작 (이전 내용과 구분)  
+    if (outfile.tellp() != 0) {  // 파일이 비어있지 않으면  
+        outfile << "\n";  
+    }  else {
+      outfile << "num_prefill_token,prefill_duration,prefill_tps,num_gen_token,generation_duration,generation_tps,max_rss";
+      outfile << "\n";
+    }
+      
+    // 튜플 데이터를 CSV 형식으로 출력  
+    outfile << std::get<0>(data) << ","  
+            << std::get<1>(data) << ","  
+            << std::get<2>(data)  << "," 
+            << std::get<3>(data)  << "," 
+            << std::get<4>(data)  << "," 
+            << std::get<5>(data)  << "," 
+            << std::get<6>(data);
+      
+    outfile.close();  
+}  
+
+int printMemoryUsage() {
   struct rusage usage;
   getrusage(RUSAGE_SELF, &usage);
   std::cout << "Max Resident Set Size: " << usage.ru_maxrss << " KB"
             << std::endl;
+  return usage.ru_maxrss;
 }
 
 size_t read_vm_rss_kb() {
@@ -209,16 +242,18 @@ int main(int argc, char *argv[]) {
     start_peak_tracker();
 #endif
 #if defined(_WIN32)
-    model->run(input_text.c_str(), generation_cfg["do_sample"],
+    auto [prefill_token, prefill_duration, prefill_tps, generation_token, generation_duration, generation_tps] = model->run(input_text.c_str(), generation_cfg["do_sample"],
                system_head_prompt.c_str(), system_tail_prompt.c_str());
 #else
-    model->run(input_text, generation_cfg["do_sample"], system_head_prompt,
+    auto [prefill_token, prefill_duration, prefill_tps, generation_token, generation_duration, generation_tps] = model->run(input_text, generation_cfg["do_sample"], system_head_prompt,
                system_tail_prompt);
 #endif
 #ifdef PROFILE
     stop_and_print_peak();
 #endif
-    printMemoryUsage();
+    int max_rss = printMemoryUsage();
+
+    appendTupleToCSV("output.csv",std::make_tuple(prefill_token, prefill_duration, prefill_tps, generation_token, generation_duration, generation_tps, max_rss));
 
   } catch (const std::exception &e) {
     std::cerr << "\n[!] FATAL ERROR: " << e.what() << "\n";
