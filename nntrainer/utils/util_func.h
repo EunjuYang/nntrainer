@@ -33,6 +33,21 @@
 #include <random>
 #include <variant>
 
+#if defined(_WIN32)
+#ifdef max
+#undef max
+#undef min
+#endif
+#define NOMINMAX
+#define O_SYNC 0UL
+#include <io.h>
+#include <sysinfoapi.h>
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 // /**
 //  * @brief     get the seed
 //  * @return    seed
