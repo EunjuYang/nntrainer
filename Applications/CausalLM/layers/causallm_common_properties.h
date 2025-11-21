@@ -67,6 +67,16 @@ public:
 };
 
 /**
+ * @brief NumExpertsPerToken,  Number of experts per token property
+ */
+class UseK : public nntrainer::PositiveIntegerProperty {
+public:
+  static constexpr const char *key =
+    "use_k";                 /**< unique key to access */
+  using prop_tag = nntrainer::uint_prop_tag; /**< property type */
+};
+
+/**
  * @brief unit property, unit is used to measure how many weights are there
  *
  */

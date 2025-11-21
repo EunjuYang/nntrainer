@@ -38,6 +38,7 @@
 #include "qwen3_causallm.h"
 #include "qwen3_moe_causallm.h"
 #include "qwen3_slim_moe_causallm.h"
+#include "qwen3_apex.h"
 #include <sys/resource.h>
 
 #include <atomic>
@@ -185,6 +186,12 @@ int main(int argc, char *argv[]) {
     "GptOssCachedSlimCausalLM",
     [](json cfg, json generation_cfg, json nntr_cfg) {
       return std::make_unique<causallm::GptOssCachedSlimCausalLM>(
+        cfg, generation_cfg, nntr_cfg);
+    });
+  causallm::Factory::Instance().registerModel(
+    "Qwen3ApexMoECausalLM",
+    [](json cfg, json generation_cfg, json nntr_cfg) {
+      return std::make_unique<causallm::Qwen3ApexMoECausalLM>(
         cfg, generation_cfg, nntr_cfg);
     });
 

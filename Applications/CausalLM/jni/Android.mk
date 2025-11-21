@@ -52,6 +52,7 @@ LOCAL_SRC_FILES := ../main.cpp \
     ../qwen3_moe_causallm.cpp \
     ../qwen3_slim_moe_causallm.cpp \
     ../qwen3_cached_slim_moe_causallm.cpp \
+    ../qwen3_apex.cpp \
     ../nntr_qwen3_causallm.cpp \
     ../nntr_qwen3_moe_causallm.cpp \
     ../gptoss_causallm.cpp \
@@ -70,6 +71,7 @@ LOCAL_SRC_FILES := ../main.cpp \
     ../layers/qwen_moe_layer_fsu.cpp \
     ../layers/gpt_oss_moe_layer.cpp \
     ../layers/gpt_oss_moe_layer_cached.cpp \
+    ../layers/qwen_moe_layer_apex.cpp \
 
 LOCAL_SHARED_LIBRARIES := nntrainer ccapi-nntrainer
 LOCAL_STATIC_LIBRARIES := tokenizers_c
