@@ -49,7 +49,7 @@ NNTrainer supports Large Language Model (LLM) inference! Please refer to `Applic
 
   | Load whole model | Load expert on-the-fly |
   |:-------:|:------:|
-  |![](docs/videos/moe-full.gif)| ![](docs/videos/moe-on-the-fly.gif) |
+  |![](./docs/videos/moe-full.gif)| ![](./docs/videos/moe-on-the-fly.gif) |
   | Memory: 16.5 GB | Memory: 1.3 GB |
 
 
