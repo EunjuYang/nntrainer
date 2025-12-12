@@ -25,14 +25,33 @@ Even if NNtrainer runs on device, it provides full functionalities to train mode
 [ NNTrainer: Personalize neural networks on devices! ](https://www.youtube.com/watch?v=HKKowY78P1A), Samsung Developer Conference 2021 <br />
 [ NNTrainer: "On-device learning" ](https://www.youtube.com/embed/Jy_auavraKg?start=4035&end=4080), Samsung AI Forum 2021
 
-## Running MoE On Device
+  ## 🚀 Running LLMs On Device
+NNTrainer supports Large Language Model (LLM) inference! Please refer to `Applications/CausalLM` for details. We currently support various LLM architectures, including:
+  - Qwen3
+  - Qwen3-MoE
+  - GPT-OSS
+  - And more to come!
 
-NNTrainer enables running large-scale Mixture of Experts (MoE) models directly on device. Below are demonstrations of running MoE LLM on mobile devices:
+  ### Running MoE on your device
+  NNTrainer enables the execution of large-scale Mixture of Experts (MoE) models directly on-device. We support on-the-fly expert loading using flash storage, allowing MoE models to run with significantly reduced peak memory usage.
+  Below are demonstrations of MoE LLMs running on mobile devices:
 
-| GPT-OSS 20B | Qwen3 MoE 30B-A3B |
-|:-----------:|:-----------------:|
-| <video src="docs/videos/GPT_OSS_20B_Demo.mp4" autoplay loop muted playsinline width="320"></video> | <video src="docs/videos/Qwen_30B_Demo.mp4" autoplay loop muted playsinline width="320"></video> |
-| Running GPT-OSS 20B model on device | Running Qwen3 MoE 30B-A3B model on device |
+  #### 📱 Running MoE on your mobile phone
+
+  | GPT-OSS 20B | Qwen3 MoE 30B-A3B |
+  |:-----------:|:-----------------:|
+  | <video src="docs/videos/GPT_OSS_20B_Demo.mp4" autoplay loop muted playsinline width="320"></video> | <video src="docs/videos/Qwen_30B_Demo.mp4" autoplay loop muted playsinline width="320"></video> |
+  | Running GPT-OSS 20B model on device | Running Qwen3 MoE 30B-A3B model on device |
+
+  #### 💻 Running MoE on your PC
+
+ NNTrainer's FSU feature allows for dynamic expert loading during inference. This minimizes initialization time and ensures efficiency in memory-constrained environments. To test this, try the models located in `Applications/CausalLM/models/*-slim`.
+
+  | Load Whole model (Qwen3-30B-A3B) | Load Expert On-The-Fly (Qwen3-30B-A3B-Slim)|
+  |:-------:|:------:|
+  |![](./docs/videos/moe-full.gif)| ![](./docs/videos/moe-on-the-fly.gif) |
+  | Memory: 16.5 GB | Memory: 1.3 GB |
+
 
 ## Official Releases
 
