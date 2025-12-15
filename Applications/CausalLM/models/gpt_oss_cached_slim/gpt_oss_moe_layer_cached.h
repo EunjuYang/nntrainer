@@ -43,13 +43,13 @@ public:
    * @brief  Move constructor.
    *  @param[in] CachedSlimGptOssMoELayer &&
    */
-  CachedSlimGptOssMoELayer(CachedSlimGptOssMoELayer &&rhs) noexcept = default;
+  CachedSlimGptOssMoELayer(CachedSlimGptOssMoELayer &&rhs) = delete;
 
   /**
    * @brief  Move assignment operator.
    * @param[in] rhs CachedSlimGptOssMoELayer to be moved.
    */
-  CachedSlimGptOssMoELayer &operator=(CachedSlimGptOssMoELayer &&rhs) = default;
+  CachedSlimGptOssMoELayer &operator=(CachedSlimGptOssMoELayer &&rhs) = delete;
 
   /**
    * @copydoc Layer::finalize(InitLayerContext &context)
