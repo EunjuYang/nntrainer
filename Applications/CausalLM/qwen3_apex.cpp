@@ -30,9 +30,8 @@
 
 namespace causallm {
 
-void Qwen3ApexMoECausalLM::setupParameters(json &cfg,
-                                                 json &generation_cfg,
-                                                 json &nntr_cfg) {
+void Qwen3ApexMoECausalLM::setupParameters(json &cfg, json &generation_cfg,
+                                           json &nntr_cfg) {
   Qwen3CausalLM(cfg, generation_cfg, nntr_cfg);
 
   // parameters for Qwen3MoE model
@@ -41,6 +40,7 @@ void Qwen3ApexMoECausalLM::setupParameters(json &cfg,
     NUM_EXPERTS_PER_TOK = cfg["num_experts_per_tok"];
     INTERMEDIATE_SIZE = cfg["moe_intermediate_size"];
     USE_K = nntr_cfg["use_k"].get<std::vector<unsigned int>>();
+    CACHE_SIZE = nntr_cfg["cache_size"].get<std::vector<unsigned int>>();
   } catch (const std::exception &e) {
     throw std::runtime_error("Qwen3MoE: num_experts and num_experts_per_tok "
                              "are not specified in the config file");
@@ -48,8 +48,8 @@ void Qwen3ApexMoECausalLM::setupParameters(json &cfg,
 }
 
 std::vector<LayerHandle>
-Qwen3ApexMoECausalLM::createMlp(const int layer_id, int dim,
-                                      int hidden_dim, std::string input_name) {
+Qwen3ApexMoECausalLM::createMlp(const int layer_id, int dim, int hidden_dim,
+                                std::string input_name) {
 
   std::vector<LayerHandle> layers;
   layers.push_back(createLayer(
@@ -58,9 +58,8 @@ Qwen3ApexMoECausalLM::createMlp(const int layer_id, int dim,
      withKey("input_layers", input_name), withKey("unit", hidden_dim),
      withKey("num_experts", NUM_EXPERTS),
      withKey("num_experts_per_token", NUM_EXPERTS_PER_TOK),
-     withKey("moe_activation", "swish"),
-     withKey("use_k", USE_K[layer_id])
-     }));
+     withKey("moe_activation", "swish"), withKey("use_k", USE_K[layer_id]),
+     withKey("cache_size", CACHE_SIZE[layer_id])}));
 
   return layers;
 }

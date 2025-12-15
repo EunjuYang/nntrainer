@@ -10,6 +10,7 @@ causallm_src += [
     meson.current_source_dir() / 'qwen3_slim_moe_causallm.cpp',
     meson.current_source_dir() / 'qwen3_cached_slim_moe_causallm.cpp',
     meson.current_source_dir() / 'qwen3_apex.cpp',
+    meson.current_source_dir() / 'qwen3_apex_with_first_load.cpp',
     meson.current_source_dir() / 'nntr_qwen3_causallm.cpp',
     meson.current_source_dir() / 'nntr_qwen3_moe_causallm.cpp',
     meson.current_source_dir() / 'gptoss_causallm.cpp',

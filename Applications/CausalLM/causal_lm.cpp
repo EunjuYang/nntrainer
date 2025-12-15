@@ -262,8 +262,9 @@ void CausalLM::save_weight(const std::string &weight_path) {
   }
 };
 
-std::tuple<int, int, float, int, int, float> CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
-                   const WSTR tail_prompt) {
+std::tuple<int, int, float, int, int, float>
+CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
+              const WSTR tail_prompt) {
 
   if (!is_initialized) {
     throw std::runtime_error("CausalLM model is not initialized. Please call "
@@ -406,17 +407,8 @@ std::tuple<int, int, float, int, int, float> CausalLM::run(const WSTR prompt, bo
       << "You may need this prompt lenth to set the \"sys_prompt_token_size\""
       << "\n==================================================\n"
       << std::endl;
-    return std::make_tuple(-1,-1,-1.0,-1,-1,-1.0);
+    return std::make_tuple(-1, -1, -1.0, -1, -1, -1.0);
   }
-
-  if (USE_KVCACHE) {
-    load_kvcache(PRE_COMPUTED_CACHE_PATH, SYS_PROMP_LEN);
-  } else {
-    SYS_PROMP_LEN = 0;
-  }
-  output = model->incremental_inference(BATCH_SIZE, input, label, init_len,
-                                        SYS_PROMP_LEN,
-                                        SYS_PROMP_LEN + input_len, false);
 
   if (USE_KVCACHE) {
     load_kvcache(PRE_COMPUTED_CACHE_PATH, SYS_PROMP_LEN);
@@ -504,9 +496,9 @@ std::tuple<int, int, float, int, int, float> CausalLM::run(const WSTR prompt, bo
     std::chrono::duration_cast<std::chrono::milliseconds>(finish_generation -
                                                           start_generation);
 
-
-  float prefill_tps =((double)init_len / prefill_duration.count() * 1000);
-  float generation_tps = ((double)generation_cnt / generation_duration.count() * 1000);
+  float prefill_tps = ((double)init_len / prefill_duration.count() * 1000);
+  float generation_tps =
+    ((double)generation_cnt / generation_duration.count() * 1000);
   std::cout << "\n\n";
   std::cout << "=================[ LLM with NNTrainer ]===================\n";
   std::cout << "prefill: " << init_len << " tokens, "
@@ -518,8 +510,9 @@ std::tuple<int, int, float, int, int, float> CausalLM::run(const WSTR prompt, bo
             << " TPS\n";
   std::cout << "==========================================================\n";
 
-  return std::make_tuple(init_len, prefill_duration.count(), prefill_tps, generation_cnt, generation_duration.count(), generation_tps);
-
+  return std::make_tuple(init_len, prefill_duration.count(), prefill_tps,
+                         generation_cnt, generation_duration.count(),
+                         generation_tps);
 };
 
 std::vector<unsigned int> CausalLM::generate(float *logits, bool do_sample,

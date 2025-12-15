@@ -71,9 +71,17 @@ public:
  */
 class UseK : public nntrainer::PositiveIntegerProperty {
 public:
-  static constexpr const char *key =
-    "use_k";                 /**< unique key to access */
-  using prop_tag = nntrainer::uint_prop_tag; /**< property type */
+  static constexpr const char *key = "use_k"; /**< unique key to access */
+  using prop_tag = nntrainer::uint_prop_tag;  /**< property type */
+};
+
+/**
+ * @brief NumExpertsPerToken,  Number of experts per token property
+ */
+class CacheSize : public nntrainer::PositiveIntegerProperty {
+public:
+  static constexpr const char *key = "cache_size"; /**< unique key to access */
+  using prop_tag = nntrainer::uint_prop_tag;       /**< property type */
 };
 
 /**

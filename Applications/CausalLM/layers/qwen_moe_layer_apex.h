@@ -16,8 +16,8 @@
  * @todo   This layer does not support backwarding yet.
  */
 
-#ifndef __MOE_LAYER_H__
-#define __MOE_LAYER_H__
+#ifndef __MOE_APEX_LAYER_H__
+#define __MOE_APEX_LAYER_H__
 #ifdef __cplusplus
 
 #include <acti_func.h>
@@ -99,9 +99,7 @@ public:
   /**
    * @copydoc Layer::getType()
    */
-  const std::string getType() const override {
-    return ApexMoeLayer::type;
-  };
+  const std::string getType() const override { return ApexMoeLayer::type; };
 
   /**
    * @brief Layer::supportBackwarding()
@@ -112,16 +110,16 @@ public:
     nntrainer::RunLayerContext &context,
     std::vector<nntrainer::TensorDim> input_dimensions) override;
 
-  static constexpr const char *type =
-    "moe_apex"; /**< type of the layer */
+  static constexpr const char *type = "moe_apex"; /**< type of the layer */
 
 private:
-  unsigned int num_experts;      /**< number of experts */
-  unsigned int topk;             /**< number of experts per token, i.e., topk */
-  unsigned int use_k;             /**< number of effective experts for sequence */
+  unsigned int num_experts; /**< number of experts */
+  unsigned int topk;        /**< number of experts per token, i.e., topk */
+  unsigned int use_k;       /**< number of effective experts for sequence */
+  unsigned int cache_size;  /**< expert cache size for this layer */
   nntrainer::ActiFunc acti_func; /**< activation function for the expert */
-  std::tuple<props::NumExperts, props::NumExpertsPerToken,
-            props::UseK, nntrainer::props::Unit, props::MoEActivation>
+  std::tuple<props::NumExperts, props::NumExpertsPerToken, props::UseK,
+             props::CacheSize, nntrainer::props::Unit, props::MoEActivation>
     moe_props;
 
   // weight indeices

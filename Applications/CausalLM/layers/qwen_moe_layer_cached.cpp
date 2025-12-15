@@ -314,22 +314,6 @@ void CachedSlimMoELayer::incremental_forwarding(
     input.dot(gate_weights, router_logits);
     router_logits.apply(nntrainer::ActiFunc::softmax<float>, router_logits);
 
-    // get extra topK
-    auto extra_topk_result = router_logits.topK(topk + 5);
-    auto extra_topk_values = std::get<0>(extra_topk_result);
-    auto extra_topk_indices = std::get<1>(extra_topk_result);
-    std::deque<int> extra_top_k = {};
-    extra_topk_values.divide_i(extra_topk_values.sum(3));
-    const uint32_t *extra_indices_data = extra_topk_indices.getData<uint32_t>();
-
-    // get extra topk
-    for (int i = static_cast<int>(total_tokens) - 1; i >= 0; --i) {
-      for (int k = 0; k < static_cast<int>(topk + 5); ++k) {
-        unsigned expert_idx = extra_indices_data[i * topk + k];
-        extra_top_k.push_back(expert_idx);
-      }
-    }
-
     auto topk_result = router_logits.topK(topk);
     auto topk_values = std::get<0>(topk_result);
     auto topk_indices = std::get<1>(topk_result);
@@ -341,13 +325,22 @@ void CachedSlimMoELayer::incremental_forwarding(
     std::vector<std::vector<std::pair<unsigned, float>>> expert_assignments(
       num_experts);
     // Set expert mask
+    std::vector<bool> used_experts(num_experts, false);
     for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
       for (int k = 0; k < static_cast<int>(topk); ++k) {
         unsigned expert_idx = indices_data[i * topk + k];
         float weight = topk_values.getValue<float>(i, 0, 0, k);
+        used_experts[expert_idx] = true;
         expert_assignments[expert_idx].emplace_back(i, weight);
       }
     }
+#ifdef DEBUG
+    if (to - from > 1) {
+      int num_experts =
+        std::accumulate(used_experts.begin(), used_experts.end(), 0);
+      std::cout << num_experts << std::endl;
+    }
+#endif
 
     // Parallel processing for multiple tokens with many active experts
     std::vector<nntrainer::Tensor> expert_outputs(num_experts);
@@ -421,14 +414,6 @@ void CachedSlimMoELayer::incremental_forwarding(
 #ifdef DEBUG
         auto t2_hit = high_resolution_clock::now();
 #endif
-      }
-    }
-
-    for (int i = extra_top_k.size() - 1; i >= 0; i--) {
-      if (iteration_map.find(extra_top_k[i]) != iteration_map.end()) {
-        loaded_expert_deque.erase(iteration_map[extra_top_k[i]]);
-        loaded_expert_deque.push_back(extra_top_k[i]);
-        iteration_map[extra_top_k[i]] = --loaded_expert_deque.end();
       }
     }
 

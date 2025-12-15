@@ -53,6 +53,7 @@ LOCAL_SRC_FILES := ../main.cpp \
     ../qwen3_slim_moe_causallm.cpp \
     ../qwen3_cached_slim_moe_causallm.cpp \
     ../qwen3_apex.cpp \
+    ../qwen3_apex_with_first_load.cpp \
     ../nntr_qwen3_causallm.cpp \
     ../nntr_qwen3_moe_causallm.cpp \
     ../gptoss_causallm.cpp \

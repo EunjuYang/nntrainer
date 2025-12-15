@@ -34,11 +34,12 @@
 #include "gptoss_causallm.h"
 #include "nntr_qwen3_causallm.h"
 #include "nntr_qwen3_moe_causallm.h"
+#include "qwen3_apex.h"
+#include "qwen3_apex_with_first_load.h"
 #include "qwen3_cached_slim_moe_causallm.h"
 #include "qwen3_causallm.h"
 #include "qwen3_moe_causallm.h"
 #include "qwen3_slim_moe_causallm.h"
-#include "qwen3_apex.h"
 #include <sys/resource.h>
 
 #include <atomic>
@@ -50,37 +51,37 @@ using json = nlohmann::json;
 std::atomic<size_t> peak_rss_kb{0};
 std::atomic<bool> tracking_enabled{true};
 
-// CSV 파일에 튜플 데이터를 추가하는 함수  
-void appendTupleToCSV(const std::string& filename, const std::tuple<int, float, float, int, float, float, int>& data) {  
-    std::ofstream outfile;  
-      
-    // 파일을 append 모드로 열기  
-    outfile.open(filename, std::ios_base::app);  
-      
-    if (!outfile.is_open()) {  
-        std::cerr << "Error: Could not open file " << filename << std::endl;  
-        return;  
-    }  
-      
-    // 새 줄로 시작 (이전 내용과 구분)  
-    if (outfile.tellp() != 0) {  // 파일이 비어있지 않으면  
-        outfile << "\n";  
-    }  else {
-      outfile << "num_prefill_token,prefill_duration,prefill_tps,num_gen_token,generation_duration,generation_tps,max_rss";
-      outfile << "\n";
-    }
-      
-    // 튜플 데이터를 CSV 형식으로 출력  
-    outfile << std::get<0>(data) << ","  
-            << std::get<1>(data) << ","  
-            << std::get<2>(data)  << "," 
-            << std::get<3>(data)  << "," 
-            << std::get<4>(data)  << "," 
-            << std::get<5>(data)  << "," 
-            << std::get<6>(data);
-      
-    outfile.close();  
-}  
+// CSV 파일에 튜플 데이터를 추가하는 함수
+void appendTupleToCSV(
+  const std::string &filename,
+  const std::tuple<int, float, float, int, float, float, int> &data) {
+  std::ofstream outfile;
+
+  // 파일을 append 모드로 열기
+  outfile.open(filename, std::ios_base::app);
+
+  if (!outfile.is_open()) {
+    std::cerr << "Error: Could not open file " << filename << std::endl;
+    return;
+  }
+
+  // 새 줄로 시작 (이전 내용과 구분)
+  if (outfile.tellp() != 0) { // 파일이 비어있지 않으면
+    outfile << "\n";
+  } else {
+    outfile << "num_prefill_token,prefill_duration,prefill_tps,num_gen_token,"
+               "generation_duration,generation_tps,max_rss";
+    outfile << "\n";
+  }
+
+  // 튜플 데이터를 CSV 형식으로 출력
+  outfile << std::get<0>(data) << "," << std::get<1>(data) << ","
+          << std::get<2>(data) << "," << std::get<3>(data) << ","
+          << std::get<4>(data) << "," << std::get<5>(data) << ","
+          << std::get<6>(data);
+
+  outfile.close();
+}
 
 int printMemoryUsage() {
   struct rusage usage;
@@ -189,9 +190,14 @@ int main(int argc, char *argv[]) {
         cfg, generation_cfg, nntr_cfg);
     });
   causallm::Factory::Instance().registerModel(
-    "Qwen3ApexMoECausalLM",
-    [](json cfg, json generation_cfg, json nntr_cfg) {
+    "Qwen3ApexMoECausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
       return std::make_unique<causallm::Qwen3ApexMoECausalLM>(
+        cfg, generation_cfg, nntr_cfg);
+    });
+  causallm::Factory::Instance().registerModel(
+    "Qwen3ApexWithStaticCausalLM",
+    [](json cfg, json generation_cfg, json nntr_cfg) {
+      return std::make_unique<causallm::Qwen3ApexWithStaticCausalLM>(
         cfg, generation_cfg, nntr_cfg);
     });
 
@@ -220,7 +226,13 @@ int main(int argc, char *argv[]) {
 
     // Determine input text
     if (argc >= 3) {
-      input_text = argv[2];
+      std::ostringstream oss;
+      for (int i = 2; i < argc; ++i) { // argv[2] 부터 끝까지
+        if (i > 2)
+          oss << ' '; // 앞에 공백 삽입
+        oss << argv[i];
+      }
+      input_text = oss.str();
     } else {
       input_text = nntr_cfg["sample_input"].get<std::string>();
     }
@@ -249,18 +261,26 @@ int main(int argc, char *argv[]) {
     start_peak_tracker();
 #endif
 #if defined(_WIN32)
-    auto [prefill_token, prefill_duration, prefill_tps, generation_token, generation_duration, generation_tps] = model->run(input_text.c_str(), generation_cfg["do_sample"],
-               system_head_prompt.c_str(), system_tail_prompt.c_str());
+    auto [prefill_token, prefill_duration, prefill_tps, generation_token,
+          generation_duration, generation_tps] =
+      model->run(input_text.c_str(), generation_cfg["do_sample"],
+                 system_head_prompt.c_str(), system_tail_prompt.c_str());
 #else
-    auto [prefill_token, prefill_duration, prefill_tps, generation_token, generation_duration, generation_tps] = model->run(input_text, generation_cfg["do_sample"], system_head_prompt,
-               system_tail_prompt);
+    auto [prefill_token, prefill_duration, prefill_tps, generation_token,
+          generation_duration, generation_tps] =
+      model->run(input_text, generation_cfg["do_sample"], system_head_prompt,
+                 system_tail_prompt);
 #endif
 #ifdef PROFILE
     stop_and_print_peak();
 #endif
     int max_rss = printMemoryUsage();
 
-    appendTupleToCSV("output.csv",std::make_tuple(prefill_token, prefill_duration, prefill_tps, generation_token, generation_duration, generation_tps, max_rss));
+    appendTupleToCSV("output.csv",
+                     std::make_tuple(prefill_token, prefill_duration,
+                                     prefill_tps, generation_token,
+                                     generation_duration, generation_tps,
+                                     max_rss));
 
   } catch (const std::exception &e) {
     std::cerr << "\n[!] FATAL ERROR: " << e.what() << "\n";

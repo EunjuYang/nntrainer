@@ -31,6 +31,7 @@
 #include <qwen_moe_layer_apex.h>
 #include <stdexcept>
 
+// #define DEBUG 1
 #include <chrono>
 using std::chrono::duration_cast;
 using std::chrono::high_resolution_clock;
@@ -47,9 +48,9 @@ ApexMoeLayer::ApexMoeLayer() :
   LayerImpl(),
   num_experts(0),
   topk(0),
-  moe_props(props::NumExperts(), props::NumExpertsPerToken(),
-            props::UseK(),
-            nntrainer::props::Unit(), props::MoEActivation()),
+  moe_props(props::NumExperts(), props::NumExpertsPerToken(), props::UseK(),
+            props::CacheSize(), nntrainer::props::Unit(),
+            props::MoEActivation()),
   expert_gate_proj_indices({}),
   expert_up_proj_indices({}),
   expert_down_proj_indices({}),
@@ -85,6 +86,7 @@ void ApexMoeLayer::finalize(nntrainer::InitLayerContext &context) {
   num_experts = std::get<props::NumExperts>(moe_props).get();
   topk = std::get<props::NumExpertsPerToken>(moe_props).get();
   use_k = std::get<props::UseK>(moe_props).get();
+  cache_size = std::get<props::CacheSize>(moe_props).get();
   const unsigned int intermediate_size =
     std::get<nntrainer::props::Unit>(moe_props).get();
   const unsigned int hidden_size = in_dim.width(); // Feature dimension
@@ -173,7 +175,7 @@ void ApexMoeLayer::finalize(nntrainer::InitLayerContext &context) {
 }
 
 void ApexMoeLayer::forwarding(nntrainer::RunLayerContext &context,
-                                    bool training) {}
+                              bool training) {}
 
 inline void ApexMoeLayer::compute_expert_forward(
   const nntrainer::Tensor &input, nntrainer::Tensor &output,
@@ -266,9 +268,9 @@ inline void ApexMoeLayer::compute_expert_forward(
   }
 }
 
-void ApexMoeLayer::incremental_forwarding(
-  nntrainer::RunLayerContext &context, unsigned int from, unsigned int to,
-  bool training) {
+void ApexMoeLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
+                                          unsigned int from, unsigned int to,
+                                          bool training) {
 
 #ifdef DEBUG
   auto t1 = high_resolution_clock::now();
@@ -321,6 +323,10 @@ void ApexMoeLayer::incremental_forwarding(
     auto total_values = std::get<0>(total_results);
     auto total_indices = std::get<1>(total_results);
 
+    // for(int i = 0; i < num_experts; ++i)
+    // std::cout << router_logits.getValue(i) << " ";
+    // std::cout << std::endl;
+
     auto topk_result = router_logits.topK(topk);
     auto topk_values = std::get<0>(topk_result);
     auto topk_indices = std::get<1>(topk_result);
@@ -334,49 +340,56 @@ void ApexMoeLayer::incremental_forwarding(
 
     // Set expert mask for use_k
     auto usek = this->use_k;
-    if (to-from == 1)
+    if (to - from == 1)
       usek = topk;
 
-    std::vector<bool> used_experts(num_experts, false);  
+    std::vector<bool> used_experts(num_experts, false);
     for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
       for (int k = 0; k < static_cast<int>(usek); ++k) {
         unsigned expert_idx = indices_data[i * topk + k];
         used_experts[expert_idx] = true;
-        expert_assignments[expert_idx].emplace_back(i, topk_values.getValue<float>(i, 0, 0, k));
+        expert_assignments[expert_idx].emplace_back(
+          i, topk_values.getValue<float>(i, 0, 0, k));
       }
     }
 
     // prefill only
-    if (to - from > 1){
-      // Process remaining candidates (optimization 2: reduced memory access)  
-      for (int i = 0; i < static_cast<int>(total_tokens); ++i) {  
-          // Track assigned experts for this token (optimization 3: bitmask)  
-          uint64_t assigned_mask = 0;  
-          for (int k = 0; k < static_cast<int>(usek); ++k) {  
-              assigned_mask |= (1ULL << indices_data[i * topk + k]);  
-          }  
-          // Collect and partially sort candidates (optimization 4: in-place processing)  
-          constexpr int MAX_CANDIDATES = 8;
-          int candidate_count = 0;  
-          std::pair<unsigned, float> candidates[MAX_CANDIDATES];  
-          for (int k = usek; k < static_cast<int>(num_experts) && candidate_count < MAX_CANDIDATES; ++k) {  
-              unsigned expert_idx = total_indices.getValue<uint32_t>(i, 0, 0, k);  
-              if (used_experts[expert_idx] && !(assigned_mask & (1ULL << expert_idx))) {  
-                  candidates[candidate_count++] = {expert_idx, topk_values.getValue<float>(i, 0, 0, k)};  
-              }  
-          }  
-          // Partial sort and assign (optimization 5: only sort needed elements)  
-          const int num_to_add = std::min(static_cast<int>(topk - usek), candidate_count);  
-          if (num_to_add > 0) {  
-              std::partial_sort(  
-                  candidates, candidates + num_to_add, candidates + candidate_count,  
-                  [](const auto& a, const auto& b) { return a.second > b.second; }  
-              );  
-              for (int j = 0; j < num_to_add; ++j) {  
-                  expert_assignments[candidates[j].first].emplace_back(i, candidates[j].second);  
-              }  
+    if (to - from > 1) {
+      // Process remaining candidates (optimization 2: reduced memory access)
+      for (int i = 0; i < static_cast<int>(total_tokens); ++i) {
+        // Track assigned experts for this token (optimization 3: bitmask)
+        uint64_t assigned_mask = 0;
+        for (int k = 0; k < static_cast<int>(usek); ++k) {
+          assigned_mask |= (1ULL << indices_data[i * topk + k]);
+        }
+        // Collect and partially sort candidates (optimization 4: in-place
+        // processing)
+        constexpr int MAX_CANDIDATES = 4;
+        int candidate_count = 0;
+        std::pair<unsigned, float> candidates[MAX_CANDIDATES];
+        for (int k = usek; k < static_cast<int>(num_experts) &&
+                           candidate_count < MAX_CANDIDATES;
+             ++k) {
+          unsigned expert_idx = total_indices.getValue<uint32_t>(i, 0, 0, k);
+          if (used_experts[expert_idx] &&
+              !(assigned_mask & (1ULL << expert_idx))) {
+            candidates[candidate_count++] = {
+              expert_idx, topk_values.getValue<float>(i, 0, 0, k)};
           }
-      }  
+        }
+        // Partial sort and assign (optimization 5: only sort needed elements)
+        const int num_to_add =
+          std::min(static_cast<int>(topk - usek), candidate_count);
+        if (num_to_add > 0) {
+          std::partial_sort(
+            candidates, candidates + num_to_add, candidates + candidate_count,
+            [](const auto &a, const auto &b) { return a.second > b.second; });
+          for (int j = 0; j < num_to_add; ++j) {
+            expert_assignments[candidates[j].first].emplace_back(
+              i, candidates[j].second);
+          }
+        }
+      }
     }
 
     // Parallel processing for multiple tokens with many active experts
@@ -404,78 +417,21 @@ void ApexMoeLayer::incremental_forwarding(
 #pragma omp parallel for schedule(dynamic)
     for (int expert_idx : target_idx_vector) {
       const auto &assignments = expert_assignments[expert_idx];
-      if (need_load[expert_idx]) {
 
-#ifdef DEBUG
-        auto t1_miss = high_resolution_clock::now();
-#endif
+      context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
+      context.getWeight(expert_up_proj_indices[expert_idx]).activate();
+      context.getWeight(expert_down_proj_indices[expert_idx]).activate();
 
-        context.getWeight(expert_gate_proj_indices[expert_idx]).activate();
-        context.getWeight(expert_up_proj_indices[expert_idx]).activate();
-        context.getWeight(expert_down_proj_indices[expert_idx]).activate();
+      compute_expert_forward(
+        input, expert_outputs[expert_idx], assignments,
+        context.getWeight(expert_gate_proj_indices[expert_idx]),
+        context.getWeight(expert_up_proj_indices[expert_idx]),
+        context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
 
-        {
-          std::lock_guard<std::mutex> lock(cache_mutex);
-          loaded_expert_deque.push_back(expert_idx);
-          iteration_map[expert_idx] = --loaded_expert_deque.end();
-          need_load[expert_idx] = false;
-          miss_count += 1;
-        }
-
-        compute_expert_forward(
-          input, expert_outputs[expert_idx], assignments,
-          context.getWeight(expert_gate_proj_indices[expert_idx]),
-          context.getWeight(expert_up_proj_indices[expert_idx]),
-          context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
-#ifdef DEBUG
-        auto t2_miss = high_resolution_clock::now();
-#endif
-      } else {
-
-#ifdef DEBUG
-        auto t1_hit = high_resolution_clock::now();
-#endif
-        {
-          std::lock_guard<std::mutex> lock(cache_mutex);
-          hit_count += 1;
-        }
-
-        compute_expert_forward(
-          input, expert_outputs[expert_idx], assignments,
-          context.getWeight(expert_gate_proj_indices[expert_idx]),
-          context.getWeight(expert_up_proj_indices[expert_idx]),
-          context.getWeight(expert_down_proj_indices[expert_idx]), hidden_size);
-
-#ifdef DEBUG
-        auto t2_hit = high_resolution_clock::now();
-#endif
-      }
+      context.getWeight(expert_gate_proj_indices[expert_idx]).deactivate();
+      context.getWeight(expert_up_proj_indices[expert_idx]).deactivate();
+      context.getWeight(expert_down_proj_indices[expert_idx]).deactivate();
     }
-
-#ifdef DEBUG
-    auto t1_evict = high_resolution_clock::now();
-#endif
-
-// Evict experts
-#pragma omp parallel
-    while (loaded_expert_deque.size() > 32) {
-      int target_idx;
-      {
-        std::lock_guard<std::mutex> lock(cache_mutex);
-        target_idx = loaded_expert_deque.front();
-        loaded_expert_deque.pop_front();
-        iteration_map.erase(target_idx);
-        need_load[target_idx] = true;
-      }
-
-      context.getWeight(expert_gate_proj_indices[target_idx]).deactivate();
-      context.getWeight(expert_up_proj_indices[target_idx]).deactivate();
-      context.getWeight(expert_down_proj_indices[target_idx]).deactivate();
-    }
-
-#ifdef DEBUG
-    auto t2_evict = high_resolution_clock::now();
-#endif
 
     // Combine expert outputs
     int init = 0;
@@ -491,24 +447,20 @@ void ApexMoeLayer::incremental_forwarding(
     // reshape output: [B*S,1,1,H] -> [B,1,S,H]
     output.reshape({batch_size, 1, seq_len, hidden_size});
 
+#ifdef EXPERT_NUM
+    if (to - from > 1) {
+      std::cout << "Number of Active Experts: " << target_idx_vector.size()
+                << std::endl;
+    }
+#endif
+
 #ifdef DEBUG
     auto t2 = high_resolution_clock::now();
     auto dt = duration_cast<nanoseconds>(t2 - t1);
-    auto dt_miss = duration_cast<nanoseconds>(t2_miss - t1_miss);
-    auto dt_hit = duration_cast<nanoseconds>(t2_hit - t1_hit);
-    auto dt_evict = duration_cast<nanoseconds>(t2_evict - t1_evict);
     std::cout << context.getName() << " \t| " << dt.count() << " ns "
               << "\t| " << dt.count() / 1'000 << " us "
               << "\t| " << dt.count() / 1'000'000 << " ms "
-              << "\t| "
-              << "hit ratio: " << hit_count / 8.0 << "\t | "
-              << " miss ratio: " << miss_count / 8.0 << "\t | "
-              << "hit_compute: " << dt_hit.count() / 1'000'000 << " ms "
-              << "\t| "
-              << "miss_compute: " << dt_miss.count() / 1'000'000 << " ms "
-              << "\t| "
-              << "evict_time: " << dt_evict.count() / 1'000'000 << " ms "
-              << "\t| " << std::endl;
+              << "\t| num expert " << target_idx_vector.size() << std::endl;
 #endif
   }
 }
@@ -528,8 +480,8 @@ void ApexMoeLayer::calcGradient(nntrainer::RunLayerContext &context) {
   throw std::runtime_error("MoE layer does not support gradient calculation");
 }
 
-void ApexMoeLayer::exportTo(
-  nntrainer::Exporter &exporter, const ml::train::ExportMethods &method) const {
+void ApexMoeLayer::exportTo(nntrainer::Exporter &exporter,
+                            const ml::train::ExportMethods &method) const {
   nntrainer::LayerImpl::exportTo(exporter, method);
   exporter.saveResult(moe_props, method, this); // Save MoE specific properties
 }
