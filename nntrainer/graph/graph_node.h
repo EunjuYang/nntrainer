@@ -32,14 +32,16 @@ public:
    * Each element indicates the orders with which the below operations
    * for each node are executed:
    * 1. Forwarding
-   * 2. calcGradient
-   * 3. calcDerivative
-   * 4. ApplyGradient
+   * 2. Recompute Forward (for gradient checkpointing)
+   * 3. calcGradient
+   * 4. calcDerivative
+   * 5. ApplyGradient
    * One constraint is that they must be sorted in ascending order.
    * This ensures that the operations are executed in the order of their
    * listing.
    */
-  typedef std::tuple<unsigned int, unsigned int, unsigned int, unsigned int>
+  typedef std::tuple<unsigned int, unsigned int, unsigned int, unsigned int,
+                     unsigned int>
     ExecutionOrder;
 
   /**
@@ -109,6 +111,13 @@ public:
    * respectively
    */
   virtual void setExecutionOrder(ExecutionOrder exec_order_) = 0;
+
+  /**
+   * @brief Check if this node can support in-place execution
+   * @return true if inplace, else false
+   * @note Used by memory manager to determine input tensor lifespan
+   */
+  virtual bool supportInPlace() const { return false; }
 };
 
 /**

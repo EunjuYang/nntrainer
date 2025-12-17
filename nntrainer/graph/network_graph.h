@@ -21,9 +21,15 @@
 #include <stack>
 #include <vector>
 
+#include <checkpoint_block.h>
 #include <graph_core.h>
 #include <layer_node.h>
 #include <manager.h>
+#include <tensor.h>
+
+#ifdef ENABLE_TEST
+#include <gradient_checkpointing_test_util.h>
+#endif
 
 namespace nntrainer {
 using ExecutionMode = ml::train::ExecutionMode;
@@ -53,6 +59,9 @@ public:
     is_clip_grad(false),
     loss_scale(1.0f) {
     nan_count = 0;
+#ifdef ENABLE_TEST
+    gc_verify = false;
+#endif
   }
 
   /**
@@ -84,6 +93,9 @@ public:
     is_clip_grad(false),
     loss_scale(1.0f) {
     nan_count = 0;
+#ifdef ENABLE_TEST
+    gc_verify = false;
+#endif
   }
 
   /**
@@ -197,6 +209,21 @@ public:
    */
   static void applyGradients(LayerNode *node,
                              const std::function<void(Weight &)> &apply_func);
+
+  /**
+   * @brief Apply checkpoint blocks to the graph
+   * @param checkpoint_blocks Vector of checkpoint blocks to apply
+   * @note This should be called before compile()
+   */
+  void
+  applyCheckpointBlocks(const std::vector<CheckpointBlock> &checkpoint_blocks);
+
+  /**
+   * @brief Recompute forward pass for a checkpoint block
+   * @param block_id Checkpoint block identifier
+   * @note This is called during backwarding to restore activations
+   */
+  void recomputeCheckpointBlock(const std::string &block_id);
 
   /**
    * @brief     forwarding network graph
@@ -542,6 +569,10 @@ public:
     tensor_manager->setWeightOffset(offsets);
   }
 
+#ifdef ENABLE_TEST
+  void setGCVerify() { gc_verify = true; }
+#endif
+
 private:
   std::map<std::string, std::string> sub_in_out; /** This is map to identify
                  input and output layer name of subgraph */
@@ -583,6 +614,12 @@ private:
   bool is_clip_grad;
   float loss_scale;
   unsigned int nan_count;
+
+#ifdef ENABLE_TEST
+  GradientCheckpointingVerifier gc_verifier;
+
+  bool gc_verify;
+#endif
 
   /**
    * @brief     topological sort
