@@ -154,6 +154,7 @@ BuildRequires:	nnstreamer-devel
 %if 0%{tizen_version_major}%{tizen_version_minor} > 60
 BuildRequires:	nnstreamer-test-devel
 %endif
+
 BuildRequires:	gst-plugins-good-extra
 BuildRequires:	python
 %endif # unit_test
