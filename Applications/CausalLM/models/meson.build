@@ -1,5 +1,6 @@
 causallm_src += [
     meson.current_source_dir() / 'causal_lm.cpp',
+    meson.current_source_dir() / 'transformer.cpp',
 ]
 
 causallm_inc += include_directories('.')
