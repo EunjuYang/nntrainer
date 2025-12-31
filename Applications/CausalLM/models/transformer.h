@@ -54,6 +54,11 @@ using ModelHandle = std::unique_ptr<ml::train::Model>;
 using json = nlohmann::json;
 
 /**
+ * @brief Model Type Enum
+ */
+enum class ModelType { MODEL, CAUSAL_LM, EMBEDDING, UNKNOWN };
+
+/**
  * @brief Transformer Class
  */
 WIN_EXPORT class Transformer {
@@ -64,8 +69,10 @@ public:
    * @param cfg Configuration for the model (config.json)
    * @param generation_cfg Configuration for the generation (generation.json)
    * @param nntr_cfg Configuration for nntrainer (nntrainer_config.json)
+   * @param model_type Type of the model (default: ModelType::MODEL)
    */
-  Transformer(json &cfg, json &generation_cfg, json &nntr_cfg);
+  Transformer(json &cfg, json &generation_cfg, json &nntr_cfg,
+              ModelType model_type = ModelType::MODEL);
 
   /**
    * @brief Destroy the Transformer object

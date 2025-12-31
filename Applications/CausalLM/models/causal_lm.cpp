@@ -38,7 +38,7 @@
 namespace causallm {
 
 CausalLM::CausalLM(json &cfg, json &generation_cfg, json &nntr_cfg) :
-  Transformer(cfg, generation_cfg, nntr_cfg) {
+  Transformer(cfg, generation_cfg, nntr_cfg, ModelType::CAUSAL_LM) {
   setupParameters(cfg, generation_cfg, nntr_cfg);
 }
 

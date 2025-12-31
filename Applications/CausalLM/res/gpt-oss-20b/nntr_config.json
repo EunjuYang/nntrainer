@@ -1,4 +1,5 @@
 {
+    "model_type": "CausalLM",
     "model_tensor_type": "FP32-FP32",
     "model_file_name": "nntr_gpt_oss_20b.bin",
 

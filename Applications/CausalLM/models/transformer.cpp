@@ -43,7 +43,35 @@ std::string LoadBytesFromFile(const std::string &path) {
   return buffer;
 }
 
-Transformer::Transformer(json &cfg, json &generation_cfg, json &nntr_cfg) {
+static ModelType strToModelType(const std::string &model_type) {
+
+  static const std::unordered_map<std::string, ModelType> model_type_map = {
+    {"Model", ModelType::MODEL},
+    {"CausalLM", ModelType::CAUSAL_LM},
+    {"Embedding", ModelType::EMBEDDING}};
+
+  if (model_type_map.find(model_type) == model_type_map.end()) {
+    return ModelType::UNKNOWN;
+  }
+
+  return model_type_map.at(model_type);
+}
+
+Transformer::Transformer(json &cfg, json &generation_cfg, json &nntr_cfg,
+                         ModelType model_type) {
+
+  std::string config_model_type_str = "Model";
+  if (nntr_cfg.contains("model_type")) {
+    config_model_type_str = nntr_cfg["model_type"].get<std::string>();
+  }
+
+  ModelType config_model_type = strToModelType(config_model_type_str);
+
+  if (model_type != config_model_type) {
+    throw std::runtime_error("model_type mismatch. Class Type: " +
+                             std::to_string(static_cast<int>(model_type)) +
+                             ", Config Type: " + config_model_type_str);
+  }
 
   // Initialize the model with the provided configurations
   // This is where you would set up the model layers, parameters, etc.
