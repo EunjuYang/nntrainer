@@ -43,7 +43,7 @@ std::string LoadBytesFromFile(const std::string &path) {
   return buffer;
 }
 
-static ModelType strToModelType(const std::string &model_type) {
+ModelType strToModelType(std::string model_type) {
 
   static const std::unordered_map<std::string, ModelType> model_type_map = {
     {"Model", ModelType::MODEL},
