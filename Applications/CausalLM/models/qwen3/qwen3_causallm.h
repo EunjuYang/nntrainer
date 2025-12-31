@@ -19,23 +19,40 @@
 namespace causallm {
 
 /**
- * @brief Qwen3CausalLM class
+ * @brief Qwen3Transformer class
  */
-class Qwen3CausalLM : public CausalLM {
-
+class Qwen3Transformer : virtual public Transformer {
 public:
-  static constexpr const char *architectures = "Qwen3ForCausalLM";
+  static constexpr const char *architectures = "Qwen3Transformer";
 
-  Qwen3CausalLM(json &cfg, json &generation_cfg, json &nntr_cfg) :
-    CausalLM(cfg, generation_cfg, nntr_cfg) {}
+  Qwen3Transformer(json &cfg, json &generation_cfg, json &nntr_cfg) :
+    Transformer(cfg, generation_cfg, nntr_cfg) {}
 
-  virtual ~Qwen3CausalLM() = default;
+  virtual ~Qwen3Transformer() = default;
 
   std::vector<LayerHandle> createAttention(const int layer_id, int seq_len,
                                            int n_heads, int head_dim,
                                            std::string query_name,
                                            std::string key_name,
                                            std::string value_name) override;
+
+  void registerCustomLayers() override;
+};
+
+/**
+ * @brief Qwen3CausalLM class
+ */
+class Qwen3CausalLM : public CausalLM, public Qwen3Transformer {
+
+public:
+  static constexpr const char *architectures = "Qwen3ForCausalLM";
+
+  Qwen3CausalLM(json &cfg, json &generation_cfg, json &nntr_cfg) :
+    Transformer(cfg, generation_cfg, nntr_cfg),
+    CausalLM(cfg, generation_cfg, nntr_cfg),
+    Qwen3Transformer(cfg, generation_cfg, nntr_cfg) {}
+
+  virtual ~Qwen3CausalLM() = default;
 
   void registerCustomLayers() override;
 
