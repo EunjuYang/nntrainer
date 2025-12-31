@@ -26,6 +26,7 @@ public:
   static constexpr const char *architectures = "GptOssCachedSlimCausalLM";
 
   GptOssCachedSlimCausalLM(json &cfg, json &generation_cfg, json &nntr_cfg) :
+    Transformer(cfg, generation_cfg, nntr_cfg),
     CausalLM(cfg, generation_cfg, nntr_cfg) {
     setupParameters(cfg, generation_cfg, nntr_cfg);
   }

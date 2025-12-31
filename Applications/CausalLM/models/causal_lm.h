@@ -46,7 +46,7 @@ namespace causallm {
 /**
  * @brief CausalLM Class
  */
-WIN_EXPORT class CausalLM : public Transformer {
+WIN_EXPORT class CausalLM : virtual public Transformer {
 
 public:
   /**
