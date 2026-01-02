@@ -5,7 +5,7 @@
  * @file nntr_threads.h
  * @date 07 July 2022
  * @brief Thread Management for NNTrainer
- * @see	https://github.com/nnstreamer/nntrainer
+ * @see	https://github.com/nntrainer/nntrainer
  * @author Jijoong Moon <jijoong.moon@samsung.com>
  * @bug No known bugs except for NYI items
  */

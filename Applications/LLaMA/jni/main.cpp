@@ -4,7 +4,7 @@
  *
  * @file   main.cpp
  * @date   7 August 2023
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Seungbaek Hong <sb92.hong@samsung.com>
  * @bug    No known bugs except for NYI items
  */

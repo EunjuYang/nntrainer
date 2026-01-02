@@ -5,7 +5,7 @@
  * @file	unittest_blas_kernels_cl.cpp
  * @date	6 June 2024
  * @brief	Test setup for blas OpenCL kernels
- * @see		https://github.com/nnstreamer/nntrainer
+ * @see		https://github.com/nntrainer/nntrainer
  * @author	Debadri Samaddar <s.debadri@samsung.com>
  * @bug		No known bugs except for NYI items
  */

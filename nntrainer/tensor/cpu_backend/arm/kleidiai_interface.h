@@ -5,7 +5,7 @@
  *
  * @file   kleidiai_interface.h
  * @date   15 September 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong
  *
  * @brief  Modified computational backend components of

@@ -4,7 +4,7 @@
  *
  * @file    cl_context.h
  * @date    23 Feb 2024
- * @see     https://github.com/nnstreamer/nntrainer
+ * @see     https://github.com/nntrainer/nntrainer
  * @author  Debadri Samaddar <s.debadri@samsung.com>
  * @bug     No known bugs except for NYI items
  * @brief   This file contains app context related functions and classes that

@@ -6,7 +6,7 @@
  * @file   kai_rhs_pack_nxk_qsi4c32pscalef16_qsu4c32s16s0.c
  * @date   8 December 2025
  * @see    https://github.com/ARM-software/kleidiai
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong <ss.kong@samsung.com>
  *
  * @brief  RHS Packing NxK QSI4C32P ScaleF16

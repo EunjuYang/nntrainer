@@ -3,7 +3,7 @@
  * @file	tensor.cpp
  * @date	01 December 2023
  * @brief	This is a Tensor class
- * @see		https://github.com/nnstreamer/nntrainer
+ * @see		https://github.com/nntrainer/nntrainer
  * @author	Jijoong Moon <jijoong.moon@samsung.com>
  * @author	Donghyeon Jeong <dhyeon.jeong@samsung.com>
  * @bug		No known bugs except for NYI items

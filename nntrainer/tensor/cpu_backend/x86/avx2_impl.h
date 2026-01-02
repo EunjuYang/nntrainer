@@ -4,7 +4,7 @@
  *
  * @file   avx2_impl.h
  * @date   20 Feb 2024
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Donghyeon Jeong <dhyeon.jeong@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  This is a header for AVX implementation

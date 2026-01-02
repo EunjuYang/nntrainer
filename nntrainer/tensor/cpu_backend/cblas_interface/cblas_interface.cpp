@@ -4,7 +4,7 @@
  *
  * @file cblas_interface.cpp
  * @date   23 April 2024
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong <ss.kong@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  Function interface to use cblas lib from cpu_backend

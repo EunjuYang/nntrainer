@@ -6,7 +6,7 @@
  * @file   kleidiai_interface_qsi8d32p_qsi4c32p.cpp
  * @date   5 December 2025
  * @see    https://github.com/ARM-software/kleidiai
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong
  *
  * @brief  Modified computational backend components of

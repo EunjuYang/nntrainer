@@ -4,7 +4,7 @@
  *
  * @file   mha_core.cpp
  * @date   11 July 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  *         https://arxiv.org/abs/1706.03762
  * @author Jijoong Moon <jijoong.moon@samsung.com>
  * @bug    No known bugs except for NYI items

@@ -6,7 +6,7 @@
  * @file   kleidiai_interface_qsi8d32p_qsi4c32p_stdthread.cpp
  * @date   8 December 2025
  * @see    https://github.com/ARM-software/kleidiai
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong
  *
  * @brief  std::thread-based parallel GEMM implementation for qsi8d32p_qsi4c32p

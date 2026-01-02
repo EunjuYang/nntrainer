@@ -4,7 +4,7 @@
  *
  * @file   qwen3_moe_causallm.h
  * @date   15 July 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
  *

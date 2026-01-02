@@ -5,7 +5,7 @@
  * @file	blas_kernels.cpp
  * @date	14 May 2024
  * @brief	Common blas OpenCL kernels
- * @see		https://github.com/nnstreamer/nntrainer
+ * @see		https://github.com/nntrainer/nntrainer
  * @author	Debadri Samaddar <s.debadri@samsung.com>
  * @bug		No known bugs except for NYI items
  *

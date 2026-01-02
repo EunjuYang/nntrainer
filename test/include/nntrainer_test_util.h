@@ -15,7 +15,7 @@
  * @file	nntrainer_test_util.h
  * @date	28 April 2020
  * @brief	This is util functions for test
- * @see		https://github.com/nnstreamer/nntrainer
+ * @see		https://github.com/nntrainer/nntrainer
  * @author	Jijoong Moon <jijoong.moon@samsung.com>
  * @author	Sungsik Kong <ss.kong@samsung.com>
  * @bug		No known bugs except for NYI items

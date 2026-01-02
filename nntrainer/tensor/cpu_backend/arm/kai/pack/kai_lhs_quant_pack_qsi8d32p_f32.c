@@ -6,7 +6,7 @@
  * @file   kai_lhs_quant_pack_qsi8d32p_f32.c
  * @date   8 December 2025
  * @see    https://github.com/ARM-software/kleidiai
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong <ss.kong@samsung.com>
  *
  * @brief  LHS Quantized Packing for QSI8D32P

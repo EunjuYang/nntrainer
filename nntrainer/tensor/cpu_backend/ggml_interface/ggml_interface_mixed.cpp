@@ -4,7 +4,7 @@
  *
  * @file   ggml_interface_mixed.cpp
  * @date   15 April 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Michal Wlasiuk <testmailsmtp12345@gmail.com>
  * @author Sungsik Kong <ss.kong@samsung.com>
  * @bug    No known bugs except for NYI items

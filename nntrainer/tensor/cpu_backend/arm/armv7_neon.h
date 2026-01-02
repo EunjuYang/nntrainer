@@ -4,7 +4,7 @@
  *
  * @file   cpu_backend.h
  * @date   16 August 2024
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong <ss.kong@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  Conditional header file to support unsupported intrinsics on armv7l

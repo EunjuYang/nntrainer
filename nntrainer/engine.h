@@ -6,7 +6,7 @@
  * @date   27 December 2024
  * @brief  This file contains engine context related functions and classes that
  * manages the engines (NPU, GPU, CPU) of the current environment
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Jijoong Moon <jijoong.moon@samsung.com>
  * @bug    No known bugs except for NYI items
  *

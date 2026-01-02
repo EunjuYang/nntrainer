@@ -5,7 +5,7 @@
  * @file unittest_cache_loader.cpp
  * @date 14 Nov 2022
  * @brief Cache Loader Test
- * @see	https://github.com/nnstreamer/nntrainer
+ * @see	https://github.com/nntrainer/nntrainer
  * @author Jiho Chu <jiho.chu@samsung.com>
  * @bug No known bugs except for NYI items
  */

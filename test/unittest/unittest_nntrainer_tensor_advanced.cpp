@@ -3,7 +3,7 @@
  * @file unittest_tensor_advanced.cpp
  * @date 11 December 2025
  * @brief Advanced unit tests for Tensor operations to improve coverage
- * @see https://github.com/nnstreamer/nntrainer
+ * @see https://github.com/nntrainer/nntrainer
  * @author Donghak Park <donghak.park@samsung.com>
  * @bug No known bugs except for NYI items
  */

@@ -1,7 +1,7 @@
 # NNtrainer
 
 [![Code Coverage](https://img.shields.io/endpoint?url=https://nntrainer.github.io/coverage_result/coverage.json)](https://nntrainer.github.io/coverage_result/)
-[![DailyBuild](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build.yml/badge.svg)](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build.yml)
+[![DailyBuild](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build.yml/badge.svg)](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build.yml)
 ![GitHub repo size](https://img.shields.io/github/repo-size/nnstreamer/nntrainer)
 ![GitHub issues](https://img.shields.io/github/issues/nnstreamer/nntrainer)
 ![GitHub pull requests](https://img.shields.io/github/issues-pr/nnstreamer/nntrainer)
@@ -76,8 +76,8 @@ NNTrainer supports Large Language Model (LLM) inference! Please refer to `Applic
 |     | [Tizen](http://download.tizen.org/snapshots/tizen/unified/latest/repos/standard/packages/) | [Ubuntu](https://launchpad.net/~nnstreamer/+archive/ubuntu/ppa) |                                                                                      Android/NDK Build                                                                                       |                                                                                                      Windows                                                                                                      |
 | :-- | :--: | :--: |:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
 |     | 7.0M2 and later | 22.04/24.04 |                                                                                             9/P                                                                                              |                                                                                              windows-2022 and later                                                                                               |
-| arm64 | [![Tizen ARM](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_tizen_arm.yml/badge.svg)](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_tizen_arm.yml) | [![Ubuntu](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build.yml/badge.svg)](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build.yml) | [![Android](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_android.yml/badge.svg)](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_android.yml) |     [![Windows ARM](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_windows_arm.yml/badge.svg)](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_windows_arm.yml)      |
-| x86_64 | [![Tizen x86_64](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_tizen_x86_64.yml/badge.svg)](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_tizen_x86_64.yml) | [![Ubuntu](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build.yml/badge.svg)](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build.yml) |                                                                                             N/A                                                                                              | [![Windows x86_64](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_windows_x86_64.yml/badge.svg)](https://github.com/nnstreamer/nntrainer/actions/workflows/daily_build_windows_x86_64.yml) |
+| arm64 | [![Tizen ARM](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_tizen_arm.yml/badge.svg)](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_tizen_arm.yml) | [![Ubuntu](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build.yml/badge.svg)](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build.yml) | [![Android](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_android.yml/badge.svg)](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_android.yml) |     [![Windows ARM](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_windows_arm.yml/badge.svg)](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_windows_arm.yml)      |
+| x86_64 | [![Tizen x86_64](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_tizen_x86_64.yml/badge.svg)](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_tizen_x86_64.yml) | [![Ubuntu](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build.yml/badge.svg)](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build.yml) |                                                                                             N/A                                                                                              | [![Windows x86_64](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_windows_x86_64.yml/badge.svg)](https://github.com/nntrainer/nntrainer/actions/workflows/daily_build_windows_x86_64.yml) |
 | Publish | [Tizen Repo](http://download.tizen.org/snapshots/tizen/unified/latest/repos/standard/packages/) | [PPA](https://launchpad.net/~nnstreamer/+archive/ubuntu/ppa) |                                                                                              NA                                                                                              |                                                                                                        NA                                                                                                         |
 | API | C (Official) | C/C++ |                                                                                            C/C++                                                                                             |                                                                                                       C/C++                                                                                                       |
 
@@ -87,25 +87,25 @@ NNTrainer supports Large Language Model (LLM) inference! Please refer to `Applic
 
 ## Getting Started
 
-### [Installation](https://github.com/nnstreamer/nntrainer/blob/main/docs/getting-started.md)
+### [Installation](https://github.com/nntrainer/nntrainer/blob/main/docs/getting-started.md)
 
 Instructions for installing NNTrainer.
 
-### [Tutorial](https://github.com/nnstreamer/nntrainer/blob/main/docs/how-to-create-model.md)
+### [Tutorial](https://github.com/nntrainer/nntrainer/blob/main/docs/how-to-create-model.md)
 
 Introductions for creating your own model.
 
-### [Running Examples](https://github.com/nnstreamer/nntrainer/blob/main/docs/how-to-run-examples.md)
+### [Running Examples](https://github.com/nntrainer/nntrainer/blob/main/docs/how-to-run-examples.md)
 
 Instructions for preparing NNTrainer for execution
 
-### [Examples for NNTrainer](https://github.com/nnstreamer/nntrainer/tree/main/Applications)
+### [Examples for NNTrainer](https://github.com/nntrainer/nntrainer/tree/main/Applications)
 
 NNTrainer examples for a variety of networks
 
-### [Components](https://github.com/nnstreamer/nntrainer/blob/main/docs/components.md)
+### [Components](https://github.com/nntrainer/nntrainer/blob/main/docs/components.md)
 
-[Our supported features](https://github.com/nnstreamer/nntrainer/blob/main/docs/components.md#supported_feature)
+[Our supported features](https://github.com/nntrainer/nntrainer/blob/main/docs/components.md#supported_feature)
 - Supported ptimizer
 - Supported Loss Functions
 - Supported Activation Functions
@@ -113,7 +113,7 @@ NNTrainer examples for a variety of networks
 - Others
 
 ### APIs
-Currently, we provide [C APIs](https://github.com/nnstreamer/nntrainer/blob/master/api/capi/include/nntrainer.h) for Tizen. [C++ APIs](https://github.com/nnstreamer/nntrainer/blob/master/api/ccapi/include) are also provided for other platform. Java & C# APIs will be provided soon.
+Currently, we provide [C APIs](https://github.com/nntrainer/nntrainer/blob/master/api/capi/include/nntrainer.h) for Tizen. [C++ APIs](https://github.com/nntrainer/nntrainer/blob/master/api/ccapi/include) are also provided for other platform. Java & C# APIs will be provided soon.
 
 ## Open Source License
 
@@ -121,7 +121,7 @@ The NNtrainer is an open source project released under the terms of the Apache L
 
 ## Contributing
 
-Contributions are welcome! Please see our [Contributing](https://github.com/nnstreamer/nntrainer/blob/main/docs/contributing.md) Guide for more details.
+Contributions are welcome! Please see our [Contributing](https://github.com/nntrainer/nntrainer/blob/main/docs/contributing.md) Guide for more details.
 
 [//]: # ([![]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/images/0&#41;]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/links/0&#41;[![]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/images/1&#41;]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/links/1&#41;[![]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/images/2&#41;]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/links/2&#41;[![]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/images/3&#41;]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/links/3&#41;[![]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/images/4&#41;]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/links/4&#41;[![]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/images/5&#41;]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/links/5&#41;[![]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/images/6&#41;]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/links/6&#41;[![]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/images/7&#41;]&#40;https://sourcerer.io/fame/dongju-chae/nnstreamer/nntrainer/links/7&#41;)
 

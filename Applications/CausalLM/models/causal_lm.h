@@ -7,7 +7,7 @@
  *
  * @file   causal_lm.h
  * @date   10 July 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Jijoong Moon <jijoong.moon@samsung.com>
  * @author Seungbaek Hong <sb92.hong@samsung.com>
  * @author Hyeonseok Lee <hs89.lee@samsung.com>

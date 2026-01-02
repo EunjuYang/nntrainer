@@ -3,7 +3,7 @@
  * @file unittest_nntrainer_fallback.cpp
  * @date 11 December 2025
  * @brief Unit tests for fallback CPU backend implementations
- * @see https://github.com/nnstreamer/nntrainer
+ * @see https://github.com/nntrainer/nntrainer
  * @author Donghak Park <donghak.park@samsung.com>
  * @bug No known bugs except for NYI items
  */

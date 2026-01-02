@@ -4,7 +4,7 @@
  *
  * @file    opencl_buffer_manager.h
  * @date    01 Dec 2024
- * @see     https://github.com/nnstreamer/nntrainer
+ * @see     https://github.com/nntrainer/nntrainer
  * @author  Debadri Samaddar <s.debadri@samsung.com>
  * @author  Donghyeon Jeong <dhyeon.jeong@samsung.com>
  * @bug     No known bugs except for NYI items

@@ -5,7 +5,7 @@
  * @file        unittest_ccapi.cc
  * @date        19 October 2020
  * @brief       cc API Unit tests.
- * @see         https://github.com/nnstreamer/nntrainer
+ * @see         https://github.com/nntrainer/nntrainer
  * @author      Parichay Kapoor <pk.kapoor@samsung.com>
  * @bug         No known bugs
  */

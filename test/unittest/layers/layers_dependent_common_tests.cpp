@@ -5,7 +5,7 @@
  * @file layer_common_tests.cpp
  * @date 02 July 2021
  * @brief Common test for nntrainer layers (Param Tests)
- * @see	https://github.com/nnstreamer/nntrainer
+ * @see	https://github.com/nntrainer/nntrainer
  * @author Parichay Kapoor <pk.kapoor@samsung.com>
  * @author Jihoon Lee <jhoon.it.lee@samsung.com>
  * @author Debadri Samaddar <s.debadri@samsung.com>

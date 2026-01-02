@@ -5,7 +5,7 @@
  * @file nntrainer-api-common.h
  * @date 02 April 2020
  * @brief NNTrainer Common-API Header.
- * @see	https://github.com/nnstreamer/nntrainer
+ * @see	https://github.com/nntrainer/nntrainer
  * @author Parichay Kapoor <pk.kapoor@samsung.com>
  * @bug No known bugs except for NYI items
  */

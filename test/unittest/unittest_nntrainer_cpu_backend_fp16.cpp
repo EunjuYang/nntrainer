@@ -3,7 +3,7 @@
  * @file	unittest_nntrainer_cpu_backend_fp16.cpp
  * @date	03 April 2025
  * @brief	This is unittest for cpu_backend standalone
- * @see		https://github.com/nnstreamer/nntrainer
+ * @see		https://github.com/nntrainer/nntrainer
  * @author	Sungsik Kong <ss.kong@samsung.com>
  * @bug		No known bugs except for NYI items
  */

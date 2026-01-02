@@ -4,7 +4,7 @@
  *
  * @file   main.cpp
  * @date   1 December 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Jeonghun Park <top231902@naver.com>
  * @author Minseo Kim <ms05251@naver.com>
  * @bug    No known bugs except for NYI items

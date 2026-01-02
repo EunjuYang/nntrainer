@@ -5,7 +5,7 @@
  * @file   gpt_oss_moe_layer_cached.h
  * @date   05 Sep 2025
  * @brief  Gpt Oss MoE layer with cached fsu
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
  * @todo   This layer does not support backwarding yet.

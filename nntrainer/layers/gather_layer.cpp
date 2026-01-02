@@ -4,7 +4,7 @@
  *
  * @file   gather_layer.cpp
  * @date   02 April 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author SeungBaek Hong <sb92.hong@samsung.com>
  * @bug    It's not implemented operation yet. Just a draft for compilation.
  * @brief  This is gather layer class (operation layer)

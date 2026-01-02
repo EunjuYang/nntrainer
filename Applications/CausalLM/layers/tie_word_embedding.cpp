@@ -5,7 +5,7 @@
  * @file   tie_word_embedding.cpp
  * @date   21 May 2025
  * @brief  This is Embedding Layer Class of Neural Network
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
  *

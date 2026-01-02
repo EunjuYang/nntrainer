@@ -4,7 +4,7 @@
  *
  * @file   bs_threadpool_manager.hpp
  * @date   20 May 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong <ss.kong@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  BS threadpool manager class header file

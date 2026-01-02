@@ -4,7 +4,7 @@
  *
  * @file   gptoss_causallm.h
  * @date   26 Aug 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
  * @note   Please refer to the following code :

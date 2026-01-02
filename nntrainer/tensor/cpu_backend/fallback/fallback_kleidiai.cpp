@@ -4,7 +4,7 @@
  *
  * @file   fallback_kleidiai.cpp
  * @date   15 September 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Sungsik Kong <ss.kong@samsung.com>
  * @brief  Modified computational backend components of kleidiai. Portions of
  * this file are derived from Arm Limited code licensed under the Apache

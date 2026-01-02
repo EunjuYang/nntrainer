@@ -5,7 +5,7 @@
  * @file   gpt_oss_moe_layer.h
  * @date   09 June 2025
  * @brief  This is Mixture of Expert Layer Class of Neural Network
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
  * @todo   This layer does not support backwarding yet.

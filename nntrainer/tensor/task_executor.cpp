@@ -5,7 +5,7 @@
  * @file   task_executor.h
  * @date   04 April 2025
  * @brief  This file contains a task executor
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Jijoong Moon <jijoong.moon@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  Task executor class

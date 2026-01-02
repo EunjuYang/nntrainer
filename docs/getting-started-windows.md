@@ -19,7 +19,7 @@ The following dependencies are needed to compile/build/run.
 
 1. Clone repository:
 ```
-git clone https://github.com/nnstreamer/nntrainer
+git clone https://github.com/nntrainer/nntrainer
 ```
 
 2. Clone sub-repositories:

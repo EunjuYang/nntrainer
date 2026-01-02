@@ -4,7 +4,7 @@
  *
  * @file   transformer.cpp
  * @date   10 July 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  This file defines Transformer's basic actions

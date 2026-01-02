@@ -4,7 +4,7 @@
  * @date 11 December 2025
  * @brief Unit tests for various tensor types (CharTensor, ShortTensor,
  * UIntTensor, Int4QTensor)
- * @see https://github.com/nnstreamer/nntrainer
+ * @see https://github.com/nntrainer/nntrainer
  * @author Donghak Park <donghak.park@samsung.com>
  * @bug No known bugs except for NYI items
  */

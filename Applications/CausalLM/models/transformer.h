@@ -4,7 +4,7 @@
  *
  * @file   transformer.h
  * @date   31 Dec 2025
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  * @bug    No known bugs except for NYI items
  * @note   This transformer.h constructs a class for Transformer model which can

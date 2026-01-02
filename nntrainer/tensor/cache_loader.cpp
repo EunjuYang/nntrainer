@@ -4,7 +4,7 @@
  *
  * @file   cache_loader.cpp
  * @date   10 Nov 2022
- * @see    https://github.com/nnstreamer/nntrainer
+ * @see    https://github.com/nntrainer/nntrainer
  * @author Jiho Chu <jiho.chu@samsung.com>
  * @bug    No known bugs except for NYI items
  * @brief  Cache loader class
