@@ -28,7 +28,7 @@
 #include <vector>
 
 /**
- * @Namespace   Namespace Env
+ * @namespace   Namespace Env
  * @brief       Namespace Env
  */
 namespace Env {

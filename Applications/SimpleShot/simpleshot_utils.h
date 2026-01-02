@@ -16,6 +16,9 @@ namespace simpleshot {
 
 namespace util {
 
+/**
+ * @brief Entry structure
+ */
 struct Entry {
   std::string key;
   std::string value;
