@@ -49,6 +49,7 @@ LOCAL_LDLIBS := -llog -landroid -fopenmp -static-openmp -DENABLE_FP16=1 -DUSE__F
 LOCAL_SRC_FILES := ../main.cpp \
     ../models/causal_lm.cpp \
     ../models/transformer.cpp \
+    ../models/embedding.cpp \
     ../models/qwen3/qwen3_causallm.cpp \
     ../models/qwen3_moe/qwen3_moe_causallm.cpp \
     ../models/qwen3_slim_moe/qwen3_slim_moe_causallm.cpp \
