@@ -391,6 +391,12 @@ public:
   virtual float l2norm() const;
 
   /**
+   * @copydoc Tensor::normalization_i(unsigned int dim, float p, float epsilon)
+   */
+  virtual void normalization_i(unsigned int dim, float p = 2.0,
+                               float epsilon = 1e-12);
+
+  /**
    * @copydoc Tensor::pow(float exponent, Tensor &output)
    */
   virtual Tensor &pow(float exponent, Tensor &output) const;

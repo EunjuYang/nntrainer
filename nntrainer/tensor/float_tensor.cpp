@@ -645,6 +645,35 @@ float FloatTensor::l2norm() const {
   return snrm2(size(), (float *)getData(), 1);
 }
 
+void FloatTensor::normalization_i(unsigned int dim, float p, float epsilon) {
+  NNTR_THROW_IF(!contiguous, std::invalid_argument)
+    << getName() << " is not contiguous, cannot do normalization.";
+
+  NNTR_THROW_IF(p != 2.0f, std::invalid_argument)
+    << "Only L2 norm (p=2.0) is supported currently";
+
+  float *data = (float *)getData();
+  size_t dim_size = this->dim.getTensorDim(dim);
+  size_t stride = strides[dim];
+
+  if (dim == 3 && stride == 1) {
+    size_t total_elements = size();
+    size_t num_vectors = total_elements / dim_size;
+
+#pragma omp parallel for
+    for (size_t i = 0; i < num_vectors; ++i) {
+      float *vec_ptr = data + i * dim_size;
+      float norm = snrm2(dim_size, vec_ptr, 1);
+      float scale = 1.0f / std::max(norm, epsilon);
+      sscal(dim_size, scale, vec_ptr, 1);
+    }
+  } else {
+    throw nntrainer::exception::not_supported(
+      "FloatTensor::normalization_i currently only optimizes for the last "
+      "dimension (dim=3) with stride 1.");
+  }
+}
+
 Tensor &FloatTensor::pow(float exponent, Tensor &output) const {
   auto f = [exponent](float in) { return powf(in, exponent); };
   apply(f, output);

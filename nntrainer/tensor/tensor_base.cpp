@@ -521,6 +521,12 @@ float TensorBase::l2norm() const {
     getStringDataType());
 }
 
+void TensorBase::normalization_i(unsigned int dim, float p, float epsilon) {
+  throw std::runtime_error(
+    "Tensor::normalization_i() is not supported for this tensor type" +
+    getStringDataType());
+}
+
 Tensor &TensorBase::pow(float exponent, Tensor &output) const {
   throw std::invalid_argument(
     "Tensor::pow() is currently not supported in tensor data type " +

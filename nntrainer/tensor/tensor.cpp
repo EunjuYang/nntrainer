@@ -957,6 +957,10 @@ void Tensor::normalization_i() {
   }
 }
 
+void Tensor::normalization_i(unsigned int dim, float p, float epsilon) {
+  itensor_->normalization_i(dim, p, epsilon);
+}
+
 void Tensor::standardization_i() {
   Tensor mean_by_batch = this->sum_by_batch();
   mean_by_batch.divide_i(static_cast<float>(getDim().getFeatureLen()));
