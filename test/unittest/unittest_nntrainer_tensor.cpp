@@ -7078,6 +7078,98 @@ TEST(nntrainer_Tensor, transpose_5122048) {
   EXPECT_EQ(A_fp32, A_T_T);
 }
 
+TEST(nntrainer_Tensor, normalization_i_01_p) {
+
+  int status = ML_ERROR_NONE;
+  // B:2, C:1, H:1, W:5
+  nntrainer::Tensor tensor = nntrainer::Tensor(2, 1, 1, 5);
+  float *data = tensor.getData<float>();
+
+  // Vector 1: [3, 4, 0, 0, 0] -> Norm = 5
+  data[0] = 3.0f;
+  data[1] = 4.0f;
+  data[2] = 0.0f;
+  data[3] = 0.0f;
+  data[4] = 0.0f;
+
+  // Vector 2: [1, 1, 1, 1, 1] -> Norm = sqrt(5) ~= 2.2360679
+  data[5] = 1.0f;
+  data[6] = 1.0f;
+  data[7] = 1.0f;
+  data[8] = 1.0f;
+  data[9] = 1.0f;
+
+  ASSERT_NO_THROW(tensor.normalization_i(3, 2.0));
+
+  // Check Vector 1
+  float *norm_data1 = tensor.getData<float>();
+  EXPECT_NEAR(norm_data1[0], 0.6f, 1e-5);
+  EXPECT_NEAR(norm_data1[1], 0.8f, 1e-5);
+  EXPECT_NEAR(norm_data1[2], 0.0f, 1e-5);
+  EXPECT_NEAR(norm_data1[3], 0.0f, 1e-5);
+  EXPECT_NEAR(norm_data1[4], 0.0f, 1e-5);
+
+  // Check Vector 2
+  float *norm_data2 = tensor.getData<float>() + 5;
+  float expected = 1.0f / std::sqrt(5.0f);
+  for (int i = 0; i < 5; ++i) {
+    EXPECT_NEAR(norm_data2[i], expected, 1e-5);
+  }
+}
+
+TEST(nntrainer_Tensor, normalization_i_02_epsilon_p) {
+  // B:1, C:1, H:1, W:3
+  nntrainer::Tensor tensor = nntrainer::Tensor(1, 1, 1, 3);
+  float *data = tensor.getData<float>();
+
+  // Zero vector
+  data[0] = 0.0f;
+  data[1] = 0.0f;
+  data[2] = 0.0f;
+
+  // Normalization with epsilon 1.0
+  // Norm is 0, so scale should be 1.0 / max(0, 1.0) = 1.0
+  ASSERT_NO_THROW(tensor.normalization_i(3, 2.0, 1.0f));
+
+  EXPECT_EQ(data[0], 0.0f);
+  EXPECT_EQ(data[1], 0.0f);
+  EXPECT_EQ(data[2], 0.0f);
+}
+
+TEST(nntrainer_Tensor, normalization_i_03_unsupported_dim_n) {
+  nntrainer::Tensor tensor = nntrainer::Tensor(2, 2, 2, 2);
+
+  // Currently only dim=3 is supported
+  EXPECT_THROW(tensor.normalization_i(2), nntrainer::exception::not_supported);
+  EXPECT_THROW(tensor.normalization_i(1), nntrainer::exception::not_supported);
+  EXPECT_THROW(tensor.normalization_i(0), nntrainer::exception::not_supported);
+}
+
+TEST(nntrainer_Tensor, normalization_i_04_unsupported_p_n) {
+  nntrainer::Tensor tensor = nntrainer::Tensor(1, 1, 1, 5);
+
+  // Only p=2.0 is supported
+  EXPECT_THROW(tensor.normalization_i(3, 1.0), std::invalid_argument);
+  EXPECT_THROW(tensor.normalization_i(3, 3.0), std::invalid_argument);
+}
+
+TEST(nntrainer_Tensor, normalization_i_05_default_args_p) {
+  nntrainer::Tensor tensor = nntrainer::Tensor(1, 1, 1, 5);
+  float *data = tensor.getData<float>();
+
+  // Vector: [1, 1, 1, 1, 1] -> Norm = 2.236
+  for (int i = 0; i < 5; ++i)
+    data[i] = 1.0f;
+
+  // Should default to p=2.0, epsilon=1e-12
+  ASSERT_NO_THROW(tensor.normalization_i(3));
+
+  float expected = 1.0f / std::sqrt(5.0f);
+  for (int i = 0; i < 5; ++i) {
+    EXPECT_NEAR(data[i], expected, 1e-5);
+  }
+}
+
 int main(int argc, char **argv) {
   int result = -1;
 

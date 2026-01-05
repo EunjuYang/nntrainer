@@ -356,6 +356,12 @@ public:
   float l2norm() const override;
 
   /**
+   * @copydoc Tensor::normalization_i
+   */
+  void normalization_i(unsigned int dim, float p = 2.0,
+                       float epsilon = 1e-12) override;
+
+  /**
    * @copydoc Tensor::pow(float exponent, Tensor &output)
    */
   Tensor &pow(float exponent, Tensor &output) const override;
