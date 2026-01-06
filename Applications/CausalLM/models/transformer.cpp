@@ -45,16 +45,21 @@ std::string LoadBytesFromFile(const std::string &path) {
 
 static ModelType strToModelType(const std::string &model_type) {
 
-  static const std::unordered_map<std::string, ModelType> model_type_map = {
-    {"Model", ModelType::MODEL},
-    {"CausalLM", ModelType::CAUSAL_LM},
-    {"Embedding", ModelType::EMBEDDING}};
+  std::string model_type_lower = model_type;
+  std::transform(model_type_lower.begin(), model_type_lower.end(),
+                 model_type_lower.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
 
-  if (model_type_map.find(model_type) == model_type_map.end()) {
+  static const std::unordered_map<std::string, ModelType> model_type_map = {
+    {"model", ModelType::MODEL},
+    {"causallm", ModelType::CAUSALLM},
+    {"embedding", ModelType::EMBEDDING}};
+
+  if (model_type_map.find(model_type_lower) == model_type_map.end()) {
     return ModelType::UNKNOWN;
   }
 
-  return model_type_map.at(model_type);
+  return model_type_map.at(model_type_lower);
 }
 
 Transformer::Transformer(json &cfg, json &generation_cfg, json &nntr_cfg,

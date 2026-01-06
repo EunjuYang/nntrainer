@@ -56,7 +56,7 @@ using json = nlohmann::json;
 /**
  * @brief Model Type Enum
  */
-enum class ModelType { MODEL, CAUSAL_LM, EMBEDDING, UNKNOWN };
+enum class ModelType { MODEL, CAUSALLM, EMBEDDING, UNKNOWN };
 
 /**
  * @brief Transformer Class
