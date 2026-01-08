@@ -399,6 +399,20 @@ void compute_rotary_emb_value(unsigned int width, unsigned int dim,
                                  only_convert_to_fp16);
 }
 
+template <>
+void rms_norm_wrt_width_fp16_intrinsic(const _FP16 *__restrict X,
+                                       _FP16 *__restrict Y, size_t H, size_t W,
+                                       float epsilon) {
+  __fallback_rms_norm_wrt_width_fp16_intrinsic<_FP16>(X, Y, H, W, epsilon);
+}
+
+template <>
+void rms_norm_wrt_width_fp16_intrinsic(const float *__restrict X,
+                                       float *__restrict Y, size_t H, size_t W,
+                                       float epsilon) {
+  neon::rms_norm_wrt_width_fp16_intrinsic(X, Y, H, W, epsilon);
+}
+
 void softmax_row_inplace(_FP16 *qk_out, size_t start_row, size_t end_row,
                          size_t num_heads) {
   nntrainer::neon::softmax_row_inplace(qk_out, start_row, end_row, num_heads);
