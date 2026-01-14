@@ -407,7 +407,7 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
 void compute_fp16vcache_transposed(int row_num, const _FP16 *in,
                                    const _FP16 *vcache, _FP16 *output,
                                    int num_cache_head, int gqa_size,
-                                   int head_dim, int chunk_size,
+                                   int head_dim,
                                    size_t local_window_size = UINT_MAX);
 
 /**
@@ -425,7 +425,7 @@ void compute_fp16vcache_transposed(int row_num, const _FP16 *in,
  */
 void compute_kcaches(const _FP16 *in, const _FP16 *kcache, _FP16 *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_off, int tile_size,
+                     int gqa_size, int tile_size,
                      size_t local_window_size = UINT_MAX);
 
 /**
