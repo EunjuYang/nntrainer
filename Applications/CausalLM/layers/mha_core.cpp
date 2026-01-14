@@ -132,10 +132,10 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
       1, 1, 1, num_heads_Q,
       nntrainer::TensorDim::TensorType(context.getFormat(),
                                        context.getActivationDataType()));
+#endif
     sink_idx = context.requestWeight(sink_dim, nntrainer::Initializer::ZEROS,
                                      nntrainer::WeightRegularizer::NONE, 0.0f,
                                      0.0f, "sink");
-#endif
   }
 
   /** Tensor for KV-Cache */
