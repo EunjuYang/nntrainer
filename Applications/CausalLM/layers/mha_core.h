@@ -116,27 +116,6 @@ public:
 };
 
 /**
- * @brief AttnLogitSoftcapping
- */
-class AttnLogitSoftcapping : public nntrainer::Property<float> {
-public:
-  AttnLogitSoftcapping(float value = 0.0f) { set(value); };
-  static constexpr const char *key =
-    "attn_logit_softcapping";                 /**< unique key to access */
-  using prop_tag = nntrainer::float_prop_tag; /**< property type */
-};
-
-/**
- * @brief IsCausal property
- */
-class IsCausal : public nntrainer::Property<bool> {
-public:
-  IsCausal(bool value = true) { set(value); };
-  static constexpr const char *key = "is_causal"; /**< unique key to access */
-  using prop_tag = nntrainer::bool_prop_tag;      /**< property type */
-};
-
-/**
  * @brief RopeScalingType
  * - default
  * - yarn
@@ -307,8 +286,7 @@ private:
     nntrainer::props::AverageAttentionWeight, nntrainer::props::MaxTimestep,
     props::SlidingWindow, props::MaxNewTokens, props::RopeTheta,
     props::MaxPositionEmbeddings, props::UseSink, props::RopeScalingType,
-    props::RopeScalingFactor, props::RopeScalingMaxPositionEmbeddings,
-    props::AttnLogitSoftcapping, props::IsCausal>
+    props::RopeScalingFactor, props::RopeScalingMaxPositionEmbeddings>
     mha_core_props; /**< mha_core layer properties */
 
   /** softmax activation operation */
@@ -325,8 +303,6 @@ private:
   float theta;
   size_t local_window_size;
   bool use_sink = false;
-  float attn_logit_softcapping = 0.0f;
-  bool is_causal;
 
   enum INOUT_INDEX {
     /** input index */
@@ -367,10 +343,9 @@ private:
 
   /****************** ROTARY EMBEDDING *****************/
   /** static variable - they are all expected to be initialized once */
-
-  inline static std::vector<float> thetas;
   inline static std::vector<std::vector<float>> *freqs_cos = {};
   inline static std::vector<std::vector<float>> *freqs_sin = {};
+  inline static std::vector<float> thetas;
 #ifdef ENABLE_FP16
   inline static std::vector<std::vector<_FP16>> *freqs_cos_fp16 = {};
   inline static std::vector<std::vector<_FP16>> *freqs_sin_fp16 = {};
@@ -433,9 +408,9 @@ private:
 
   void compute_fp16vcache_transposed(nntrainer::Tensor &in,
                                      nntrainer::Tensor &vcache,
-                                     nntrainer::Tensor &output, int from,
+                                     nntrainer::Tensor &output, int seq,
                                      int num_cache_head, int gqa_size,
-                                     int head_dim, int to,
+                                     int head_dim, bool process_all,
                                      BS::thread_pool<> &pool);
 
   /************** END OF  ROTARY EMBEDDING *************/
