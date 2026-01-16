@@ -930,7 +930,6 @@ void MHACoreLayer::softmax_triangle(nntrainer::Tensor &qk_out, size_t row,
       std::vector<std::future<void>> futures;
       int min_row = row < local_window_size ? 0 : row - local_window_size;
 
-      // for (int i = row - 1; i >= min_row; --i) {
       for (int i = 0; i < row; ++i) {
         size_t start_row = calc_attn_index(i + from) - calc_attn_index(from);
         size_t end_row = calc_attn_index(from + i + 1) - calc_attn_index(from);
