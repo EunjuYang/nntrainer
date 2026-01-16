@@ -329,8 +329,8 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     SYS_PROMP_LEN = tokenizer->Encode(system_prompt).size();
 
   auto _input = tokenizer->Encode(prompt_);
-  // insert bos token at the beginning of the input
-  _input.insert(_input.begin(), BOS_TOKEN_ID);
+  ///@note insert bos token at the beginning of the input
+  // _input.insert(_input.begin(), BOS_TOKEN_ID);
 #endif
 
   // | <------------------- MAX_SEQ_LEN -------------------> |
