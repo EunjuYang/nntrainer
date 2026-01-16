@@ -105,6 +105,8 @@ void stop_and_print_peak() {
 
 int main(int argc, char *argv[]) {
 
+  auto start_time = std::chrono::high_resolution_clock::now();
+
   /** Register all runnable causallm models to factory */
   causallm::Factory::Instance().registerModel(
     "LlamaForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
@@ -218,6 +220,10 @@ int main(int argc, char *argv[]) {
 #ifdef PROFILE
     stop_and_print_peak();
 #endif
+    auto finish_time = std::chrono::high_resolution_clock::now();
+    auto e2e_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      finish_time - start_time);
+    std::cout << "[e2e time]: " << e2e_duration.count() << " ms \n";
     printMemoryUsage();
 
   } catch (const std::exception &e) {
