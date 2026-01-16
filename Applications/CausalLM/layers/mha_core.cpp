@@ -133,10 +133,10 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
       1, 1, 1, num_heads_Q,
       nntrainer::TensorDim::TensorType(context.getFormat(),
                                        context.getActivationDataType()));
-#endif
     sink_idx = context.requestWeight(sink_dim, nntrainer::Initializer::ZEROS,
                                      nntrainer::WeightRegularizer::NONE, 0.0f,
                                      0.0f, "sink");
+#endif
   }
 
   attn_logit_softcapping =
@@ -1019,13 +1019,6 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       if (!is_causal)
         min_seq = 0;
       int loop_end = is_causal ? seq : seq; // Just seq
-      // Adjust loop range if min_seq is used.
-      // If we process from min_seq to seq-1 (end of history?)
-      // Loop variable i is offset?
-      // compute_fp16vcache expects row index?
-      // In 3270a398: for (int i = 0; i < seq; ++i) ... row_to_compute = to - seq + i.
-      // Here seq seems to be 'length to process' (window size).
-      // So loop 0..seq-1.
       
       futures.reserve(seq);
 
@@ -1033,13 +1026,8 @@ void MHACoreLayer::compute_fp16vcache_transposed(
         futures.push_back(pool.submit_task([=]() {
           size_t start_idx;
           if (is_causal) {
-             // If we iterate 0..seq, row is to-seq+i.
-             // start_idx logic should match.
              start_idx = calc_attn_index(to - seq + i) - calc_attn_index(to - seq);
           } else {
-             // For non-causal, we process all? seq=to-from.
-             // i is 0..seq-1.
-             // start_idx = i * to (assuming out_ has 'to' width)
              start_idx = i * to; 
           }
           const float *input =
@@ -1047,8 +1035,7 @@ void MHACoreLayer::compute_fp16vcache_transposed(
           float *out = output.getData<float>() +
                        i * (num_cache_head * gqa_size * head_dim);
 
-          int row_num = is_causal ? (to - seq + i) : i; // If !is_causal, i matches row?
-          // If !is_causal, we process 0..seq. If from=0, seq=to. i=row.
+          int row_num = is_causal ? (to - seq + i) : i;
           
           nntrainer::compute_fp16vcache_fp32_transposed(
             row_num, input, vcache.getData<uint16_t>(), out, num_cache_head,
