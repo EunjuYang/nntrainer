@@ -130,6 +130,7 @@ void TieWordEmbedding::finalize_lmhead(nntrainer::InitLayerContext &context) {
   auto const &in_dim = context.getInputDimensions()[0];
   output_dims[0] = in_dim;
   is_nchw ? output_dims[0].width(unit) : output_dims[0].channel(unit);
+  output_dims[0].height(1);
 
   output_dims[0].setTensorType(
     {context.getFormat(), context.getActivationDataType()});
@@ -274,7 +275,6 @@ void TieWordEmbedding::incremental_forwarding_lmhead(
   input_step_dim.batch(1);
   input_step_dim.height(1);
   hidden_step_dim.batch(1);
-  hidden_step_dim.height(1);
 
   unsigned int b_size = input_dim.batch();
 
@@ -285,10 +285,7 @@ void TieWordEmbedding::incremental_forwarding_lmhead(
         (to - from == 1 ? 0 : (to - 1) * input_.width()),
       true);
     nntrainer::Tensor hidden_step = hidden_.getSharedDataTensor(
-      hidden_step_dim,
-      b * hidden_dim.getFeatureLen() +
-        (to - from == 1 ? 0 : (to - 1) * hidden_.width()),
-      true);
+      hidden_step_dim, b * hidden_dim.getFeatureLen(), true);
 
     ///@note Since tieword embedding shares the weight with embedding,
     /// the weight is transposed. Thus, the dot product should be consider
