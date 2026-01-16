@@ -1159,7 +1159,9 @@ std::vector<float *> NeuralNetwork::incremental_inference(
   // auto end_increment = std::chrono::high_resolution_clock::now();
   std::vector<float *> output;
 
-  unsigned int step = ((to - from) == 0) ? 0 : (to - from) - 1;
+  ///@note Always we take the first position of output
+  // unsigned int step = ((to - from) == 0) ? 0 : (to - from) - 1;
+  unsigned int step = 0;
 
   for (auto &out : output_tensors) {
     auto out_t = *out.get();
