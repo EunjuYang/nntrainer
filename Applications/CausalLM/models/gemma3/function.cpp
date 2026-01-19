@@ -30,9 +30,6 @@ std::string to_upper(std::string s) {
   return s;
 }
 
-// Forward declaration
-std::string format_argument_value(const json &value);
-
 // Recursively format parameters
 std::string format_parameters(const json &properties) {
   std::stringstream ss;
