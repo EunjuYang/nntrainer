@@ -231,6 +231,9 @@ void TensorPool::allocate(bool init) {
       continue;
     }
     spec.tensor->setData(mem_pool->getMemory(details->token), 0, init);
+    ml_logi("Memory Alloc Details (Tensor): %s : %zu : address %p",
+            spec.tensor->getName().c_str(), spec.tensor->getMemoryBytes(),
+            spec.tensor->getData());
 
     syncDependents(spec);
   }

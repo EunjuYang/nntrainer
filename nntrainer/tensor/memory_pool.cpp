@@ -124,6 +124,8 @@ void MemoryPool::allocate() {
   if (mem_pool != nullptr)
     throw std::runtime_error("Memory pool is already allocated");
 
+  ml_logi("MemoryPool::allocate size: %zu", pool_size);
+
 #if defined(__ANDROID__) && ENABLE_NPU
   int i = 0;
 #define RPCMEM_HEAP_ID_SYSTEM 25
@@ -201,6 +203,8 @@ void MemoryPool::allocate() {
 void MemoryPool::allocateFSU() {
   if (pool_size == 0)
     throw std::runtime_error("Allocating memory pool with size 0");
+
+  ml_logi("MemoryPool::allocateFSU size: %zu", pool_size);
 
   if (mem_pool != nullptr)
     throw std::runtime_error("Memory pool is already allocated");
