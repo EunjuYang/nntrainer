@@ -110,6 +110,11 @@ protected:
                                      unsigned int *input_ids = nullptr,
                                      unsigned int NUM_INPUT_IDS = 0);
 
+  /**
+   * @brief registerCutomLayers
+   */
+  void registerCustomLayers() override;
+
   /** internal buffer */
   std::vector<std::string>
     output_list;             /**< List of output names for the model */
