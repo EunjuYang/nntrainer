@@ -359,7 +359,7 @@ private:
    * @param[in] theta base of theta (default = 10000)
    */
   void precompute_freqs(int head_dim, unsigned int seq_len,
-                        float theta = 10000.0);
+                        float theta = 10000.0, bool is_fp16 = false);
 
   /**
    * @brief _compute frequency parameters for default ROPE
