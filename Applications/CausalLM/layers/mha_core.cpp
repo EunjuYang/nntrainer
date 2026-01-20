@@ -13,8 +13,11 @@
  */
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <thread>
 #include <vector>
+
+static std::mutex rope_init_mtx;
 
 #include <engine.h>
 #include <fp16.h>
@@ -82,7 +85,7 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
     std::get<nntrainer::props::MaxTimestep>(mha_core_props).get();
 
   /** max position embeddings */
-  unsigned int max_position_embeddings =
+  max_position_embeddings =
     std::get<props::MaxPositionEmbeddings>(mha_core_props).get();
 
   /** local window size */
@@ -163,10 +166,6 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
     nntrainer::TensorLifespan::MAX_LIFESPAN);
 
   theta = (float)std::get<props::RopeTheta>(mha_core_props).get();
-
-  /** precompute_freqs will be invoked only once */
-  if (freqs_cos == nullptr)
-    precompute_freqs(head_dim, max_position_embeddings, theta);
 
   /** set Output dimension! - one output */
   std::vector<nntrainer::TensorDim> output_dims(1);
@@ -592,62 +591,93 @@ void MHACoreLayer::one_batch_incremental_forwarding(
  * @note seq_len -> max_position_embeddings
  */
 void MHACoreLayer::precompute_freqs(int head_dim, unsigned int seq_len,
-                                    float theta) {
+                                    float theta, bool is_fp16) {
   // compute the freqs only when it is the first time to call this function
-  if (freqs_cos != nullptr && freqs_cos->size() == seq_len)
+  if (!is_fp16 && freqs_cos != nullptr && freqs_cos->size() == seq_len)
     return;
+#ifdef ENABLE_FP16
+  if (is_fp16 && freqs_cos_fp16 != nullptr && freqs_cos_fp16->size() == seq_len)
+    return;
+#endif
 
-  if (rope_scaling_type == "default")
-    _compute_default_parameters(head_dim, theta);
-  else if (rope_scaling_type == "yarn")
-    _compute_yarn_parameters(head_dim, theta);
-  else
-    NNTR_THROW_IF(true, std::invalid_argument) << "Unsupported rope type!";
+  if (thetas.empty()) {
+    if (rope_scaling_type == "default")
+      _compute_default_parameters(head_dim, theta);
+    else if (rope_scaling_type == "yarn")
+      _compute_yarn_parameters(head_dim, theta);
+    else
+      NNTR_THROW_IF(true, std::invalid_argument) << "Unsupported rope type!";
+  }
 
-  // cos / sin
   unsigned int half_ = head_dim / 2;
-  auto cos = new std::vector<std::vector<float>>();
-  cos->assign(seq_len, std::vector<float>(head_dim, 0));
-  auto sin = new std::vector<std::vector<float>>();
-  sin->assign(seq_len, std::vector<float>(head_dim, 0));
 
-  // update cos / sin frequency
-  for (unsigned int i = 0; i < seq_len; ++i) {
+  if (!is_fp16) {
+    // cos / sin
+    auto cos = new std::vector<std::vector<float>>();
+    cos->assign(seq_len, std::vector<float>(head_dim, 0));
+    auto sin = new std::vector<std::vector<float>>();
+    sin->assign(seq_len, std::vector<float>(head_dim, 0));
+
+    // update cos / sin frequency
+    for (unsigned int i = 0; i < seq_len; ++i) {
 
 #ifdef USE_NEON
-    nntrainer::calc_trigonometric_vals_dup(half_, thetas.data(),
-                                           (*cos)[i].data(), (*sin)[i].data(),
-                                           i, attention_scaling);
+      nntrainer::calc_trigonometric_vals_dup(half_, thetas.data(),
+                                             (*cos)[i].data(), (*sin)[i].data(),
+                                             i, attention_scaling);
 #else
-    for (unsigned int j = 0; j < half_; ++j) {
-      float angle = i * thetas[j];
-      (*cos)[i][j] = std::cos(angle) * attention_scaling;
-      (*cos)[i][j + half_] =
-        std::cos(angle) * attention_scaling; // repeated 2 times
+      for (unsigned int j = 0; j < half_; ++j) {
+        float angle = i * thetas[j];
+        (*cos)[i][j] = std::cos(angle) * attention_scaling;
+        (*cos)[i][j + half_] =
+          std::cos(angle) * attention_scaling; // repeated 2 times
 
-      (*sin)[i][j] = std::sin(angle) * attention_scaling;
-      (*sin)[i][j + half_] =
-        std::sin(angle) * attention_scaling; // repeated 2 times
-    }
+        (*sin)[i][j] = std::sin(angle) * attention_scaling;
+        (*sin)[i][j + half_] =
+          std::sin(angle) * attention_scaling; // repeated 2 times
+      }
 #endif
+    }
+    freqs_cos = cos;
+    freqs_sin = sin;
   }
-  freqs_cos = cos;
-  freqs_sin = sin;
 
 #ifdef ENABLE_FP16
-  // cos / sin for FP16
-  auto cos_fp16 = new std::vector<std::vector<_FP16>>();
-  cos_fp16->assign(seq_len, std::vector<_FP16>(head_dim, 0));
-  auto sin_fp16 = new std::vector<std::vector<_FP16>>();
-  sin_fp16->assign(seq_len, std::vector<_FP16>(head_dim, 0));
-  for (unsigned int i = 0; i < seq_len; ++i) {
-    for (unsigned int j = 0; j < head_dim; ++j) {
-      (*cos_fp16)[i][j] = (_FP16)(*cos)[i][j];
-      (*sin_fp16)[i][j] = (_FP16)(*sin)[i][j];
+  if (is_fp16) {
+    // cos / sin for FP16
+    auto cos_fp16 = new std::vector<std::vector<_FP16>>();
+    cos_fp16->assign(seq_len, std::vector<_FP16>(head_dim, 0));
+    auto sin_fp16 = new std::vector<std::vector<_FP16>>();
+    sin_fp16->assign(seq_len, std::vector<_FP16>(head_dim, 0));
+
+    std::vector<float> cos_tmp(head_dim);
+    std::vector<float> sin_tmp(head_dim);
+
+    for (unsigned int i = 0; i < seq_len; ++i) {
+#ifdef USE_NEON
+      nntrainer::calc_trigonometric_vals_dup(half_, thetas.data(),
+                                             cos_tmp.data(), sin_tmp.data(), i,
+                                             attention_scaling);
+#else
+      for (unsigned int j = 0; j < half_; ++j) {
+        float angle = i * thetas[j];
+        cos_tmp[j] = std::cos(angle) * attention_scaling;
+        cos_tmp[j + half_] =
+          std::cos(angle) * attention_scaling; // repeated 2 times
+
+        sin_tmp[j] = std::sin(angle) * attention_scaling;
+        sin_tmp[j + half_] =
+          std::sin(angle) * attention_scaling; // repeated 2 times
+      }
+#endif
+      for (unsigned int j = 0; j < head_dim; ++j) {
+        (*cos_fp16)[i][j] = (_FP16)cos_tmp[j];
+        (*sin_fp16)[i][j] = (_FP16)sin_tmp[j];
+      }
     }
+    freqs_cos_fp16 = cos_fp16;
+    freqs_sin_fp16 = sin_fp16;
   }
-  freqs_cos_fp16 = cos_fp16;
-  freqs_sin_fp16 = sin_fp16;
 #endif
 };
 
@@ -769,6 +799,12 @@ void MHACoreLayer::apply_rotary_emb_tensor_v2(nntrainer::Tensor &in,
     std::get<nntrainer::props::MaxTimestep>(mha_core_props).get();
 
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
+    if (freqs_cos == nullptr) {
+      const std::lock_guard<std::mutex> lock(rope_init_mtx);
+      if (freqs_cos == nullptr) {
+        precompute_freqs(head_dim, max_position_embeddings, theta, false);
+      }
+    }
     std::vector<float> *cos_ = nullptr;
     std::vector<float> *sin_ = nullptr;
 
@@ -806,6 +842,12 @@ void MHACoreLayer::apply_rotary_emb_tensor_v2(nntrainer::Tensor &in,
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
+    if (freqs_cos_fp16 == nullptr) {
+      const std::lock_guard<std::mutex> lock(rope_init_mtx);
+      if (freqs_cos_fp16 == nullptr) {
+        precompute_freqs(head_dim, max_position_embeddings, theta, true);
+      }
+    }
     std::vector<_FP16> *cos_ = nullptr;
     std::vector<_FP16> *sin_ = nullptr;
 
@@ -1036,7 +1078,7 @@ void MHACoreLayer::updateTensorsByInputDimensions(
     std::get<nntrainer::props::MaxTimestep>(mha_core_props).get();
   unsigned int &max_new_tokens =
     std::get<props::MaxNewTokens>(mha_core_props).get();
-  unsigned int &max_position_embeddings =
+  max_position_embeddings =
     std::get<props::MaxPositionEmbeddings>(mha_core_props).get();
   max_timestep = height + max_new_tokens;
 
@@ -1050,8 +1092,6 @@ void MHACoreLayer::updateTensorsByInputDimensions(
   kv_cache_dim.setDataType(ml::train::TensorDim::DataType::UINT16);
 #endif
   kv_cache_dim.height(max_timestep);
-
-  precompute_freqs(head_dim, max_position_embeddings, theta);
 
   context.updateInput(INOUT_INDEX::QUERY, input_dimensions[0]);
   context.updateInput(INOUT_INDEX::KEY, kv_dim);
