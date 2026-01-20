@@ -21,7 +21,9 @@
  */
 
 #include <algorithm>
+#include <app_context.h>
 #include <cmath>
+#include <engine.h>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -29,6 +31,7 @@
 
 #include <common.h>
 #include <layer_context.h>
+#include <lm_head.h>
 #include <mha_core.h>
 #include <tensor.h>
 
@@ -104,7 +107,7 @@ void CausalLM::constructModel() {
   Transformer::constructModel();
 
   const std::string lmhead_type =
-    TIE_WORD_EMBEDDINGS ? "tie_word_embeddings" : "fully_connected";
+    TIE_WORD_EMBEDDINGS ? "tie_word_embeddings" : "lm_head";
 
   // add lmhead
   std::vector<std::string> lmhead_prop = {
@@ -266,6 +269,19 @@ std::vector<unsigned int> CausalLM::generate(float *logits, bool do_sample,
 
   return outputs;
 };
+
+void CausalLM::registerCustomLayers() {
+  Transformer::registerCustomLayers();
+  const auto &ct_engine = nntrainer::Engine::Global();
+  const auto app_context =
+    static_cast<nntrainer::AppContext *>(ct_engine.getRegisteredContext("cpu"));
+  try {
+    app_context->registerFactory(nntrainer::createLayer<causallm::LmHeadLayer>);
+  } catch (std::invalid_argument &e) {
+    std::cerr << "failed to register factory, reason: " << e.what()
+              << std::endl;
+  }
+}
 
 void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
                    const WSTR tail_prompt) {
