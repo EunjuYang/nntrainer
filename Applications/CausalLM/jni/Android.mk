@@ -31,7 +31,7 @@ LOCAL_MODULE := tokenizers_c
 LOCAL_SRC_FILES := ../lib/libtokenizers_android_c.a
 include $(PREBUILT_STATIC_LIBRARY)
 
-# Common CausalLM Library (Static)
+# Common CausalLM Library (Static) - used by both app and api lib
 include $(CLEAR_VARS)
 LOCAL_MODULE := causallm_common
 LOCAL_ARM_NEON := true
@@ -112,7 +112,7 @@ LOCAL_STATIC_LIBRARIES := tokenizers_c causallm_common
 
 include $(BUILD_EXECUTABLE)
 
-# Build CausalLM API Test executable
+# Build CausalLM API Shared Library (libnntrainer_causallm_api.so)
 include $(CLEAR_VARS)
 
 LOCAL_ARM_NEON := true
@@ -123,12 +123,11 @@ LOCAL_CFLAGS += -pthread -fexceptions -fopenmp -static-openmp -DENABLE_FP16=1 -D
 LOCAL_LDFLAGS += -fexceptions -fopenmp -static-openmp -DENABLE_FP16=1 -DUSE__FP16=1 -D__ARM_NEON__=1 -march=armv8.2-a+fp16+dotprod+i8mm -DUSE_NEON=1 -mtune=cortex-a76 -O3 -ffast-math
 LOCAL_MODULE_TAGS := optional
 LOCAL_ARM_MODE := arm
-LOCAL_MODULE := nntrainer_causallm_test
+LOCAL_MODULE := nntrainer_causallm_api
 LOCAL_LDLIBS := -llog -landroid -fopenmp -static-openmp -DENABLE_FP16=1 -DUSE__FP16=1 -D__ARM_NEON__=1 -march=armv8.2-a+fp16+dotprod+i8mm -DUSE_NEON=1
 
-# Source files
-LOCAL_SRC_FILES := ../api/test_api.cpp \
-    ../api/causal_lm_api.cpp \
+# Source files for API
+LOCAL_SRC_FILES := ../api/causal_lm_api.cpp \
     ../api/model_config.cpp
 
 LOCAL_SHARED_LIBRARIES := nntrainer ccapi-nntrainer
@@ -136,4 +135,4 @@ LOCAL_STATIC_LIBRARIES := tokenizers_c causallm_common
 
 LOCAL_C_INCLUDES += $(LOCAL_PATH)/../api
 
-include $(BUILD_EXECUTABLE)
+include $(BUILD_SHARED_LIBRARY)

@@ -77,11 +77,11 @@ build_app() {
     echo "CausalLM application build completed."
 }
 
-build_api() {
-    echo "Building CausalLM API..."
+build_api_lib() {
+    echo "Building CausalLM API Shared Library..."
     cd "$SCRIPT_DIR/jni"
-    ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk nntrainer_causallm_test -j $(nproc)
-    echo "CausalLM API build completed."
+    ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk nntrainer_causallm_api -j $(nproc)
+    echo "CausalLM API Library build completed."
 }
 
 clean_build() {
@@ -98,12 +98,11 @@ case "$TARGET" in
         build_app
         ;;
     api)
-        build_api
+        build_api_lib
         ;;
     all)
         prepare_deps
         clean_build
-        # Build both by default (or implied by no target, but explicit here)
         echo "Building all targets..."
         cd "$SCRIPT_DIR/jni"
         ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk -j $(nproc)
@@ -123,7 +122,7 @@ if [[ "$TARGET" != "clean" && "$TARGET" != "libs" ]]; then
         echo "Executable: nntrainer_causallm"
     fi
     if [[ "$TARGET" == "api" || "$TARGET" == "all" ]]; then
-        echo "Executable: nntrainer_causallm_test"
+        echo "Shared Library: libnntrainer_causallm_api.so"
     fi
     echo "Libraries: libnntrainer.so, libccapi-nntrainer.so, libc++_shared.so"
 fi
