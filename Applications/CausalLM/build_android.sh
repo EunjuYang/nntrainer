@@ -18,66 +18,112 @@ export NNTRAINER_ROOT
 echo "NNTRAINER_ROOT: $NNTRAINER_ROOT"
 echo "ANDROID_NDK: $ANDROID_NDK"
 
-# Step 1: Build nntrainer for Android if not already built
-if [ ! -f "$NNTRAINER_ROOT/builddir/android_build_result/lib/arm64-v8a/libnntrainer.so" ]; then
-    echo "Building nntrainer for Android..."
-    cd "$NNTRAINER_ROOT"
-    if [ -d "$NNTRAINER_ROOT/builddir" ]; then
-        rm -rf builddir
-    fi
-    ./tools/package_android.sh -Dmmap-read=false
-else
-    echo "nntrainer for Android already built."
-fi
+TARGET=${1:-all}
 
-# Check if build was successful
-if [ ! -f "$NNTRAINER_ROOT/builddir/android_build_result/lib/arm64-v8a/libnntrainer.so" ]; then
-    echo "Error: nntrainer build failed. Please check the build logs."
-    exit 1
-fi
-
-# Step 2: Build tokenizer library if not present
-echo "Build Tokenizer Library If not Present"
-cd "$SCRIPT_DIR"
-if [ ! -f "lib/libtokenizers_android_c.a" ]; then
-    echo "Warning: libtokenizers_android_c.a not found in lib directory."
-    echo "Attempting to build tokenizer library..."
-    if [ -f "build_tokenizer_android.sh" ]; then
-        ./build_tokenizer_android.sh
+prepare_deps() {
+    # Step 1: Build nntrainer for Android if not already built
+    if [ ! -f "$NNTRAINER_ROOT/builddir/android_build_result/lib/arm64-v8a/libnntrainer.so" ]; then
+        echo "Building nntrainer for Android..."
+        cd "$NNTRAINER_ROOT"
+        if [ -d "$NNTRAINER_ROOT/builddir" ]; then
+            rm -rf builddir
+        fi
+        ./tools/package_android.sh -Dmmap-read=false
     else
-        echo "Error: tokenizer library not found and build script is missing."
-        echo "Please build or download the tokenizer library for Android arm64-v8a"
-        echo "and place it in: $SCRIPT_DIR/lib/libtokenizers_android_c.a"
+        echo "nntrainer for Android already built."
+    fi
+
+    # Check if build was successful
+    if [ ! -f "$NNTRAINER_ROOT/builddir/android_build_result/lib/arm64-v8a/libnntrainer.so" ]; then
+        echo "Error: nntrainer build failed. Please check the build logs."
         exit 1
     fi
-fi
-echo "Tokenizer Library Built Successfully"
 
-# Step 3: Prepare json.hpp if not present
-if [ ! -f "$SCRIPT_DIR/json.hpp" ]; then
-    echo "json.hpp not found. Downloading..."
-    # prepare_encoder.sh expects target directory as first argument and version as second
-    # It copies json.hpp to ../Applications/CausalLM/ if version is 0.2
-    "$NNTRAINER_ROOT/jni/prepare_encoder.sh" "$NNTRAINER_ROOT/builddir" "0.2"
-    
+    # Step 2: Build tokenizer library if not present
+    echo "Build Tokenizer Library If not Present"
+    cd "$SCRIPT_DIR"
+    if [ ! -f "lib/libtokenizers_android_c.a" ]; then
+        echo "Warning: libtokenizers_android_c.a not found in lib directory."
+        echo "Attempting to build tokenizer library..."
+        if [ -f "build_tokenizer_android.sh" ]; then
+            ./build_tokenizer_android.sh
+        else
+            echo "Error: tokenizer library not found and build script is missing."
+            echo "Please build or download the tokenizer library for Android arm64-v8a"
+            echo "and place it in: $SCRIPT_DIR/lib/libtokenizers_android_c.a"
+            exit 1
+        fi
+    fi
+    echo "Tokenizer Library Built Successfully"
+
+    # Step 3: Prepare json.hpp if not present
     if [ ! -f "$SCRIPT_DIR/json.hpp" ]; then
-        echo "Error: Failed to download json.hpp"
-        exit 1
+        echo "json.hpp not found. Downloading..."
+        # prepare_encoder.sh expects target directory as first argument and version as second
+        # It copies json.hpp to ../Applications/CausalLM/ if version is 0.2
+        "$NNTRAINER_ROOT/jni/prepare_encoder.sh" "$NNTRAINER_ROOT/builddir" "0.2"
+        
+        if [ ! -f "$SCRIPT_DIR/json.hpp" ]; then
+            echo "Error: Failed to download json.hpp"
+            exit 1
+        fi
     fi
+}
+
+build_app() {
+    echo "Building CausalLM application..."
+    cd "$SCRIPT_DIR/jni"
+    ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk nntrainer_causallm -j $(nproc)
+    echo "CausalLM application build completed."
+}
+
+build_api() {
+    echo "Building CausalLM API..."
+    cd "$SCRIPT_DIR/jni"
+    ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk nntrainer_causallm_test -j $(nproc)
+    echo "CausalLM API build completed."
+}
+
+clean_build() {
+    echo "Cleaning build artifacts..."
+    cd "$SCRIPT_DIR/jni"
+    rm -rf libs obj
+}
+
+case "$TARGET" in
+    libs)
+        prepare_deps
+        ;;
+    app)
+        build_app
+        ;;
+    api)
+        build_api
+        ;;
+    all)
+        prepare_deps
+        clean_build
+        # Build both by default (or implied by no target, but explicit here)
+        echo "Building all targets..."
+        cd "$SCRIPT_DIR/jni"
+        ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk -j $(nproc)
+        ;;
+    clean)
+        clean_build
+        ;;
+    *)
+        echo "Usage: $0 [libs|app|api|all|clean]"
+        exit 1
+        ;;
+esac
+
+if [[ "$TARGET" != "clean" && "$TARGET" != "libs" ]]; then
+    echo "Output files are in: $SCRIPT_DIR/jni/libs/arm64-v8a/"
+    if [[ "$TARGET" == "app" || "$TARGET" == "all" ]]; then
+        echo "Executable: nntrainer_causallm"
+    fi
+    if [[ "$TARGET" == "api" || "$TARGET" == "all" ]]; then
+        echo "Executable: nntrainer_causallm_test"
+    fi
+    echo "Libraries: libnntrainer.so, libccapi-nntrainer.so, libc++_shared.so"
 fi
-
-# Step 4: Build CausalLM application
-echo "Building CausalLM application..."
-cd "$SCRIPT_DIR/jni"
-
-# Clean previous builds
-rm -rf libs obj
-
-# Run ndk-build
-ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk -j $(nproc)
-
-echo "Build completed successfully!"
-echo "Output files are in: $SCRIPT_DIR/jni/libs/arm64-v8a/"
-echo ""
-echo "Executable: nntrainer_causallm"
-echo "Libraries: libnntrainer.so, libccapi-nntrainer.so, libc++_shared.so"
