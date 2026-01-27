@@ -16,7 +16,6 @@ NNTRAINER_INCLUDES := $(NNTRAINER_ROOT)/builddir/android_build_result/include/nn
 # Common Includes Definition
 CAUSALLM_COMMON_INCLUDES := \
     $(LOCAL_PATH)/.. \
-    $(LOCAL_PATH)/../api \
     $(LOCAL_PATH)/../layers \
     $(LOCAL_PATH)/../models \
     $(LOCAL_PATH)/../models/gpt_oss \
@@ -115,7 +114,8 @@ LOCAL_SRC_FILES := \
 LOCAL_SHARED_LIBRARIES := causallm_core nntrainer ccapi-nntrainer
 LOCAL_STATIC_LIBRARIES := tokenizers_c
 
-LOCAL_C_INCLUDES += $(NNTRAINER_INCLUDES) $(CAUSALLM_COMMON_INCLUDES)
+LOCAL_C_INCLUDES += $(NNTRAINER_INCLUDES) $(CAUSALLM_COMMON_INCLUDES) \
+    $(LOCAL_PATH)/../api
 
 include $(BUILD_SHARED_LIBRARY)
 
@@ -159,6 +159,7 @@ LOCAL_SRC_FILES := ../api/test_api.cpp
 LOCAL_SHARED_LIBRARIES := causallm_api causallm_core nntrainer ccapi-nntrainer
 LOCAL_STATIC_LIBRARIES := tokenizers_c
 
-LOCAL_C_INCLUDES += $(NNTRAINER_INCLUDES) $(CAUSALLM_COMMON_INCLUDES)
+LOCAL_C_INCLUDES += $(NNTRAINER_INCLUDES) $(CAUSALLM_COMMON_INCLUDES) \
+    $(LOCAL_PATH)/../api
 
 include $(BUILD_EXECUTABLE)
