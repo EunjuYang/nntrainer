@@ -39,6 +39,35 @@ log_step() {
     echo -e "${YELLOW}----------------------------------------${NC}"
 }
 
+# Function to check and fix artifact location
+check_artifact() {
+    local filename=$1
+    local libs_path="libs/arm64-v8a/$filename"
+    local obj_path="obj/local/arm64-v8a/$filename"
+
+    if [ -f "$libs_path" ]; then
+        size=$(ls -lh "$libs_path" | awk '{print $5}')
+        echo -e "  ${GREEN}[OK]${NC} $filename ($size)"
+        return 0
+    elif [ -f "$obj_path" ]; then
+        echo -e "  ${YELLOW}[WARN]${NC} $filename found in obj but not in libs. Copying..."
+        mkdir -p "libs/arm64-v8a"
+        cp "$obj_path" "$libs_path"
+        if [ -x "$obj_path" ]; then
+            chmod +x "$libs_path"
+        fi
+        size=$(ls -lh "$libs_path" | awk '{print $5}')
+        echo -e "  ${GREEN}[OK]${NC} $filename ($size) (Copied from obj)"
+        return 0
+    else
+        echo -e "  ${RED}[ERROR]${NC} $filename not found!"
+        echo "  Checked paths:"
+        echo "    - $libs_path"
+        echo "    - $obj_path"
+        return 1
+    fi
+}
+
 # Check if NDK path is set
 if [ -z "$ANDROID_NDK" ]; then
     log_error "ANDROID_NDK is not set. Please set it to your Android NDK path."
@@ -82,13 +111,8 @@ fi
 # Verify output
 echo ""
 echo "Build artifacts:"
-if [ -f "libs/arm64-v8a/libcausallm_api.so" ]; then
-    size=$(ls -lh "libs/arm64-v8a/libcausallm_api.so" | awk '{print $5}')
-    echo -e "  ${GREEN}[OK]${NC} libcausallm_api.so ($size)"
-else
-    echo -e "  ${RED}[ERROR]${NC} libcausallm_api.so not found!"
-    exit 1
-fi
+
+check_artifact "libcausallm_api.so" || exit 1
 
 # Summary
 log_header "Build Summary"
