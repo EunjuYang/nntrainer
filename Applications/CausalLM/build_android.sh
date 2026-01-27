@@ -123,8 +123,8 @@ cd "$SCRIPT_DIR/jni"
 # Clean previous builds
 rm -rf obj libs
 
-log_info "Building with ndk-build (builds nntrainer_causallm and dependencies)..."
-if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk nntrainer_causallm -j $(nproc); then
+log_info "Building with ndk-build (builds causallm_core and nntrainer_causallm)..."
+if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk causallm_core nntrainer_causallm -j $(nproc); then
     log_success "Build completed successfully"
 else
     log_error "Build failed"
@@ -139,8 +139,13 @@ if [ -f "libs/arm64-v8a/libcausallm_core.so" ]; then
     echo -e "  ${GREEN}[OK]${NC} libcausallm_core.so ($size)"
 else
     echo -e "  ${RED}[ERROR]${NC} libcausallm_core.so not found!"
-    echo "Directory contents of libs/arm64-v8a/:"
-    ls -l libs/arm64-v8a/ || echo "Directory not found"
+    echo "Current directory: $(pwd)"
+    echo "Directory contents of libs/:"
+    if [ -d "libs" ]; then
+        ls -R libs/
+    else
+        echo "libs directory does not exist."
+    fi
     exit 1
 fi
 
