@@ -93,7 +93,7 @@ log_step "2/2" "Build Test App"
 cd "$SCRIPT_DIR/jni"
 
 log_info "Building with ndk-build (builds test_api)..."
-if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk test_api -j $(nproc); then
+if ndk-build NDK_PROJECT_PATH=. NDK_LIBS_OUT=./libs NDK_OUT=./obj APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk test_api -j $(nproc); then
     log_success "Build completed successfully"
 else
     log_error "Build failed"
