@@ -95,7 +95,7 @@ cd "$SCRIPT_DIR/jni"
 rm -rf obj libs
 
 echo "Building with ndk-build (builds libcausallm_core.so and nntrainer_causallm)..."
-if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk libcausallm_core nntrainer_causallm -j $(nproc); then
+if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk causallm_core nntrainer_causallm -j $(nproc); then
     echo "[SUCCESS] Build completed successfully"
 else
     echo "Error: Build failed"

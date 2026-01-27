@@ -42,7 +42,7 @@ cd "$SCRIPT_DIR/jni"
 
 echo "Building with ndk-build (builds libcausallm_api.so and test_api)..."
 # We explicitly specify targets
-if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk libcausallm_api test_api -j $(nproc); then
+if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk causallm_api test_api -j $(nproc); then
     echo "[SUCCESS] Build completed successfully"
 else
     echo "Error: Build failed"
