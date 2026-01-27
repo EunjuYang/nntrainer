@@ -1,7 +1,13 @@
 # ☄️ CausalLM Inference with NNTrainer
 
-- This application provides examples to run causal llm models using nntrainer.
-- This example only provides *inference* mode, not *training* mode yet.
+This application provides a standalone executable and an optional C API to run causal LLM models using NNTrainer.
+It supports *inference* mode (text generation) on various devices, including Android.
+
+## Features
+
+- **Standalone Application (`nntr_causallm`)**: A command-line tool to load models and generate text.
+- **C API (Optional)**: A lightweight C interface (`libcausallm.so`) for integrating LLM capabilities into other applications (e.g., Android JNI, iOS, or other C/C++ apps).
+- **Supported Backends**: CPU (OpenMP), with GPU/NPU support planned.
 
 ## Supported models
 

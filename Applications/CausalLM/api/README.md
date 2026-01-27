@@ -10,6 +10,38 @@ The API provides functionality to:
 - Run inference (text generation) given a prompt.
 - Retrieve performance metrics (token counts, duration).
 
+## Directory Structure & Model Loading
+
+The API assumes a specific directory structure for loading models, depending on whether you are using a pre-registered model configuration or a custom one.
+
+### 1. Registered Models (Default Behavior)
+
+For known model types (defined in `ModelType` enum), the API automatically resolves the model path based on the model key and quantization type.
+
+**Path Convention:** `./models/{ModelKey}{QuantizationSuffix}/`
+
+- **ModelKey**: Derived from `ModelType` (e.g., `qwen3-0.6b`).
+- **QuantizationSuffix**: Derived from `ModelQuantizationType` (e.g., `-w16a16`).
+
+**Example:**
+To load `CAUSAL_LM_MODEL_QWEN3_0_6B` with `CAUSAL_LM_QUANTIZATION_W16A16`:
+- Expected Path: `./models/qwen3-0.6b-w16a16/`
+- Expected Binary: `pytorch_model.bin` (or filename specified in internal config).
+
+### 2. Custom / Unregistered Models
+
+If you use `CAUSAL_LM_MODEL_UNKNOWN` and provide a custom path, or if the model is not registered internally, the API requires a complete set of configuration files in the target directory.
+
+**Required Files:**
+1.  **`config.json`**: Model architecture configuration (HuggingFace format).
+2.  **`nntr_config.json`**: NNTrainer specific configuration (defines memory usage, sequence length, etc.).
+    - Must contain `"model_file_name"` field pointing to the binary weight file.
+3.  **Weight File**: The binary file containing model weights (e.g., `pytorch_model.bin`).
+4.  **`generation_config.json`**: (Optional) Generation parameters like top_k, top_p.
+5.  **`tokenizer.json`** / **`vocab.json`**: (Optional but recommended) Tokenizer files.
+
+**Note:** When `debug_mode` is enabled in `setOptions`, the API will attempt to validate the existence of these files during initialization.
+
 ## API Reference
 
 The main header file is `causal_lm_api.h`.
