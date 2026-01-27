@@ -12,24 +12,37 @@ The API provides functionality to:
 
 ## Directory Structure & Model Loading
 
-The API strictly relies on registered model types and quantization settings to locate model files.
+The API strictly relies on registered model types and quantization settings to locate model files. There are two modes of loading, depending on how the model is registered within the library.
 
 **Path Convention:** `./models/{ModelKey}{QuantizationSuffix}/`
 
 - **ModelKey**: Derived from `ModelType` (e.g., `qwen3-0.6b`).
 - **QuantizationSuffix**: Derived from `ModelQuantizationType` (e.g., `-w16a16`).
 
-**Example:**
-To load `CAUSAL_LM_MODEL_QWEN3_0_6B` with `CAUSAL_LM_QUANTIZATION_W16A16`:
-- Expected Path: `./models/qwen3-0.6b-w16a16/`
-- Expected Files in directory:
-    - `config.json`
-    - `nntr_config.json` (with `model_file_name` pointing to weight file)
-    - Weight binary file (e.g., `pytorch_model.bin`)
-    - `generation_config.json` (optional)
-    - `tokenizer.json` / `vocab.json` (optional)
+### 1. Internal/Embedded Configuration (Pre-configured)
 
-**Note:** When `debug_mode` is enabled in `setOptions`, the API will attempt to validate the existence of these files during initialization.
+Some model configurations (including architecture, tokenizer settings, and generation parameters) are embedded directly into the CausalLM library code (via `model_config.cpp`). This protects the model specifications and simplifies deployment.
+
+- **Required Files:**
+    - **Weight Binary File**: The actual model weights (e.g., `qwen3-0.6b-fp32.bin`). The filename is hardcoded in the internal configuration.
+    - **Tokenizer Files**: `tokenizer.json` / `vocab.json` (if required by the specific tokenizer implementation).
+
+- **Ignored Files:**
+    - `config.json`, `nntr_config.json`, `generation_config.json` are **NOT** loaded from the disk even if they exist.
+
+### 2. External/File-based Configuration
+
+For registered model types that do not have a specific hardcoded configuration for the requested quantization, the API falls back to loading configuration files from the directory.
+
+- **Required Files:**
+    - **`config.json`**: Model architecture configuration (HuggingFace format).
+    - **`nntr_config.json`**: NNTrainer specific configuration.
+        - Must contain `"model_file_name"` field pointing to the binary weight file.
+    - **Weight Binary File**: The file specified in `nntr_config.json`.
+    - **`generation_config.json`**: (Optional) Generation parameters.
+    - **Tokenizer Files**: `tokenizer.json` / `vocab.json`.
+
+**Note:** When `debug_mode` is enabled in `setOptions`, the API will attempt to validate the existence of the required files for the resolved mode during initialization.
 
 ## API Reference
 
