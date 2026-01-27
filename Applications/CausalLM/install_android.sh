@@ -35,11 +35,16 @@ echo "----------------------------------------"
 REQUIRED_FILES=(
     "$SCRIPT_DIR/jni/libs/arm64-v8a/nntrainer_causallm"
     "$SCRIPT_DIR/jni/libs/arm64-v8a/libcausallm_core.so"
+)
+
+# Optional dependency files (might not be in libs/arm64-v8a depending on build)
+DEP_FILES=(
     "$SCRIPT_DIR/jni/libs/arm64-v8a/libnntrainer.so"
     "$SCRIPT_DIR/jni/libs/arm64-v8a/libccapi-nntrainer.so"
     "$SCRIPT_DIR/jni/libs/arm64-v8a/libc++_shared.so"
 )
 
+# Check main build artifacts
 ALL_FOUND=true
 for file in "${REQUIRED_FILES[@]}"; do
     if [ -f "$file" ]; then
@@ -57,6 +62,28 @@ if [ "$ALL_FOUND" = false ]; then
     echo "Please run: ./build_android.sh"
     exit 1
 fi
+
+# Check dependencies with fallback to obj/local/arm64-v8a
+for file in "${DEP_FILES[@]}"; do
+    filename=$(basename "$file")
+    if [ -f "$file" ]; then
+        size=$(du -h "$file" | cut -f1)
+        echo "  [OK] $filename ($size)"
+    else
+        # Try to find in obj directory
+        obj_path="$SCRIPT_DIR/jni/obj/local/arm64-v8a/$filename"
+        if [ -f "$obj_path" ]; then
+            echo "  [WARN] $filename found in obj, copying to libs..."
+            cp "$obj_path" "$file"
+            size=$(du -h "$file" | cut -f1)
+            echo "  [OK] $filename ($size) (Copied)"
+        else
+            echo "  [MISSING] $filename"
+            echo "Error: Required dependency not found"
+            exit 1
+        fi
+    fi
+done
 
 echo "[SUCCESS] All required build artifacts found"
 
