@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Build script for CausalLM API Android application
-# This script builds libcausallm_api.so and test_api executable
+# Build script for CausalLM API Library
+# This script builds libcausallm_api.so only
 set -e
 
 # Check if NDK path is set
@@ -17,7 +17,7 @@ NNTRAINER_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 export NNTRAINER_ROOT
 
 echo "========================================"
-echo "Build CausalLM API Android Application"
+echo "Build CausalLM API Library"
 echo "========================================"
 echo "NNTRAINER_ROOT: $NNTRAINER_ROOT"
 echo "ANDROID_NDK: $ANDROID_NDK"
@@ -35,21 +35,20 @@ fi
 echo "[SUCCESS] CausalLM Core found"
 echo ""
 
-# Step 2: Build CausalLM API and test_api
-echo "[Step 2/2] Build CausalLM API and Test App"
+# Step 2: Build CausalLM API
+echo "[Step 2/2] Build CausalLM API Library"
 echo "----------------------------------------"
 cd "$SCRIPT_DIR/jni"
 
-echo "Building with ndk-build (builds libcausallm_api.so and test_api)..."
-# We explicitly specify targets
-if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk causallm_api test_api -j $(nproc); then
+echo "Building with ndk-build (builds libcausallm_api.so)..."
+if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk causallm_api -j $(nproc); then
     echo "[SUCCESS] Build completed successfully"
 else
     echo "Error: Build failed"
     exit 1
 fi
 
-# Verify outputs
+# Verify output
 echo ""
 echo "Build artifacts:"
 if [ -f "libs/arm64-v8a/libcausallm_api.so" ]; then
@@ -57,14 +56,6 @@ if [ -f "libs/arm64-v8a/libcausallm_api.so" ]; then
     echo "  [OK] libcausallm_api.so ($size)"
 else
     echo "  [ERROR] libcausallm_api.so not found!"
-    exit 1
-fi
-
-if [ -f "libs/arm64-v8a/test_api" ]; then
-    size=$(ls -lh "libs/arm64-v8a/test_api" | awk '{print $5}')
-    echo "  [OK] test_api ($size)"
-else
-    echo "  [ERROR] test_api not found!"
     exit 1
 fi
 echo ""
@@ -77,9 +68,9 @@ echo "Build completed successfully!"
 echo ""
 echo "Output files are in: $SCRIPT_DIR/jni/libs/arm64-v8a/"
 echo ""
-echo "Executables:"
-echo "  - test_api (API test application)"
-echo ""
 echo "Libraries:"
 echo "  - libcausallm_api.so (CausalLM API library)"
+echo ""
+echo "To build test app, run:"
+echo "  ./build_test_app.sh"
 echo ""
