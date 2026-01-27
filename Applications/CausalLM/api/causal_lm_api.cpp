@@ -224,7 +224,9 @@ static void validate_models() {
       std::string resolved_path = resolve_model_path(key, qt);
 
       if (g_model_registry.find(lookup_key) != g_model_registry.end()) {
-        // CASE 1: Configuration is registered
+        // CASE 1: Configuration is registered in model_config.cpp
+        // For these models, we only check if the binary weight file exists.
+        // The configurations (config.json, etc.) are embedded in the library.
         RegisteredModel &rm = g_model_registry[lookup_key];
         std::string bin_file_name = rm.config.model_file_name;
         std::string full_path = resolved_path + "/" + bin_file_name;
@@ -238,15 +240,16 @@ static void validate_models() {
         }
 
       } else {
-        // CASE 2: No config, but model type exists (via map iteration). Check
-        // if folder has valid structure
+        // CASE 2: No internal config, but model type exists (via map iteration).
+        // For these models, we require external configuration files (config.json, nntr_config.json)
+        // to be present in the directory.
         if (check_file_exists(resolved_path)) {
           bool has_config = check_file_exists(resolved_path + "/config.json");
           bool has_nntr =
             check_file_exists(resolved_path + "/nntr_config.json");
 
           if (has_config && has_nntr) {
-            std::cout << "  [OK] Detected: " << lookup_key << " -> "
+            std::cout << "  [OK] External Config: " << lookup_key << " -> "
                       << resolved_path << std::endl;
             // Optional: Parse nntr_config to check bin
             try {
@@ -265,7 +268,7 @@ static void validate_models() {
             } catch (...) {
             }
           } else {
-            std::cout << "  [FAIL] Detected: " << lookup_key
+            std::cout << "  [FAIL] External Config: " << lookup_key
                       << " -> Missing configs in " << resolved_path
                       << std::endl;
           }
@@ -358,6 +361,11 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
 
     // Check in-memory map first
     if (g_model_registry.find(lookup_name) != g_model_registry.end()) {
+      // ----------------------------------------------------------------------
+      // CASE 1: Model Configuration is Internal (Registered in model_config.cpp)
+      // ----------------------------------------------------------------------
+      // In this case, we do NOT load config.json or nntr_config.json from disk.
+      // We only locate the binary weight file.
       RegisteredModel &rm = g_model_registry[lookup_name];
 
       // Find architecture config
@@ -370,7 +378,7 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
       ModelArchConfig &ac = g_arch_config_map[rm.arch_name];
       ModelRuntimeConfig &rc = rm.config;
 
-      // Strategy: Try to resolve path even if config found.
+      // Strategy: Resolve path to find the weight file
       model_dir_path = resolve_model_path(target_model_name, quant_type);
 
       // Populate JSONs from Arch Struct
@@ -434,7 +442,12 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
       nntr_cfg["bad_word_ids"] = bad_ids;
 
     } else {
-      // Fallback to file-based loading
+      // ----------------------------------------------------------------------
+      // CASE 2: External Model Configuration (File-based)
+      // ----------------------------------------------------------------------
+      // The model type is registered (enum), but specific configuration for this
+      // quantization is not in memory. We must load config.json and nntr_config.json
+      // from the model directory.
       model_dir_path = resolve_model_path(target_model_name, quant_type);
 
       // Load configuration files
