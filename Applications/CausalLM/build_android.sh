@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Build script for CausalLM Android application
-# This script builds both libcausallm.so and nntrainer_causallm executable
+# This script builds libcausallm_core.so and nntrainer_causallm executable
 set -e
 
 # Check if NDK path is set
@@ -86,16 +86,16 @@ fi
 echo "[SUCCESS] json.hpp ready"
 echo ""
 
-# Step 4: Build CausalLM (both libcausallm.so and nntrainer_causallm)
-echo "[Step 4/4] Build CausalLM (library + executable)"
+# Step 4: Build CausalLM (libcausallm_core.so and nntrainer_causallm)
+echo "[Step 4/4] Build CausalLM Core (library + executable)"
 echo "----------------------------------------"
 cd "$SCRIPT_DIR/jni"
 
 # Clean previous builds
 rm -rf obj libs
 
-echo "Building with ndk-build (builds both libcausallm.so and nntrainer_causallm)..."
-if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk -j $(nproc); then
+echo "Building with ndk-build (builds libcausallm_core.so and nntrainer_causallm)..."
+if ndk-build NDK_PROJECT_PATH=./ APP_BUILD_SCRIPT=./Android.mk NDK_APPLICATION_MK=./Application.mk libcausallm_core nntrainer_causallm -j $(nproc); then
     echo "[SUCCESS] Build completed successfully"
 else
     echo "Error: Build failed"
@@ -105,11 +105,11 @@ fi
 # Verify outputs
 echo ""
 echo "Build artifacts:"
-if [ -f "libs/arm64-v8a/libcausallm.so" ]; then
-    size=$(ls -lh "libs/arm64-v8a/libcausallm.so" | awk '{print $5}')
-    echo "  [OK] libcausallm.so ($size)"
+if [ -f "libs/arm64-v8a/libcausallm_core.so" ]; then
+    size=$(ls -lh "libs/arm64-v8a/libcausallm_core.so" | awk '{print $5}')
+    echo "  [OK] libcausallm_core.so ($size)"
 else
-    echo "  [ERROR] libcausallm.so not found!"
+    echo "  [ERROR] libcausallm_core.so not found!"
     exit 1
 fi
 
@@ -134,10 +134,13 @@ echo "Executables:"
 echo "  - nntrainer_causallm (main application)"
 echo ""
 echo "Libraries:"
-echo "  - libcausallm.so (CausalLM API library)"
+echo "  - libcausallm_core.so (CausalLM Core library)"
 echo "  - libnntrainer.so (nntrainer library)"
 echo "  - libccapi-nntrainer.so (nntrainer C/C API)"
 echo "  - libc++_shared.so (C++ runtime)"
+echo ""
+echo "To build API library, run:"
+echo "  ./build_api_android.sh"
 echo ""
 echo "To install and run:"
 echo "  ./install_android.sh"
