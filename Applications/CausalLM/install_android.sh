@@ -66,6 +66,21 @@ fi
 # Check dependencies with fallback to obj/local/arm64-v8a
 for file in "${DEP_FILES[@]}"; do
     filename=$(basename "$file")
+    
+    # Special handling for libc++_shared.so (Try copy from NDK)
+    if [[ "$filename" == "libc++_shared.so" ]] && [ ! -f "$file" ]; then
+        if [ -n "$ANDROID_NDK" ]; then
+            # Attempt to find it in typical NDK locations for aarch64
+            NDK_LIBCXX=$(find "$ANDROID_NDK" -name "libc++_shared.so" 2>/dev/null | grep "aarch64" | head -n 1)
+            
+            if [ -n "$NDK_LIBCXX" ] && [ -f "$NDK_LIBCXX" ]; then
+                echo "  [WARN] libc++_shared.so not found in build dir, copying from NDK..."
+                cp "$NDK_LIBCXX" "$file"
+                # Fall through to standard check to confirm copy success
+            fi
+        fi
+    fi
+
     if [ -f "$file" ]; then
         size=$(du -h "$file" | cut -f1)
         echo "  [OK] $filename ($size)"
