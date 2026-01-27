@@ -169,10 +169,9 @@ static std::string get_quantization_suffix(ModelQuantizationType type) {
   }
 }
 
-static std::string resolve_model_path(const std::string &model_name_or_path,
+static std::string resolve_model_path(const std::string &model_key,
                                       ModelQuantizationType quant_type) {
-  std::string model_path = model_name_or_path;
-  std::string path_upper = model_path;
+  std::string path_upper = model_key;
   std::transform(path_upper.begin(), path_upper.end(), path_upper.begin(),
                  ::toupper);
 
@@ -182,25 +181,16 @@ static std::string resolve_model_path(const std::string &model_name_or_path,
   if (g_model_path_map.find(path_upper) != g_model_path_map.end()) {
     base_dir_name = g_model_path_map[path_upper];
   } else {
-    for (auto const &[key, val] : g_model_path_map) {
-      std::string key_upper = key;
-      std::transform(key_upper.begin(), key_upper.end(), key_upper.begin(),
-                     ::toupper);
-      if (path_upper == key_upper) {
-        model_path = val;
-        break;
-      }
-    }
+    // Fallback: use lowercased key as base dir name if not found in map
+    // or just return empty? For restricted API, we should probably fail earlier,
+    // but here we can return constructed path.
+    base_dir_name = path_upper;
+    std::transform(base_dir_name.begin(), base_dir_name.end(),
+                   base_dir_name.begin(), ::tolower);
   }
 
-  // 2. If found in map, append suffix.
-  if (!base_dir_name.empty()) {
-    model_path =
-      "./models/" + base_dir_name + get_quantization_suffix(quant_type);
-  }
-  // If not in map, rely on original behavior (just path), or potentially append
-  // suffix if it looks like a name? For now, only modifying the map-based
-  // resolution path as requested.
+  std::string model_path =
+    "./models/" + base_dir_name + get_quantization_suffix(quant_type);
 
   return model_path;
 }
@@ -222,10 +212,7 @@ static void validate_models() {
 
     for (auto qt : quant_types) {
       std::string quant_suffix = get_quantization_suffix(qt);
-      // Wait, get_quantization_suffix returns lowercase "-w4a32"
-      // But g_model_registry keys are UPPERCASE ("QWEN3-0.6B-W4A32")
-      // We need to match the registry key format.
-
+      
       std::string lookup_key = key; // "QWEN3-0.6B"
       if (qt != CAUSAL_LM_QUANTIZATION_UNKNOWN) {
         std::transform(quant_suffix.begin(), quant_suffix.end(),
@@ -326,21 +313,11 @@ ErrorCode registerModel(const char *model_name, const char *arch_name,
 }
 
 ErrorCode loadModel(BackendType compute, ModelType modeltype,
-                    ModelQuantizationType quant_type,
-                    const char *model_name_or_path) {
+                    ModelQuantizationType quant_type) {
 
-  const char *target_model_name = nullptr;
-
-  if (modeltype != CAUSAL_LM_MODEL_UNKNOWN) {
-    target_model_name = get_model_name_from_type(modeltype);
-    if (target_model_name == nullptr) {
-      return CAUSAL_LM_ERROR_INVALID_PARAMETER;
-    }
-  } else {
-    if (model_name_or_path == nullptr) {
-      return CAUSAL_LM_ERROR_INVALID_PARAMETER;
-    }
-    target_model_name = model_name_or_path;
+  const char *target_model_name = get_model_name_from_type(modeltype);
+  if (target_model_name == nullptr) {
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
   }
 
   // Ensure models/configs are registered (thread-safe via call_once)
@@ -394,7 +371,7 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
       ModelRuntimeConfig &rc = rm.config;
 
       // Strategy: Try to resolve path even if config found.
-      model_dir_path = resolve_model_path(model_name_or_path, quant_type);
+      model_dir_path = resolve_model_path(target_model_name, quant_type);
 
       // Populate JSONs from Arch Struct
       cfg["vocab_size"] = ac.vocab_size;

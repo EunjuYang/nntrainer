@@ -51,9 +51,8 @@ typedef enum {
  * @note  Enable only when your library supports the model
  */
 typedef enum {
-  CAUSAL_LM_MODEL_UNKNOWN = 0,
-  CAUSAL_LM_MODEL_QWEN3_0_6B = 2,
-  // CAUSAL_LM_MODEL_GEMMA_2B = 3,
+  CAUSAL_LM_MODEL_QWEN3_0_6B = 0,
+  // CAUSAL_LM_MODEL_GEMMA_2B = 1,
 } ModelType;
 
 /**
@@ -92,8 +91,7 @@ typedef enum {
  * @return ErrorCode
  */
 WIN_EXPORT ErrorCode loadModel(BackendType compute, ModelType modeltype,
-                               ModelQuantizationType quant_type,
-                               const char *model_name_or_path);
+                               ModelQuantizationType quant_type);
 
 /**
  * @brief Performance Metrics

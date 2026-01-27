@@ -12,11 +12,7 @@ The API provides functionality to:
 
 ## Directory Structure & Model Loading
 
-The API assumes a specific directory structure for loading models, depending on whether you are using a pre-registered model configuration or a custom one.
-
-### 1. Registered Models (Default Behavior)
-
-For known model types (defined in `ModelType` enum), the API automatically resolves the model path based on the model key and quantization type.
+The API strictly relies on registered model types and quantization settings to locate model files.
 
 **Path Convention:** `./models/{ModelKey}{QuantizationSuffix}/`
 
@@ -26,19 +22,12 @@ For known model types (defined in `ModelType` enum), the API automatically resol
 **Example:**
 To load `CAUSAL_LM_MODEL_QWEN3_0_6B` with `CAUSAL_LM_QUANTIZATION_W16A16`:
 - Expected Path: `./models/qwen3-0.6b-w16a16/`
-- Expected Binary: `pytorch_model.bin` (or filename specified in internal config).
-
-### 2. Custom / Unregistered Models
-
-If you use `CAUSAL_LM_MODEL_UNKNOWN` and provide a custom path, or if the model is not registered internally, the API requires a complete set of configuration files in the target directory.
-
-**Required Files:**
-1.  **`config.json`**: Model architecture configuration (HuggingFace format).
-2.  **`nntr_config.json`**: NNTrainer specific configuration (defines memory usage, sequence length, etc.).
-    - Must contain `"model_file_name"` field pointing to the binary weight file.
-3.  **Weight File**: The binary file containing model weights (e.g., `pytorch_model.bin`).
-4.  **`generation_config.json`**: (Optional) Generation parameters like top_k, top_p.
-5.  **`tokenizer.json`** / **`vocab.json`**: (Optional but recommended) Tokenizer files.
+- Expected Files in directory:
+    - `config.json`
+    - `nntr_config.json` (with `model_file_name` pointing to weight file)
+    - Weight binary file (e.g., `pytorch_model.bin`)
+    - `generation_config.json` (optional)
+    - `tokenizer.json` / `vocab.json` (optional)
 
 **Note:** When `debug_mode` is enabled in `setOptions`, the API will attempt to validate the existence of these files during initialization.
 
@@ -64,8 +53,7 @@ Target backend for computation.
 - `CAUSAL_LM_BACKEND_NPU`: NPU execution (Planned).
 
 #### `ModelType`
-Pre-defined model types.
-- `CAUSAL_LM_MODEL_UNKNOWN`: Use custom path or name.
+Supported pre-defined model types.
 - `CAUSAL_LM_MODEL_QWEN3_0_6B`: Qwen3 0.6B model.
 
 #### `ModelQuantizationType`
@@ -81,12 +69,11 @@ Supported quantization formats.
 Sets global configuration options.
 - **config**: Structure containing options like `use_chat_template` and `debug_mode`.
 
-#### `ErrorCode loadModel(BackendType compute, ModelType modeltype, ModelQuantizationType quant_type, const char *model_name_or_path)`
-Loads a model.
+#### `ErrorCode loadModel(BackendType compute, ModelType modeltype, ModelQuantizationType quant_type)`
+Loads a registered model.
 - **compute**: Backend to use.
-- **modeltype**: Specific model enum or `UNKNOWN`.
+- **modeltype**: Specific model enum.
 - **quant_type**: Quantization type.
-- **model_name_or_path**: Path to the model directory or model name.
 
 #### `ErrorCode runModel(const char *inputTextPrompt, const char **outputText)`
 Runs inference on the loaded model.
@@ -113,11 +100,10 @@ int main() {
     setOptions(config);
 
     // 2. Load Model
-    // Assuming model files are in "./models/qwen3-0.6b-w16a16/"
+    // Automatically looks for files in "./models/qwen3-0.6b-w16a16/"
     ErrorCode err = loadModel(CAUSAL_LM_BACKEND_CPU, 
-                              CAUSAL_LM_MODEL_UNKNOWN, 
-                              CAUSAL_LM_QUANTIZATION_W16A16, 
-                              "./models/qwen3-0.6b-w16a16/");
+                              CAUSAL_LM_MODEL_QWEN3_0_6B, 
+                              CAUSAL_LM_QUANTIZATION_W16A16);
     
     if (err != CAUSAL_LM_ERROR_NONE) {
         printf("Failed to load model\n");
