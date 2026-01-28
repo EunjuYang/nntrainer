@@ -109,12 +109,7 @@ protected:
    * @brief load weight
    */
   void load_weight(const std::string &file_path) {
-    auto start_load = std::chrono::high_resolution_clock::now();
     Transformer::load_weight(file_path);
-    auto finish_load = std::chrono::high_resolution_clock::now();
-    auto load_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-      finish_load - start_load);
-    performance_metrics.load_duration_ms = load_duration.count();
   }
 
   /**
