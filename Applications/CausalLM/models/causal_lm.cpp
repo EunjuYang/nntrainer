@@ -37,7 +37,10 @@
 
 #include <causal_lm.h>
 #include <llm_util.hpp>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+#else
 #include <sys/resource.h>
 #endif
 
@@ -45,6 +48,10 @@ namespace causallm {
 
 size_t getPeakMemoryKb() {
 #if defined(_WIN32)
+  PROCESS_MEMORY_COUNTERS pmc;
+  if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+    return (size_t)(pmc.PeakWorkingSetSize / 1024);
+  }
   return 0;
 #else
   struct rusage rusage;
