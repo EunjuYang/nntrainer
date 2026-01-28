@@ -49,11 +49,7 @@ size_t getPeakMemoryKb() {
 #else
   struct rusage rusage;
   if (getrusage(RUSAGE_SELF, &rusage) == 0) {
-#if defined(__APPLE__)
-    return (size_t)(rusage.ru_maxrss / 1024);
-#else
     return (size_t)(rusage.ru_maxrss);
-#endif
   }
   return 0;
 #endif
