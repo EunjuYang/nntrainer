@@ -28,6 +28,7 @@ constexpr const char *COLOR_GREEN = "\033[32m";
 constexpr const char *COLOR_YELLOW = "\033[33m";
 constexpr const char *COLOR_BLUE = "\033[34m";
 constexpr const char *COLOR_RED = "\033[31m";
+constexpr const char *COLOR_MAGENTA = "\033[35m";
 constexpr const char *COLOR_GRAY = "\033[90m";
 
 void printLine(const std::string &s, int length = 80) {
@@ -70,7 +71,7 @@ void printInfo(const std::string &label, const std::string &value) {
 
 void printLogo() {
   std::cout << "\n";
-  std::cout << COLOR_BOLD << COLOR_BLUE; // Replaced MAGENTA with BLUE as MAGENTA was removed
+  std::cout << COLOR_BOLD << COLOR_MAGENTA;
   std::cout << "  ███╗   ██╗███╗   ██╗████████╗██████╗ \n";
   std::cout << "  ████╗  ██║████╗  ██║╚══██╔══╝██╔══██╗\n";
   std::cout << "  ██╔██╗ ██║██╔██╗ ██║   ██║   ██████╔╝\n";
