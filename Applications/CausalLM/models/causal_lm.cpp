@@ -37,8 +37,26 @@
 
 #include <causal_lm.h>
 #include <llm_util.hpp>
+#include <sstream>
 
 namespace causallm {
+
+size_t getPeakMemoryKb() {
+#ifdef __linux__
+  std::ifstream status("/proc/self/status");
+  std::string line;
+  while (std::getline(status, line)) {
+    if (line.substr(0, 6) == "VmHWM:") {
+      std::stringstream ss(line);
+      std::string key;
+      size_t value;
+      ss >> key >> value;
+      return value;
+    }
+  }
+#endif
+  return 0;
+}
 
 CausalLM::CausalLM(json &cfg, json &generation_cfg, json &nntr_cfg) :
   Transformer(cfg, generation_cfg, nntr_cfg, ModelType::CAUSALLM) {
@@ -287,6 +305,7 @@ void CausalLM::registerCustomLayers() {
 
 void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
                    const WSTR tail_prompt, bool log_output) {
+  auto start_e2e = std::chrono::high_resolution_clock::now();
 
   if (!is_initialized) {
     throw std::runtime_error("CausalLM model is not initialized. Please call "
@@ -530,6 +549,11 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     std::chrono::duration_cast<std::chrono::milliseconds>(finish_generation -
                                                           start_generation);
 
+  auto finish_e2e = std::chrono::high_resolution_clock::now();
+  auto e2e_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+    finish_e2e - start_e2e);
+  size_t peak_memory = getPeakMemoryKb();
+
   if (log_output) {
 
     std::cout << "\n\n";
@@ -542,6 +566,8 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
               << generation_duration.count() << " ms, "
               << ((double)generation_cnt / generation_duration.count() * 1000)
               << " TPS\n";
+    std::cout << "end-to-end: " << e2e_duration.count() << " ms\n";
+    std::cout << "peak memory: " << peak_memory << " KB\n";
     std::cout << "==========================================================\n";
   }
 
@@ -549,6 +575,8 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   performance_metrics.prefill_duration_ms = prefill_duration.count();
   performance_metrics.generation_tokens = generation_cnt;
   performance_metrics.generation_duration_ms = generation_duration.count();
+  performance_metrics.end_to_end_duration_ms = e2e_duration.count();
+  performance_metrics.peak_memory_kb = peak_memory;
 
   has_run_ = true;
 }
