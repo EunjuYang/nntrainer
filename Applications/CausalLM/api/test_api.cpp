@@ -28,7 +28,7 @@ constexpr const char *COLOR_GREEN = "\033[32m";
 constexpr const char *COLOR_YELLOW = "\033[33m";
 constexpr const char *COLOR_BLUE = "\033[34m";
 constexpr const char *COLOR_RED = "\033[31m";
-constexpr const char *COLOR_MAGENTA = "\033[35m";
+constexpr const char *COLOR_GRAY = "\033[90m";
 
 void printLine(const std::string &s, int length = 80) {
   for (int i = 0; i < length; ++i)
@@ -70,7 +70,7 @@ void printInfo(const std::string &label, const std::string &value) {
 
 void printLogo() {
   std::cout << "\n";
-  std::cout << COLOR_BOLD << COLOR_MAGENTA;
+  std::cout << COLOR_BOLD << COLOR_BLUE; // Replaced MAGENTA with BLUE as MAGENTA was removed
   std::cout << "  ███╗   ██╗███╗   ██╗████████╗██████╗ \n";
   std::cout << "  ████╗  ██║████╗  ██║╚══██╔══╝██╔══██╗\n";
   std::cout << "  ██╔██╗ ██║██╔██╗ ██║   ██║   ██████╔╝\n";
@@ -205,7 +205,7 @@ int main(int argc, char *argv[]) {
 
   if (verbose) {
     std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Streaming Output:\n";
-    std::cout << COLOR_BOLD << COLOR_GREEN;
+    std::cout << COLOR_GRAY;
   }
 
   err = runModel(prompt, &outputText);
@@ -220,30 +220,28 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  if (!verbose) {
-    if (outputText) {
-      std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Output:\n";
-      std::cout << COLOR_BOLD << COLOR_GREEN << "  ";
-      std::string out(outputText);
-      size_t pos = 0;
-      while (pos < out.length()) {
-        size_t newlinePos = out.find('\n', pos);
-        if (newlinePos == std::string::npos) {
-          newlinePos = out.length();
-        }
-        std::string line = out.substr(pos, newlinePos - pos);
-        std::cout << line;
-        if (newlinePos < out.length()) {
-          std::cout << "\n  ";
-          pos = newlinePos + 1;
-        } else {
-          pos = out.length();
-        }
+  if (outputText) {
+    std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Output:\n";
+    std::cout << COLOR_BOLD << COLOR_GREEN << "  ";
+    std::string out(outputText);
+    size_t pos = 0;
+    while (pos < out.length()) {
+      size_t newlinePos = out.find('\n', pos);
+      if (newlinePos == std::string::npos) {
+        newlinePos = out.length();
       }
-      std::cout << COLOR_RESET << "\n\n";
-    } else {
-      printWarning("No output generated");
+      std::string line = out.substr(pos, newlinePos - pos);
+      std::cout << line;
+      if (newlinePos < out.length()) {
+        std::cout << "\n  ";
+        pos = newlinePos + 1;
+      } else {
+        pos = out.length();
+      }
     }
+    std::cout << COLOR_RESET << "\n\n";
+  } else {
+    printWarning("No output generated");
   }
 
   printSection("Performance Metrics");
