@@ -45,19 +45,21 @@ check_artifact() {
     local libs_path="libs/arm64-v8a/$filename"
     local obj_path="obj/local/arm64-v8a/$filename"
 
+    # Check if we should update from obj
+    if [ -f "$obj_path" ]; then
+        if [ ! -f "$libs_path" ] || [ "$obj_path" -nt "$libs_path" ]; then
+            echo -e "  ${YELLOW}[WARN]${NC} Updating $filename from obj..."
+            mkdir -p "libs/arm64-v8a"
+            cp "$obj_path" "$libs_path"
+            if [ -x "$obj_path" ]; then
+                chmod +x "$libs_path"
+            fi
+        fi
+    fi
+
     if [ -f "$libs_path" ]; then
         size=$(ls -lh "$libs_path" | awk '{print $5}')
         echo -e "  ${GREEN}[OK]${NC} $filename ($size)"
-        return 0
-    elif [ -f "$obj_path" ]; then
-        echo -e "  ${YELLOW}[WARN]${NC} $filename found in obj but not in libs. Copying..."
-        mkdir -p "libs/arm64-v8a"
-        cp "$obj_path" "$libs_path"
-        if [ -x "$obj_path" ]; then
-            chmod +x "$libs_path"
-        fi
-        size=$(ls -lh "$libs_path" | awk '{print $5}')
-        echo -e "  ${GREEN}[OK]${NC} $filename ($size) (Copied from obj)"
         return 0
     else
         echo -e "  ${RED}[ERROR]${NC} $filename not found!"
