@@ -582,7 +582,6 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   performance_metrics.total_duration_ms = total_duration.count();
   performance_metrics.peak_memory_kb = peak_memory;
 
-
   has_run_ = true;
 }
 

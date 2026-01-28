@@ -114,7 +114,7 @@ Retrieves performance metrics of the last run.
 - **metrics**: Pointer to `PerformanceMetrics` struct to be filled.
 - `prefill_tokens`, `prefill_duration_ms`: Stats for prompt processing.
 - `generation_tokens`, `generation_duration_ms`: Stats for token generation.
-- `load_duration_ms`: Time taken to load model (initialization + weights).
+- `initialization_duration_ms`: Time taken to initialize and load model.
 - `total_duration_ms`: Total execution time from start to finish.
 - `peak_memory_kb`: Peak resident set size (memory usage) in KB.
 

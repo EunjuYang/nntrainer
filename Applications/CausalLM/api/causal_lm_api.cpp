@@ -317,13 +317,13 @@ ErrorCode registerModel(const char *model_name, const char *arch_name,
   return CAUSAL_LM_ERROR_NONE;
 }
 
-// Static global metrics to store load duration since g_model is not available yet
-static double g_load_duration_ms = 0.0;
+// Static global metrics to store init duration since g_model is not available yet
+static double g_initialization_duration_ms = 0.0;
 
 ErrorCode loadModel(BackendType compute, ModelType modeltype,
                     ModelQuantizationType quant_type) {
 
-  auto start_load_api = std::chrono::high_resolution_clock::now();
+  auto start_init = std::chrono::high_resolution_clock::now();
 
   const char *target_model_name = get_model_name_from_type(modeltype);
   if (target_model_name == nullptr) {
@@ -506,10 +506,10 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
     g_initialized = true;
     g_architecture = architecture;
 
-    auto finish_load_api = std::chrono::high_resolution_clock::now();
-    auto load_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-      finish_load_api - start_load_api);
-    g_load_duration_ms = load_duration.count();
+    auto finish_init = std::chrono::high_resolution_clock::now();
+    auto init_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      finish_init - start_init);
+    g_initialization_duration_ms = init_duration.count();
 
   } catch (const std::exception &e) {
     std::cerr << "Exception in loadModel: " << e.what() << std::endl;
@@ -580,10 +580,8 @@ ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
         return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
       }
       *metrics = causal_lm_model->getPerformanceMetrics();
-      // Overwrite load duration with the one measured in loadModel API
-      // because loadModel API covers more steps (config parsing, factory creation)
-      // than just CausalLM::load_weight
-      metrics->load_duration_ms = g_load_duration_ms;
+      // Overwrite init duration with the one measured in loadModel API
+      metrics->initialization_duration_ms = g_initialization_duration_ms;
     } else {
       return CAUSAL_LM_ERROR_UNKNOWN;
     }

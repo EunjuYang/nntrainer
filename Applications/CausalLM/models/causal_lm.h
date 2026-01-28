@@ -106,13 +106,6 @@ protected:
   virtual void constructModel() override;
 
   /**
-   * @brief load weight
-   */
-  void load_weight(const std::string &file_path) {
-    Transformer::load_weight(file_path);
-  }
-
-  /**
    * @brief register Outputs
    */
   virtual void
