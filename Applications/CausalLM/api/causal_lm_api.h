@@ -101,7 +101,7 @@ typedef struct {
   double prefill_duration_ms;
   unsigned int generation_tokens;
   double generation_duration_ms;
-  double end_to_end_duration_ms;
+  double total_duration_ms;
   size_t peak_memory_kb;
 } PerformanceMetrics;
 

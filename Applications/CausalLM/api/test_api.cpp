@@ -288,7 +288,7 @@ int main(int argc, char *argv[]) {
               << "Total Stats" << COLOR_RESET << "\n";
     std::cout << COLOR_CYAN << "    Duration:" << COLOR_RESET << "     "
               << std::fixed << std::setprecision(2)
-              << metrics.end_to_end_duration_ms << " ms\n";
+              << metrics.total_duration_ms << " ms\n";
     std::cout << COLOR_CYAN << "    Peak Mem:" << COLOR_RESET << "     "
               << metrics.peak_memory_kb << " KB\n\n";
   }
