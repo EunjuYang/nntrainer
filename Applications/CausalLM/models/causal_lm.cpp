@@ -37,25 +37,26 @@
 
 #include <causal_lm.h>
 #include <llm_util.hpp>
-#include <sstream>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 
 namespace causallm {
 
 size_t getPeakMemoryKb() {
-#ifdef __linux__
-  std::ifstream status("/proc/self/status");
-  std::string line;
-  while (std::getline(status, line)) {
-    if (line.substr(0, 6) == "VmHWM:") {
-      std::stringstream ss(line);
-      std::string key;
-      size_t value;
-      ss >> key >> value;
-      return value;
-    }
-  }
-#endif
+#if defined(_WIN32)
   return 0;
+#else
+  struct rusage rusage;
+  if (getrusage(RUSAGE_SELF, &rusage) == 0) {
+#if defined(__APPLE__)
+    return (size_t)(rusage.ru_maxrss / 1024);
+#else
+    return (size_t)(rusage.ru_maxrss);
+#endif
+  }
+  return 0;
+#endif
 }
 
 CausalLM::CausalLM(json &cfg, json &generation_cfg, json &nntr_cfg) :
