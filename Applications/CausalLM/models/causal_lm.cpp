@@ -570,6 +570,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
               << generation_duration.count() << " ms, "
               << ((double)generation_cnt / generation_duration.count() * 1000)
               << " TPS\n";
+    std::cout << "load: " << performance_metrics.load_duration_ms << " ms\n";
     std::cout << "total: " << total_duration.count() << " ms\n";
     std::cout << "peak memory: " << peak_memory << " KB\n";
     std::cout << "==========================================================\n";
