@@ -393,7 +393,7 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
                       unsigned int ld_dst);
 
 /**
- * @brief Compute vcache for one row transposed
+ * @brief Compute Value Cache aggregation
  * @param[in] row_num row number
  * @param[in] in _FP16* input vector
  * @param[in] vcache _FP16* input vector
@@ -401,7 +401,6 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
  * @param[in] num_cache_head number head of cache
  * @param[in] gqa_size size of group
  * @param[in] head_dim head dimension
- * @param[in] chunk_size size of chunk
  * @param[in] local_window_size windows size for local attention
  */
 void compute_fp16vcache_transposed(int row_num, const _FP16 *in,
@@ -419,7 +418,6 @@ void compute_fp16vcache_transposed(int row_num, const _FP16 *in,
  * @param[in] num_cache_head number head of cache
  * @param[in] head_dim head dimension
  * @param[in] gqa_size size of group
- * @param[in] tile_off offset of tile
  * @param[in] tile_size size of tile
  * @param[in] local_window_size windows size for local attention
  */
