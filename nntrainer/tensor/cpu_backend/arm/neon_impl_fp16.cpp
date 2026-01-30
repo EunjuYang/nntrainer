@@ -1986,6 +1986,7 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
 
     // Initialize accumulators for the dot product results
     // sumVec stores vectorized sums, sumRem stores scalar sums for remainders
+    // vdupq_n_f16(0.0f): Vector Duplicate (Quarter register, N elements, FP16) -> Creates [0.0, ..., 0.0] vector
     std::vector<float16x8_t> sumVec(num_blocks * gqa_size, vdupq_n_f16(0.0f));
     std::vector<__fp16> sumRem(gqa_size * rem, 0.0f);
 
@@ -2010,12 +2011,19 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
                          n * gqa_size + h];
         
         // Broadcast the attention score scalar to a vector for NEON multiplication
+        // vdupq_n_f16(val): Creates a vector with 8 copies of 'val'
+        // [a, a, a, a, a, a, a, a]
         float16x8_t inVec = vdupq_n_f16(a_val);
 
         // Vectorized Fused Multiply-Add (FMA)
         // Accumulate: Output += Attention_Score * Value_Vector
         for (int b = 0; b < num_blocks; ++b) {
+          // vld1q_f16(ptr): Vector Load 1 (Quarter register, FP16) -> Loads 8 contiguous FP16 values
           float16x8_t bVec = vld1q_f16(&vptr[b * 8]); // Load 8 Value elements
+          
+          // vfmaq_f16(acc, a, b): Vector Fused Multiply-Add (Quarter register, FP16)
+          // Result = acc + (a * b)
+          // Performs element-wise multiplication and addition in one instruction
           sumVec[h * num_blocks + b] =
             vfmaq_f16(sumVec[h * num_blocks + b], inVec, bVec); // sum += in * v
         }
@@ -2033,6 +2041,7 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
     for (int h = 0; h < gqa_size; ++h) {
       for (int b = 0; b < num_blocks; ++b) {
         int out_base = (n * gqa_size + h) * head_dim + b * 8;
+        // vst1q_f16(ptr, vec): Vector Store 1 (Quarter register, FP16) -> Stores 8 FP16 values
         vst1q_f16(&output[out_base], sumVec[h * num_blocks + b]);
       }
 
@@ -2133,6 +2142,8 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
           int row = start_row + row_tile_start + t_row;
 
           // Prefetching next row's Key cache to L1 cache for performance
+          // __builtin_prefetch(addr, rw, locality):
+          // rw=0 (read), locality=3 (keep in all cache levels)
           if (t_row + 1 < tile_rows) {
             const __fp16 *next_kptr =
               kcache + ((row + 1) * num_cache_head + n) * head_dim;
@@ -2149,15 +2160,28 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
 
           // Main NEON loop for dot product (8 elements at a time)
           for (; i + 8 <= head_dim; i += 8) {
+            // vld1q_f16: Load 8 FP16 elements (vector a)
             float16x8_t va = vld1q_f16(in_ptr + i); // Load Query
+            // vld1q_f16: Load 8 FP16 elements (vector b)
             float16x8_t vb = vld1q_f16(k_row + i);  // Load Key
+            
+            // vfmaq_f16(acc, va, vb): Fused Multiply-Accumulate
+            // acc[j] += va[j] * vb[j] for j=0..7
             acc = vfmaq_f16(acc, va, vb);           // Accumulate Q * K
           }
 
           // Horizontal sum of the vector accumulator
+          // Reduces [x0, x1, ..., x7] to scalar sum
+          // vpaddq_f16(a, b): Pairwise add. 
+          // [a0+a1, a2+a3, ..., b0+b1, ...]
+          // Step 1: 8 elems -> 4 pair sums (duplicated)
+          acc = vpaddq_f16(acc, acc); 
+          // Step 2: 4 elems -> 2 pair sums
           acc = vpaddq_f16(acc, acc);
+          // Step 3: 2 elems -> 1 scalar sum (in lane 0)
           acc = vpaddq_f16(acc, acc);
-          acc = vpaddq_f16(acc, acc);
+          
+          // vgetq_lane_f16(vec, lane_idx): Extract scalar from vector lane
           sum += vgetq_lane_f16(acc, 0);
 
           // Handle remaining elements

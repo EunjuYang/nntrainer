@@ -288,15 +288,23 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
                       unsigned int ld_dst);
 
 /**
- * @brief Compute vcache for one row transposed
- * @param[in] row_num row number
- * @param[in] in float* input vector
- * @param[in] vcache __fp16* input vector
- * @param[out] output float* output vector
- * @param[in] num_cache_head number head of cache
- * @param[in] gqa_size size of group
- * @param[in] head_dim head dimension
- * @param[in] local_window_size windows size for local attention
+ * @brief Compute Value Cache aggregation (Context Vector)
+ *
+ * Perform: Output = Attention_Probs * Value_Cache
+ *
+ * Input Shapes:
+ * - in: [Batch, 1, 1, num_cache_head * gqa_size * Context_Len] (Attention Scores)
+ * - vcache: [Batch, 1, Max_Timestep, num_cache_head * head_dim] (Value Cache)
+ * - output: [Batch, 1, 1, num_cache_head * gqa_size * head_dim] (Context Vector)
+ *
+ * @param[in] row_num Current row index (sequence length / time step)
+ * @param[in] in float* input vector (Attention Scores/Probabilities)
+ * @param[in] vcache __fp16* input vector (Value Cache)
+ * @param[out] output float* output vector (Context Vector)
+ * @param[in] num_cache_head Number of KV heads
+ * @param[in] gqa_size Group Size for GQA (num_heads_Q / num_heads_KV)
+ * @param[in] head_dim Dimension of each head
+ * @param[in] local_window_size Sliding window size
  */
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const __fp16 *vcache, float *output,
@@ -305,17 +313,25 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         size_t local_window_size = UINT_MAX);
 
 /**
- * @brief Compute kcaches
- * @tparam BType type of B vector element
- * @param[in] in float* input vector
+ * @brief Compute Key Cache Dot Products (Attention Scores)
+ *
+ * Perform: Output = (Query * Key_Cache) / sqrt(head_dim)
+ *
+ * Input Shapes:
+ * - in: [Batch, 1, 1, num_cache_head * gqa_size * head_dim] (Query)
+ * - kcache: [Batch, 1, Max_Timestep, num_cache_head * head_dim] (Key Cache)
+ * - output: [Batch, 1, 1, num_cache_head * gqa_size * Context_Len] (Scores)
+ *
+ * @tparam BType Data type of Key Cache (e.g., uint16_t, __fp16)
+ * @param[in] in float* input vector (Query)
  * @param[in] kcache BType* input vector with keys cache
- * @param[out] output float* output float vector
- * @param[in] num_rows number of row
- * @param[in] num_cache_head number head of cache
- * @param[in] head_dim head dimension
- * @param[in] gqa_size size of group
- * @param[in] tile_size size of tile
- * @param[in] local_window_size windows size for local attention
+ * @param[out] output float* output float vector (Scores)
+ * @param[in] num_rows Number of rows to process (Context Length)
+ * @param[in] num_cache_head Number of KV heads
+ * @param[in] head_dim Dimension of each head
+ * @param[in] gqa_size Group Size for GQA
+ * @param[in] tile_size Tile size for loop blocking optimization
+ * @param[in] local_window_size Sliding window size
  */
 template <typename BType>
 void compute_kcaches(const float *in, const BType *kcache, float *output,
@@ -324,18 +340,24 @@ void compute_kcaches(const float *in, const BType *kcache, float *output,
                      size_t local_window_size = UINT_MAX);
 
 /**
- * @brief Compute rotary embedding value
- * @param[in] width current w value from b, c, h, w
- * @param[in] dim unit length of simd computation
- * @param[in] half_ criterion for rotational direction of embedding
- * @param[in/out] inout float* used also as output when expected output float*
- * values
- * @param[out] output void* output values, used when expected output __fp16*
- * values
- * @param[in] cos_ float* input con values
- * @param[in] sin_ float* input sin values
- * @param[in] only_convert_to_fp16 equal true if method is used only for
- * conversion
+ * @brief Compute Rotary Positional Embedding (RoPE)
+ *
+ * Apply rotation matrix to input vector pairs.
+ * [ x' ] = [ cos -sin ] [ x ]
+ * [ y' ]   [ sin  cos ] [ y ]
+ *
+ * Input Shapes:
+ * - inout: [Batch, 1, 1, dim] (Flattened)
+ * - output: [Batch, 1, 1, dim] (Flattened)
+ *
+ * @param[in] width Total width of input (Batch * ... * dim)
+ * @param[in] dim Head Dimension
+ * @param[in] half_ Half of Head Dimension (dim / 2)
+ * @param[in/out] inout float* Input/Output buffer (In-place if output is nullptr)
+ * @param[out] output void* Output buffer (Optional)
+ * @param[in] cos_ float* Precomputed Cosine values
+ * @param[in] sin_ float* Precomputed Sine values
+ * @param[in] only_convert_to_fp16 If true, only convert type without RoPE
  */
 void compute_rotary_emb_value(unsigned int width, unsigned int dim,
                               unsigned int half_, float *inout, void *output,
@@ -343,15 +365,23 @@ void compute_rotary_emb_value(unsigned int width, unsigned int dim,
                               bool only_convert_to_fp16);
 
 /**
- * @brief Compute vcache for one row transposed
- * @param[in] row_num row number
- * @param[in] in __fp16* input vector
- * @param[in] vcache __fp16* input vector
- * @param[out] output __fp16* output vector
- * @param[in] num_cache_head number head of cache
- * @param[in] gqa_size size of group
- * @param[in] head_dim head dimension
- * @param[in] local_window_size windows size for local attention
+ * @brief Compute Value Cache aggregation (Context Vector) - FP16 Version
+ *
+ * Perform: Output = Attention_Probs * Value_Cache
+ *
+ * Input Shapes:
+ * - in: [Batch, 1, 1, num_cache_head * gqa_size * Context_Len] (Attention Scores)
+ * - vcache: [Batch, 1, Max_Timestep, num_cache_head * head_dim] (Value Cache)
+ * - output: [Batch, 1, 1, num_cache_head * gqa_size * head_dim] (Context Vector)
+ *
+ * @param[in] row_num Current row index (sequence length / time step)
+ * @param[in] in __fp16* input vector (Attention Scores/Probabilities)
+ * @param[in] vcache __fp16* input vector (Value Cache)
+ * @param[out] output __fp16* output vector (Context Vector)
+ * @param[in] num_cache_head Number of KV heads
+ * @param[in] gqa_size Group Size for GQA (num_heads_Q / num_heads_KV)
+ * @param[in] head_dim Dimension of each head
+ * @param[in] local_window_size Sliding window size
  */
 void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
                                    const __fp16 *vcache, __fp16 *output,
@@ -360,16 +390,24 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
                                    size_t local_window_size = UINT_MAX);
 
 /**
- * @brief Compute kcaches
- * @param[in] in __fp16* input vector
+ * @brief Compute Key Cache Dot Products (Attention Scores) - FP16 Version
+ *
+ * Perform: Output = (Query * Key_Cache) / sqrt(head_dim)
+ *
+ * Input Shapes:
+ * - in: [Batch, 1, 1, num_cache_head * gqa_size * head_dim] (Query)
+ * - kcache: [Batch, 1, Max_Timestep, num_cache_head * head_dim] (Key Cache)
+ * - output: [Batch, 1, 1, num_cache_head * gqa_size * Context_Len] (Scores)
+ *
+ * @param[in] in __fp16* input vector (Query)
  * @param[in] kcache __fp16* input vector with keys cache
- * @param[out] output __fp16* output float vector
- * @param[in] num_rows number of row
- * @param[in] num_cache_head number head of cache
- * @param[in] head_dim head dimension
- * @param[in] gqa_size size of group
- * @param[in] tile_size size of tile
- * @param[in] local_window_size windows size for local attention
+ * @param[out] output __fp16* output float vector (Scores)
+ * @param[in] num_rows Number of rows to process (Context Length)
+ * @param[in] num_cache_head Number of KV heads
+ * @param[in] head_dim Dimension of each head
+ * @param[in] gqa_size Group Size for GQA
+ * @param[in] tile_size Tile size for loop blocking optimization
+ * @param[in] local_window_size Sliding window size
  */
 void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
                      int num_rows, int num_cache_head, int head_dim,
@@ -377,15 +415,23 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
                      size_t local_window_size = UINT_MAX);
 
 /**
- * @brief Compute rotary embedding value
- * @param[in] width current w value from b, c, h, w
- * @param[in] dim unit length of simd computation
- * @param[in] half_ criterion for rotational direction of embedding
- * @param[in/out] inout __fp16* used also as output
- * @param[out] output __fp16* output, if it is equal nullptr then inout is used
- * as output
- * @param[in] cos_ __fp16* input con values
- * @param[in] sin_ __fp16* input sin values
+ * @brief Compute Rotary Positional Embedding (RoPE) - FP16 Version
+ *
+ * Apply rotation matrix to input vector pairs.
+ * [ x' ] = [ cos -sin ] [ x ]
+ * [ y' ]   [ sin  cos ] [ y ]
+ *
+ * Input Shapes:
+ * - inout: [Batch, 1, 1, dim] (Flattened)
+ * - output: [Batch, 1, 1, dim] (Flattened)
+ *
+ * @param[in] width Total width of input (Batch * ... * dim)
+ * @param[in] dim Head Dimension
+ * @param[in] half_ Half of Head Dimension (dim / 2)
+ * @param[in/out] inout __fp16* Input/Output buffer (In-place if output is nullptr)
+ * @param[out] output __fp16* Output buffer (Optional)
+ * @param[in] cos_ __fp16* Precomputed Cosine values
+ * @param[in] sin_ __fp16* Precomputed Sine values
  */
 void compute_rotary_emb_value(unsigned int width, unsigned int dim,
                               unsigned int half_, __fp16 *inout, __fp16 *output,
