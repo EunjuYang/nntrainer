@@ -1997,11 +1997,11 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
       for (int h = 0; h < gqa_size; ++h) {
         // Calculate index for the attention probability (score) input 'in'
         // 'in' contains Softmax(QK^T) results
-        float a_val = in[(row_num < local_window_size
-                            ? j
-                            : j - (row_num + 1 - local_window_size)) *
-                           gqa_size * num_cache_head +
-                         n * gqa_size + h];
+        __fp16 a_val = in[(row_num < local_window_size
+                             ? j
+                             : j - (row_num + 1 - local_window_size)) *
+                            gqa_size * num_cache_head +
+                          n * gqa_size + h];
 
         // Broadcast the attention score scalar to a vector for NEON
         // multiplication vdupq_n_f16(val): Creates a vector with 8 copies of
