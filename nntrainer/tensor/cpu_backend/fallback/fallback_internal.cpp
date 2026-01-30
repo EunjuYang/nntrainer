@@ -578,7 +578,7 @@ template <>
 void __fallback_compute_kcaches(const float *in, const uint16_t *kcache,
                                 float *output, int num_rows, int num_cache_head,
                                 int head_dim, int gqa_size, int tile_size,
-                                size_t local_window_size) {
+                                size_t local_window_size, int max_num_cache_head) {
   throw std::runtime_error("NYI : __fallback_compute_kcaches");
 }
 

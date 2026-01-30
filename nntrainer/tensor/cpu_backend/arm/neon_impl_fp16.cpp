@@ -2014,7 +2014,9 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
 template <>
 void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_size, size_t local_window_size) {
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int max_num_cache_head) {
+  int stride_cache_head = (max_num_cache_head == -1) ? num_cache_head : max_num_cache_head;
   std::vector<float> tmp_fp32(head_dim);
 
   int start_row =
@@ -2033,10 +2035,10 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
           int row = start_row + row_tile_start + t_row;
           if (t_row + 1 < tile_rows) {
             const __fp16 *next_kptr =
-              kcache + ((row + 1) * num_cache_head + n) * head_dim;
+              kcache + ((row + 1) * stride_cache_head + n) * head_dim;
             __builtin_prefetch(next_kptr, 0, 3); // Read, L1 cache
           }
-          const __fp16 *kptr = kcache + (row * num_cache_head + n) * head_dim;
+          const __fp16 *kptr = kcache + (row * stride_cache_head + n) * head_dim;
 
           load_fp16_4_to_chunk(kptr, tmp_fp32.data(), head_dim);
 
@@ -2058,7 +2060,7 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
           for (; i < head_dim; ++i)
             sum += in_ptr[i] * k_row[i];
 
-          output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
+          output[(row - start_row) * stride_cache_head * gqa_size + n * gqa_size +
                  g] = sum / sqrt((float)head_dim);
         }
       }
@@ -2068,7 +2070,9 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
 
 void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_size, size_t local_window_size) {
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int max_num_cache_head) {
+  int stride_cache_head = (max_num_cache_head == -1) ? num_cache_head : max_num_cache_head;
   int start_row =
     num_rows < local_window_size ? 0 : num_rows - local_window_size;
   int row_cnt = num_rows < local_window_size ? num_rows : local_window_size;
@@ -2085,10 +2089,10 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
           int row = start_row + row_tile_start + t_row;
           if (t_row + 1 < tile_rows) {
             const __fp16 *next_kptr =
-              kcache + ((row + 1) * num_cache_head + n) * head_dim;
+              kcache + ((row + 1) * stride_cache_head + n) * head_dim;
             __builtin_prefetch(next_kptr, 0, 3); // Read, L1 cache
           }
-          const __fp16 *k_row = kcache + (row * num_cache_head + n) * head_dim;
+          const __fp16 *k_row = kcache + (row * stride_cache_head + n) * head_dim;
 
           __fp16 sum = 0.0f;
           int i = 0;
@@ -2107,7 +2111,7 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
           for (; i < head_dim; ++i)
             sum += in_ptr[i] * k_row[i];
 
-          output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
+          output[(row - start_row) * stride_cache_head * gqa_size + n * gqa_size +
                  g] = sum / sqrt((float)head_dim);
         }
       }

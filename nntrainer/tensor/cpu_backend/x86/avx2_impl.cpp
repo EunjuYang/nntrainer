@@ -1596,7 +1596,9 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
 template <>
 void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_size, size_t local_window_size) {
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int max_num_cache_head) {
+  int stride_cache_head = (max_num_cache_head == -1) ? num_cache_head : max_num_cache_head;
   std::vector<float> tmp_fp32(head_dim);
 
   int start_row =
@@ -1615,11 +1617,11 @@ void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
           int row = start_row + row_tile_start + t_row;
           if (row + 1 < num_rows) {
             const uint16_t *next_kptr =
-              kcache + ((row + 1) * num_cache_head + n) * head_dim;
+              kcache + ((row + 1) * stride_cache_head + n) * head_dim;
             _mm_prefetch(reinterpret_cast<const char *>(next_kptr),
                          _MM_HINT_T0);
           }
-          const uint16_t *kptr = kcache + (row * num_cache_head + n) * head_dim;
+          const uint16_t *kptr = kcache + (row * stride_cache_head + n) * head_dim;
           load_fp16_8_to_chunk(kptr, tmp_fp32.data(), head_dim);
 
           const float *k_row = tmp_fp32.data();
@@ -1643,7 +1645,7 @@ void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
           for (; i < head_dim; ++i)
             sum += in_ptr[i] * k_row[i];
 
-          output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
+          output[(row - start_row) * stride_cache_head * gqa_size + n * gqa_size +
                  g] = sum / sqrt((float)head_dim);
         }
       }

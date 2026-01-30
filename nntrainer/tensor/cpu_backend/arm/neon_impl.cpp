@@ -1584,7 +1584,8 @@ static inline void load_fp16_4_to_chunk(const uint16_t *src, float *dst,
 void compute_kcaches_uint16(const float *in, const uint16_t *kcache,
                             float *output, int num_rows, int num_cache_head,
                             int head_dim, int gqa_size, int tile_size,
-                            size_t local_window_size) {
+                            size_t local_window_size, int max_num_cache_head) {
+  int stride_cache_head = (max_num_cache_head == -1) ? num_cache_head : max_num_cache_head;
   std::vector<float> tmp_fp32(head_dim);
 
   int start_row =
@@ -1603,11 +1604,11 @@ void compute_kcaches_uint16(const float *in, const uint16_t *kcache,
           int row = start_row + row_tile_start + t_row;
           if (t_row + 1 < tile_rows) {
             const uint16_t *next_kptr =
-              kcache + ((row + 1) * num_cache_head + n) * head_dim;
+              kcache + ((row + 1) * stride_cache_head + n) * head_dim;
             /// @note This intrinsic is only available for GCC / Clang compiler.
             // __builtin_prefetch(next_kptr, 0, 3); // Read, L1 cache
           }
-          const uint16_t *kptr = kcache + (row * num_cache_head + n) * head_dim;
+          const uint16_t *kptr = kcache + (row * stride_cache_head + n) * head_dim;
 
           load_fp16_4_to_chunk(kptr, tmp_fp32.data(), head_dim);
 
@@ -1629,7 +1630,7 @@ void compute_kcaches_uint16(const float *in, const uint16_t *kcache,
           for (; i < head_dim; ++i)
             sum += in_ptr[i] * k_row[i];
 
-          output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
+          output[(row - start_row) * stride_cache_head * gqa_size + n * gqa_size +
                  g] = sum / sqrt((float)head_dim);
         }
       }

@@ -1171,7 +1171,8 @@ template <typename BType>
 void __fallback_compute_kcaches(const float *in, const BType *kcache,
                                 float *output, int num_rows, int num_cache_head,
                                 int head_dim, int gqa_size, int tile_size,
-                                size_t local_window_size = UINT_MAX);
+                                size_t local_window_size = UINT_MAX,
+                                int max_num_cache_head = -1);
 
 /**
  * @brief Compute rotary embedding value

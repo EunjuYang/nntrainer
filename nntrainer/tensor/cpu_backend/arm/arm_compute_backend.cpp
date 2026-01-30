@@ -465,20 +465,23 @@ void clamp(const float *input, float *output, size_t length, float lower_bound,
 template <>
 void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_size, size_t local_window_size) {
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int max_num_cache_head) {
 #ifdef ENABLE_FP16
   neon::compute_kcaches<_FP16>(in, reinterpret_cast<const _FP16 *>(kcache),
                                output, num_rows, num_cache_head, head_dim,
-                               gqa_size, tile_size, local_window_size);
+                               gqa_size, tile_size, local_window_size,
+                               max_num_cache_head);
 #else
 /// @note float16x4_t and related FP16 NEON are available
 #if defined(__aarch64__) || defined(_M_ARM64)
   neon::compute_kcaches_uint16(in, kcache, output, num_rows, num_cache_head,
                                head_dim, gqa_size, tile_size,
-                               local_window_size);
+                               local_window_size, max_num_cache_head);
 #else
   __fallback_compute_kcaches(in, kcache, output, num_rows, num_cache_head,
-                             head_dim, gqa_size, tile_size, local_window_size);
+                             head_dim, gqa_size, tile_size, local_window_size,
+                             max_num_cache_head);
 #endif
 #endif
 }
