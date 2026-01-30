@@ -305,17 +305,25 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         size_t local_window_size = UINT_MAX);
 
 /**
- * @brief Compute kcaches
- * @tparam BType type of B vector element
- * @param[in] in float* input vector
+ * @brief Compute Key Cache Dot Products (Attention Scores)
+ *
+ * Perform: Output = (Query * Key_cache) / sqrt(head_dim)
+ *
+ * Input Shapes:
+ * - in: [Batch, 1, 1, num_cache_head * gqa_size * head_dim] (Query)
+ * - kcache: [ Batch, 1, Max_Timestep, num_cache_head * head_dim] (Key Cache)
+ * - output: [Batch, 1, 1, num_cache_head * gqa_size * Context_Len] (Scores)
+ *
+ * @tparam BType Data type of Key Cache (e.g., uint16_t, __fp)
+ * @param[in] in float* input vector (Query)
  * @param[in] kcache BType* input vector with keys cache
- * @param[out] output float* output float vector
- * @param[in] num_rows number of row
- * @param[in] num_cache_head number head of cache
- * @param[in] head_dim head dimension
- * @param[in] gqa_size size of group
- * @param[in] tile_size size of tile
- * @param[in] local_window_size windows size for local attention
+ * @param[out] output float* output float vector (Scores)
+ * @param[in] num_rows Number of row to process (Context Length)
+ * @param[in] num_cache_head Number of KV heads
+ * @param[in] head_dim Dimension of each head
+ * @param[in] gqa_size Group Size for GQA
+ * @param[in] tile_size Tile size for loop blocking optimization
+ * @param[in] local_window_size Sliding window size
  */
 template <typename BType>
 void compute_kcaches(const float *in, const BType *kcache, float *output,

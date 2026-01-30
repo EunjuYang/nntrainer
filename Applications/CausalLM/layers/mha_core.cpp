@@ -361,18 +361,41 @@ void MHACoreLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   }
 }
 
+// Function to compute Attention Scores using Tensor inputs
+// Warpper around nntrainer::compute_kcaches with multithreading support
+//
+// Expected Input Shapes:
+// - in (Query): [Batch, 1, sequence_len, Num_Heads_Q * Head_Dim]
+// - cache (Key Cache): [Batch, 1, Max_Timestep, Num_Heads_KV * Head_Dim]
+// - out (Attention Score): [Batch, 1, 1, Num_Heads_Q * Context_Len]
+//   where Context_Len is usually the current time step 'to'.
+/**
+ * @brief Function to compute Attention Scores using Tensor inputs. Wrapper
+ * around nntrainer::compute_kcaches with multi-threading support
+ *
+ * Expected Input Shapes:
+ * @param in (Query): [Batch, 1, sequence_len, Num_Heads_Q * Head_Dim]
+ * @param cache (Key Cache): [Batch, 1, Max_Timestep, Num_Heads_KV * Head_Dim]
+ * @param out (Attention Score): [Batch, 1, 1, Num_Heads_Q * Context_Len]
+ *            where Context_Len is usually the current timestep 'to'.
+ *
+ */
 void MHACoreLayer::compute_kcaches(
   nntrainer::Tensor &in, nntrainer::Tensor &cache, nntrainer::Tensor &out,
   unsigned int from, size_t sequence_len, unsigned int num_head,
   unsigned int group_size, unsigned int head_dim, BS::thread_pool<> &pool) {
 
+  // Dispatch based on data type (FP32 or FP16)
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
     if (sequence_len == 1) {
+      // Single token processing (common during generation)
       nntrainer::compute_kcaches<uint16_t>(
         in.getData<float>(), cache.getData<uint16_t>(), out.getData<float>(),
         from + 1, num_head / group_size, head_dim, group_size, tile_size,
         local_window_size);
     } else {
+      // Sequence processing (prefill or chunked)
+      // Parallelize over the sequence length
       std::vector<std::future<void>> futures;
       int seq =
         sequence_len < local_window_size ? sequence_len : local_window_size;
@@ -381,6 +404,7 @@ void MHACoreLayer::compute_kcaches(
         float *input_addr = in.getData<float>() + num_head * head_dim * i;
         uint16_t *cache_addr = cache.getData<uint16_t>();
         int row_to_compute = from + i + 1;
+        // Calculate dynamic offset for the output (triangle optimization)
         size_t out_start_row =
           calc_attn_index(from + i) - calc_attn_index(from);
         float *output_addr = out.getData<float>() + out_start_row * num_head;

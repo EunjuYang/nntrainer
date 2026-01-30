@@ -1393,6 +1393,8 @@ inline static float16x8_t exp_f16x8(float16x8_t x) {
 }
 
 // Static helper function for softmax_row_inplace with __fp16 sink
+// Performs softmax along the row dimension (sequence length) for each head.
+// Includes handling of a "sink" token (attention sink)
 static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
                                                size_t end_row, size_t num_heads,
                                                __fp16 *sink) {
@@ -1402,7 +1404,9 @@ static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
   __fp16 *max_vals = new __fp16[num_heads];
   __fp16 *sum_vals = new __fp16[num_heads];
 
-  // 1. max (including sink)
+  // 1. Find max value for numerical stability (Safe Softmax)
+  // Formula: Softmax(x) = Softmax(x - max(x))
+  // Iterate over columns (heads)
   for (size_t c = 0; c < num_heads; ++c) {
     __fp16 max_val = sink[c]; // Include sink in max calculation
     for (size_t r = start_row; r < end_row; ++r)
@@ -1410,7 +1414,9 @@ static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
     max_vals[c] = max_val;
   }
 
-  // 2. inplace exp + sum (including sink)
+  // 2. Compute Exponentials and Sum
+  // exp_val = exp(val - max_val)
+  // sum_val = sum(exp_val)
   for (size_t c = 0; c < full_blocks; c += 8) {
     float16x8_t maxv = vld1q_f16(&max_vals[c]);
     float16x8_t sinkv = vld1q_f16(&sink[c]);
@@ -1420,8 +1426,8 @@ static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
       __fp16 *ptr = &qk_out[(start_row + r) * num_heads + c];
       float16x8_t val = vld1q_f16(ptr);
       float16x8_t e = exp_f16x8(vsubq_f16(val, maxv));
-      vst1q_f16(ptr, e); // overwrite qk_out
-      sum = vaddq_f16(sum, e);
+      vst1q_f16(ptr, e);       // overwrite qk_out
+      sum = vaddq_f16(sum, e); // Accumulate sum
     }
     vst1q_f16(&sum_vals[c], sum);
   }
@@ -1438,7 +1444,8 @@ static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
     sum_vals[c] = sum;
   }
 
-  // 3. softmax = exp / sum (inplace)
+  // 3. Normalize to get Probabilities
+  // prob = exp_val / sum_val
   for (size_t r = 0; r < row_range; ++r) {
     for (size_t c = 0; c < full_blocks; c += 8) {
       __fp16 *ptr = &qk_out[(start_row + r) * num_heads + c];
@@ -1957,28 +1964,48 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
   }
 }
 
+// Function to compute the context vector by multiplying Attention Probabilities
+// (in) with Value Cache (vcache) Performs: Output = Attention_Probs *
+// Value_Cache
 void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
                                    const __fp16 *vcache, __fp16 *output,
                                    int num_cache_head, int gqa_size,
                                    int head_dim, size_t local_window_size) {
+  // Iterating over each cache head (N)
+  // This loop structure handles all heads internally
   for (int n = 0; n < num_cache_head; ++n) {
-    int num_blocks = head_dim / 8;
-    int rem = head_dim % 8;
+    int num_blocks =
+      head_dim / 8;         // Process 8 FP16 elements at a time using NEON
+    int rem = head_dim % 8; // Handle remaining elements
 
+    // Initialize accumulators for the dot product results
+    // sumVec stores vectorized sums, sumRem stores scalar sums for remainders
     std::vector<float16x8_t> sumVec(num_blocks * gqa_size, vdupq_n_f16(0.0f));
     std::vector<__fp16> sumRem(gqa_size * rem, 0.0f);
 
+    // Calculate start row based on local window size (Sliding Window Attention)
+    // Only consider tokens within the window
     for (int j = row_num < local_window_size ? 0
                                              : row_num + 1 - local_window_size;
          j <= row_num; ++j) {
+      // Pointer to the Value cache for the current token (j) and head (n)
+      // vcache layout assumed:  [Sequence, Heads, HeadDim]
       const __fp16 *vptr = vcache + (j * num_cache_head + n) * head_dim;
 
+      // Loop over Grouped Query Attention (GQA) groups
+      // Each Key/Value head is shared by 'gqa_size' Query heads
       for (int h = 0; h < gqa_size; ++h) {
+        // Calculate index for the attention probability (score) input 'in'
+        // 'in' contains Softmax(QK^T) results
         float a_val = in[(row_num < local_window_size
                             ? j
                             : j - (row_num + 1 - local_window_size)) *
                            gqa_size * num_cache_head +
                          n * gqa_size + h];
+
+        // Broadcast the attention score scalar to a vector for NEON
+        // multiplication vdupq_n_f16(val): Creates a vector with 8 copies of
+        // 'val'
         float16x8_t inVec = vdupq_n_f16(a_val);
 
         for (int b = 0; b < num_blocks; ++b) {
@@ -2066,47 +2093,78 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
   }
 }
 
+// Function to compute Attention Scores by multiplying Query (in) with Key Cache
+// (kcache) Performs: Output = (Query * Key_Cache) / sqrt(Head_Dim) This version
+// handles FP16 inputs/outputs. Optimized with NEON intrinsics for ARM
+// architecture, including loop tiling.
 void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
                      int num_rows, int num_cache_head, int head_dim,
                      int gqa_size, int tile_size, size_t local_window_size) {
+  // Calculate valid row range considering local window size
   int start_row =
     num_rows < local_window_size ? 0 : num_rows - local_window_size;
   int row_cnt = num_rows < local_window_size ? num_rows : local_window_size;
+
+  // Calculate number of tiles for cache blocking optimization
   const int tile_count = (row_cnt + tile_size - 1) / tile_size;
 
+  // Loop over each Key head
   for (int n = 0; n < num_cache_head; ++n) {
+    // Loop over tiles (Cache Blocking) to improve memory access patterns
     for (int t = 0; t < tile_count; ++t) {
       int row_tile_start = t * tile_size;
       int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
 
+      // Loop over Grouped Query Attention groups
       for (int g = 0; g < gqa_size; ++g) {
-        const __fp16 *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
+        // Pointer to the current Query vector
+        const __fp16 *in_ptr = in + (n * gqa_size + g) * head_dim;
+
+        // Loop within the tile
         for (int t_row = 0; t_row < tile_rows; ++t_row) {
           int row = start_row + row_tile_start + t_row;
+          // Prefetching next row's key cache to L1 cache for performance
+          // __builtin_prefetch(addr, rw, locality):
+          // rw=0 (read), locality=3 (keep in all cache levels)
           if (t_row + 1 < tile_rows) {
             const __fp16 *next_kptr =
               kcache + ((row + 1) * num_cache_head + n) * head_dim;
             __builtin_prefetch(next_kptr, 0, 3); // Read, L1 cache
           }
+          // Pointer to current Key vector
           const __fp16 *k_row = kcache + (row * num_cache_head + n) * head_dim;
 
+          // Compute Dot Product: Query, Key
           __fp16 sum = 0.0f;
           int i = 0;
           float16x8_t acc = vdupq_n_f16(0.0);
+
+          // Main NEON loop for dot product (8 elements at a time)
           for (; i + 8 <= head_dim; i += 8) {
-            float16x8_t va = vld1q_f16(in_ptr + i);
-            float16x8_t vb = vld1q_f16(k_row + i);
+            float16x8_t va = vld1q_f16(in_ptr + i); // Load Query
+            float16x8_t vb = vld1q_f16(k_row + i);  // Load Key
             acc = vfmaq_f16(acc, va, vb);
           }
 
+          // Horizontal sum of the vector accumulator
+          // Reduces [x0, x1, ... , x7] to scalar sum
+          // vpaddq_f16(a, b): Pairwise add
+          // [a0+a1, a2+a3, ..., b0+b1, ...]
+          // Step 1: 8 elems -> 4 pair sums (duplicated)
           acc = vpaddq_f16(acc, acc);
+          // Step 2: 4 elems -> 2 pair sums
           acc = vpaddq_f16(acc, acc);
+          // Step 3: 2 elems -> 1 pair sums (in lane 0)
           acc = vpaddq_f16(acc, acc);
+          // vgetq_lane_f16(vec, lane_idx): Extract scalar from vector lane
           sum += vgetq_lane_f16(acc, 0);
 
+          // Handle remaining elements
           for (; i < head_dim; ++i)
             sum += in_ptr[i] * k_row[i];
 
+          // Apply scaling factor (1/sqrt(head_dim)) and store result
+          // This is the "Scaled" Dot-Product Attention
           output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
                  g] = sum / sqrt((float)head_dim);
         }
@@ -2194,12 +2252,17 @@ void compute_rotary_emb_value(unsigned int width, unsigned int dim,
   }
 }
 
+// Function to apply Rotary Positional Embeddings (RoPE)
+// Rotates pairs of elements in the embedding vector by a given angle.
 void compute_rotary_emb_value(unsigned int width, unsigned int dim,
                               unsigned int half_, __fp16 *inout, __fp16 *output,
                               const __fp16 *cos_, const __fp16 *sin_) {
+  // Iterate over the width dimension (e.g., flattened batch/head/seq)
+  // 'dim' is typicallly the head dimension
   for (unsigned int w = 0; w < width; w += dim) {
     unsigned int k = 0;
     if (output != nullptr) {
+      // Vectorized loop (8 elements) using NEON
       for (; k + 7 < half_; k += 8) {
         unsigned int i0 = w + k;
         unsigned int i1 = w + k + half_;
@@ -2210,6 +2273,11 @@ void compute_rotary_emb_value(unsigned int width, unsigned int dim,
         float16x8_t cos_v = vld1q_f16(&cos_[k]);
         float16x8_t sin_v = vld1q_f16(&sin_[k]);
 
+        // [ x' ] = [ cos -sin ] [x]
+        // [ y' ]   [ sin  cos ] [y]
+        //
+        // out0 = a * cos - b * sin
+        // out1 = a * sin + b * cos
         float16x8_t out0 = vsubq_f16(vmulq_f16(a, cos_v), vmulq_f16(b, sin_v));
         float16x8_t out1 = vaddq_f16(vmulq_f16(a, sin_v), vmulq_f16(b, cos_v));
 
