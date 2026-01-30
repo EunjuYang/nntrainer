@@ -528,9 +528,9 @@ void MHACoreLayer::one_batch_incremental_forwarding(
 
   softmax_triangle(out_, to - from, num_heads_Q, from, pool);
 
-  compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step, to,
-                                num_heads_KV, gqa_size, head_dim,
-                                (from) ? false : true, pool);
+  compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
+                                num_heads_KV, gqa_size, head_dim, to,
+                                pool);
 }
 
 void MHACoreLayer::one_batch_incremental_forwarding(
@@ -609,9 +609,9 @@ void MHACoreLayer::one_batch_incremental_forwarding(
 
   softmax_triangle(out_, to - from, num_heads_Q, from, pool, sink_step);
 
-  compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step, to,
-                                num_heads_KV, gqa_size, head_dim,
-                                (from) ? false : true, pool);
+  compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
+                                num_heads_KV, gqa_size, head_dim, to,
+                                pool);
 }
 
 /************************************************************** */
@@ -1009,7 +1009,7 @@ void MHACoreLayer::softmax_triangle(nntrainer::Tensor &qk_out, size_t row,
 
 void MHACoreLayer::compute_fp16vcache_transposed(
   nntrainer::Tensor &in, nntrainer::Tensor &vcache, nntrainer::Tensor &output,
-  int seq, int num_cache_head, int gqa_size, int head_dim, bool process_all,
+  int num_cache_head, int gqa_size, int head_dim, int to,
   BS::thread_pool<> &pool) {
 
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
@@ -1045,25 +1045,26 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       for (auto &fut : futures)
         fut.get();
     } else {
+      int row_num = is_causal ? to - 1 : to;
       nntrainer::compute_fp16vcache_fp32_transposed(
-        to - 1, in.getData<float>(), vcache.getData<uint16_t>(),
+        row_num, in.getData<float>(), vcache.getData<uint16_t>(),
         output.getData<float>(), num_cache_head, gqa_size, head_dim,
         local_window_size);
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
-    if (process_all) {
+    if ((to - from) != 1) {
       std::vector<std::future<void>> futures;
-      int seq_len_val = seq < local_window_size ? seq : local_window_size;
-      if (!is_causal) seq_len_val = seq;
-      
-      futures.reserve(seq_len_val);
+      int seq = (to - from) < local_window_size ? to - from : local_window_size;
+      if (!is_causal)
+        seq = to - from;
+      futures.reserve(seq);
 
-      for (int i = 0; i < seq_len_val; ++i) {
+      for (int i = 0; i < seq; ++i) {
         futures.push_back(pool.submit_task([=]() {
           size_t start_idx;
           if (is_causal) {
-             start_idx = calc_attn_index(to - seq_len_val + i) - calc_attn_index(to - seq_len_val);
+             start_idx = calc_attn_index(to - seq + i) - calc_attn_index(to - seq);
           } else {
              start_idx = i * to;
           }
@@ -1071,7 +1072,7 @@ void MHACoreLayer::compute_fp16vcache_transposed(
             in.getData<_FP16>() + start_idx * num_cache_head * gqa_size;
           _FP16 *out = output.getData<_FP16>() +
                        i * (num_cache_head * gqa_size * head_dim);
-          int row_num = is_causal ? (to - seq_len_val + i) : i;
+          int row_num = is_causal ? (to - seq + i) : to;
           nntrainer::compute_fp16vcache_transposed(
             row_num, input, vcache.getData<_FP16>(), out, num_cache_head, gqa_size,
             head_dim, local_window_size);
@@ -1080,8 +1081,9 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       for (auto &fut : futures)
         fut.get();
     } else {
+      int row_num = is_causal ? to - 1 : to;
       nntrainer::compute_fp16vcache_transposed(
-        to - 1, in.getData<_FP16>(), vcache.getData<_FP16>(),
+        row_num, in.getData<_FP16>(), vcache.getData<_FP16>(),
         output.getData<_FP16>(), num_cache_head, gqa_size, head_dim,
         local_window_size);
     }
