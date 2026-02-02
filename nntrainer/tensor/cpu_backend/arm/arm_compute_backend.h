@@ -423,6 +423,7 @@ void compute_fp16vcache_transposed(int row_num, const _FP16 *in,
  * @param[in] tile_off offset of tile
  * @param[in] tile_size size of tile
  * @param[in] local_window_size windows size for local attention
+ * @param[in] max_num_cache_head total number of cache heads (stride) for when processing a subset of heads. Defaults to -1 (use num_cache_head).
  */
 void compute_kcaches(const _FP16 *in, const _FP16 *kcache, _FP16 *output,
                      int num_rows, int num_cache_head, int head_dim,
@@ -695,6 +696,7 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
  * @param[in] gqa_size size of group
  * @param[in] tile_size size of tile
  * @param[in] local_window_size windows size for local attention
+ * @param[in] max_num_cache_head total number of cache heads (stride) for when processing a subset of heads. Defaults to -1 (use num_cache_head).
  */
 template <typename BType>
 void compute_kcaches(const float *in, const BType *kcache, float *output,

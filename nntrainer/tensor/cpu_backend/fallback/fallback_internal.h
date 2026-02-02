@@ -1166,6 +1166,7 @@ void __fallback_compute_fp16vcache_fp32_transposed(
  * @param[in] gqa_size size of group
  * @param[in] tile_size size of tile
  * @param[in] local_window_size windows size for local attention
+ * @param[in] max_num_cache_head total number of cache heads (stride) for when processing a subset of heads. Defaults to -1 (use num_cache_head).
  */
 template <typename BType>
 void __fallback_compute_kcaches(const float *in, const BType *kcache,
