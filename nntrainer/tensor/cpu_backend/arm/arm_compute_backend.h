@@ -402,6 +402,10 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
  * @param[in] gqa_size size of group
  * @param[in] head_dim head dimension
  * @param[in] local_window_size windows size for local attention
+ * @param[in] head_start start index of KV heads to process (default 0).
+ *            Used for head-direction parallelization during decoding.
+ * @param[in] head_end end index (exclusive) of KV heads to process.
+ *            Default -1 means process all heads from head_start to num_cache_head.
  */
 void compute_fp16vcache_transposed(int row_num, const _FP16 *in,
                                    const _FP16 *vcache, _FP16 *output,
@@ -421,6 +425,10 @@ void compute_fp16vcache_transposed(int row_num, const _FP16 *in,
  * @param[in] gqa_size size of group
  * @param[in] tile_size size of tile
  * @param[in] local_window_size windows size for local attention
+ * @param[in] head_start start index of KV heads to process (default 0).
+ *            Used for head-direction parallelization during decoding.
+ * @param[in] head_end end index (exclusive) of KV heads to process.
+ *            Default -1 means process all heads from head_start to num_cache_head.
  */
 void compute_kcaches(const _FP16 *in, const _FP16 *kcache, _FP16 *output,
                      int num_rows, int num_cache_head, int head_dim,
@@ -673,6 +681,10 @@ void softmax_row(__fp16 *qk_out, size_t start_row, size_t end_row,
  * @param[in] gqa_size size of group
  * @param[in] head_dim head dimension
  * @param[in] local_window_size windows size for local attention
+ * @param[in] head_start start index of KV heads to process (default 0).
+ *            Used for head-direction parallelization during decoding.
+ * @param[in] head_end end index (exclusive) of KV heads to process.
+ *            Default -1 means process all heads from head_start to num_cache_head.
  */
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const uint16_t *vcache, float *output,
@@ -693,6 +705,10 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
  * @param[in] gqa_size size of group
  * @param[in] tile_size size of tile
  * @param[in] local_window_size windows size for local attention
+ * @param[in] head_start start index of KV heads to process (default 0).
+ *            Used for head-direction parallelization during decoding.
+ * @param[in] head_end end index (exclusive) of KV heads to process.
+ *            Default -1 means process all heads from head_start to num_cache_head.
  */
 template <typename BType>
 void compute_kcaches(const float *in, const BType *kcache, float *output,
