@@ -1514,25 +1514,17 @@ static inline void load_fp16_8_to_chunk(const uint16_t *src, float *dst,
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const uint16_t *vcache, float *output,
                                         int num_cache_head, int gqa_size,
-                                        int head_dim,
-                                        size_t local_window_size) {
-  // cpu_set_t cpu_set;
-  // CPU_ZERO(&cpu_set);
-  // std::vector<bool> affinity(8, false);
-  // affinity[i % affinity.size()] = true;
+                                        int head_dim, size_t local_window_size,
+                                        int head_start, int head_end) {
 
-  // for (std::size_t j = 0;
-  //      j < std::min<std::size_t>(affinity.size(), CPU_SETSIZE); ++j) {
-  //   if (affinity[j])
-  //     CPU_SET(j, &cpu_set);
-  // }
-  // pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpu_set);
+  // If head_end is -1, process all heads from head_start
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
 
   std::vector<float> tmp_fp32(head_dim);
   int num_blocks = head_dim / 8;
   __m256 *sumVec = new __m256[std::max(1, num_blocks * gqa_size)];
 
-  for (int n = 0; n < num_cache_head; ++n) {
+  for (int n = head_start; n < actual_head_end; ++n) {
     int rem = head_dim % 8;
 
     /* Declaration: std::vector<__m256> sumVec(num_blocks * gqa_size,
@@ -1596,15 +1588,19 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
 template <>
 void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_size, size_t local_window_size) {
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int head_start, int head_end) {
   std::vector<float> tmp_fp32(head_dim);
+
+  // If head_end is -1, process all heads from head_start
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
 
   int start_row =
     num_rows < local_window_size ? 0 : num_rows - local_window_size;
   int row_cnt = num_rows < local_window_size ? num_rows : local_window_size;
   const int tile_count = (row_cnt + tile_size - 1) / tile_size;
 
-  for (int n = 0; n < num_cache_head; ++n) {
+  for (int n = head_start; n < actual_head_end; ++n) {
     for (int t = 0; t < tile_count; ++t) {
       int row_tile_start = t * tile_size;
       int tile_rows = std::min(tile_size, row_cnt - row_tile_start);

@@ -301,20 +301,21 @@ void softmax_row(float *qk_out, size_t start_row, size_t end_row,
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const uint16_t *vcache, float *output,
                                         int num_cache_head, int gqa_size,
-                                        int head_dim,
-                                        size_t local_window_size) {
-  __fallback_compute_fp16vcache_fp32_transposed(row_num, in, vcache, output,
-                                                num_cache_head, gqa_size,
-                                                head_dim, local_window_size);
+                                        int head_dim, size_t local_window_size,
+                                        int head_start, int head_end) {
+  __fallback_compute_fp16vcache_fp32_transposed(
+    row_num, in, vcache, output, num_cache_head, gqa_size, head_dim,
+    local_window_size, head_start, head_end);
 }
 
 template <>
 void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_size, size_t local_window_size) {
-  __fallback_compute_kcaches<uint16_t>(in, kcache, output, num_rows,
-                                       num_cache_head, head_dim, gqa_size,
-                                       tile_size, local_window_size);
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int head_start, int head_end) {
+  __fallback_compute_kcaches<uint16_t>(
+    in, kcache, output, num_rows, num_cache_head, head_dim, gqa_size, tile_size,
+    local_window_size, head_start, head_end);
 }
 
 void compute_rotary_emb_value(unsigned int width, unsigned int dim,
