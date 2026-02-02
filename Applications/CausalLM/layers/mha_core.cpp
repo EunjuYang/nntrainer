@@ -456,10 +456,13 @@ void MHACoreLayer::compute_kcaches(
       futures.reserve(num_cache_head);
 
       for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        nntrainer::compute_kcaches(in.getData<_FP16>(), cache.getData<_FP16>(),
-                                   out.getData<_FP16>(), num_rows, num_rows,
-                                   head_dim, group_size, tile_size,
-                                   local_window_size, head_kv, head_kv + 1);
+        futures.emplace_back(pool.submit_task([=, &in, &cache, &out]() {
+          nntrainer::compute_kcaches(in.getData<_FP16>(), cache.getData<_FP16>(),
+                                     out.getData<_FP16>(), num_rows,
+                                     num_cache_head, head_dim, group_size,
+                                     tile_size, local_window_size, head_kv,
+                                     head_kv + 1);
+        }));
       }
 
       for (auto &fut : futures)
@@ -1155,10 +1158,12 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       futures.reserve(num_cache_head);
 
       for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        nntrainer::compute_fp16vcache_fp32_transposed(
-          row_num, in.getData<float>(), vcache.getData<uint16_t>(),
-          output.getData<float>(), num_cache_head, gqa_size, head_dim,
-          local_window_size, head_kv, head_kv + 1);
+        futures.emplace_back(pool.submit_task([=, &in, &vcache, &output]() {
+          nntrainer::compute_fp16vcache_fp32_transposed(
+            row_num, in.getData<float>(), vcache.getData<uint16_t>(),
+            output.getData<float>(), num_cache_head, gqa_size, head_dim,
+            local_window_size, head_kv, head_kv + 1);
+        }));
       }
 
       for (auto &fut : futures)
@@ -1203,10 +1208,12 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       futures.reserve(num_cache_head);
 
       for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        nntrainer::compute_fp16vcache_transposed(
-          row_num, in.getData<_FP16>(), vcache.getData<_FP16>(),
-          output.getData<_FP16>(), num_cache_head, gqa_size, head_dim,
-          local_window_size, head_kv, head_kv + 1);
+        futures.emplace_back(pool.submit_task([=, &in, &vcache, &output]() {
+          nntrainer::compute_fp16vcache_transposed(
+            row_num, in.getData<_FP16>(), vcache.getData<_FP16>(),
+            output.getData<_FP16>(), num_cache_head, gqa_size, head_dim,
+            local_window_size, head_kv, head_kv + 1);
+        }));
       }
 
       for (auto &fut : futures)
