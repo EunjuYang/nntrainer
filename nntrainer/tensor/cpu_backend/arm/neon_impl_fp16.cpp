@@ -1907,11 +1907,14 @@ static inline void load_fp16_4_to_chunk(const __fp16 *src, float *dst,
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const __fp16 *vcache, float *output,
                                         int num_cache_head, int gqa_size,
-                                        int head_dim,
-                                        size_t local_window_size) {
+                                        int head_dim, size_t local_window_size,
+                                        int head_start, int head_end) {
   std::vector<float> tmp_fp32(head_dim);
 
-  for (int n = 0; n < num_cache_head; ++n) {
+  // If head_end is -1, process all heads from head_start
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  for (int n = head_start; n < actual_head_end; ++n) {
     int num_blocks = head_dim / 4;
     int rem = head_dim % 4;
 
@@ -1970,10 +1973,14 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
 void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
                                    const __fp16 *vcache, __fp16 *output,
                                    int num_cache_head, int gqa_size,
-                                   int head_dim, size_t local_window_size) {
-  // Iterating over each cache head (N)
-  // This loop structure handles all heads internally
-  for (int n = 0; n < num_cache_head; ++n) {
+                                   int head_dim, size_t local_window_size,
+                                   int head_start, int head_end) {
+  // If head_end is -1, process all ehadsd from head_start
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  // Iterating over each cache head (N) within the specified range
+  // This loop structure handles heads for parallelization
+  for (int n = head_start; n < actual_head_end; ++n) {
     int num_blocks =
       head_dim / 8;         // Process 8 FP16 elements at a time using NEON
     int rem = head_dim % 8; // Handle remaining elements
@@ -2041,15 +2048,19 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
 template <>
 void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_size, size_t local_window_size) {
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int head_start, int head_end) {
   std::vector<float> tmp_fp32(head_dim);
+
+  // If head_end is -1, process all heads from head_start
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
 
   int start_row =
     num_rows < local_window_size ? 0 : num_rows - local_window_size;
   int row_cnt = num_rows < local_window_size ? num_rows : local_window_size;
   const int tile_count = (row_cnt + tile_size - 1) / tile_size;
 
-  for (int n = 0; n < num_cache_head; ++n) {
+  for (int n = head_start; n < actual_head_end; ++n) {
     for (int t = 0; t < tile_count; ++t) {
       int row_tile_start = t * tile_size;
       int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
@@ -2099,7 +2110,12 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
 // architecture, including loop tiling.
 void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
                      int num_rows, int num_cache_head, int head_dim,
-                     int gqa_size, int tile_size, size_t local_window_size) {
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int head_start, int head_end) {
+
+  // If head_end is -1, process all heads from head_start
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
   // Calculate valid row range considering local window size
   int start_row =
     num_rows < local_window_size ? 0 : num_rows - local_window_size;
@@ -2108,8 +2124,8 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
   // Calculate number of tiles for cache blocking optimization
   const int tile_count = (row_cnt + tile_size - 1) / tile_size;
 
-  // Loop over each Key head
-  for (int n = 0; n < num_cache_head; ++n) {
+  // Loop over each Key head (within the specified range for parallelization)
+  for (int n = head_start; n < actual_head_end; ++n) {
     // Loop over tiles (Cache Blocking) to improve memory access patterns
     for (int t = 0; t < tile_count; ++t) {
       int row_tile_start = t * tile_size;

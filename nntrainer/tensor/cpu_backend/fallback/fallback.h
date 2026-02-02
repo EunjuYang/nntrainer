@@ -1253,12 +1253,15 @@ void softmax_row(T *qk_out, size_t start_row, size_t end_row, size_t num_heads,
  * @param[in] gqa_size size of group
  * @param[in] head_dim head dimension
  * @param[in] local_window_size windows size for local attention
+ * @param[in] head_start start index of KV heads to process (default 0)
+ * @param[in] head_end end index of KV heads to process (default num_cache_head)
  */
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const uint16_t *vcache, float *output,
                                         int num_cache_head, int gqa_size,
                                         int head_dim,
-                                        size_t local_window_size = UINT_MAX);
+                                        size_t local_window_size = UINT_MAX,
+                                        int head_start = 0, int head_end = -1);
 
 /**
  * @brief Compute kcaches
@@ -1272,12 +1275,15 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
  * @param[in] gqa_size size of group
  * @param[in] tile_size size of tile
  * @param[in] local_window_size windows size for local attention
+ * @param[in] head_start start index of KV heads to process (default 0)
+ * @param[in] head_end end index of KV heads to process (default num_cache_head)
  */
 template <typename BType>
 void compute_kcaches(const float *in, const BType *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
                      int gqa_size, int tile_size,
-                     size_t local_window_size = UINT_MAX);
+                     size_t local_window_size = UINT_MAX, int head_start = 0,
+                     int head_end = -1);
 
 /**
  * @brief Compute rotary embedding value

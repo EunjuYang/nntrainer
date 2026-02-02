@@ -387,11 +387,26 @@ void MHACoreLayer::compute_kcaches(
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
     if (sequence_len == 1) {
       // Single token processing (common during generation)
+      // Parallelize over KV heads for decoding since Q direction is always 1
       int row_to_compute = is_causal ? from + 1 : from + sequence_len;
-      nntrainer::compute_kcaches<uint16_t>(
-        in.getData<float>(), cache.getData<uint16_t>(), out.getData<float>(),
-        row_to_compute, num_head / group_size, head_dim, group_size, tile_size,
-        local_window_size);
+      unsigned int num_cache_head = num_head / group_size;
+
+      // Use head-direction parallelization for decoding
+      std::vector<std::future<void>> futures;
+      futures.reserve(num_cache_head);
+
+      for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+        futures.emplace_back(pool.submit_task([=, &in, &cache, &out]() {
+          // Process one KV head and its associated Q heads (gqa_size)
+          nntrainer::compute_kcaches<uint16_t>(
+            in.getData<float>(), cache.getData<uint16_t>(),
+            out.getData<float>(), row_to_compute, num_cache_head, head_dim,
+            group_size, tile_size, local_window_size, head_kv, head_kv + 1);
+        }));
+      }
+
+      for (auto &fut : futures)
+        fut.get();
     } else {
       // Sequence processing (prefill or chunked)
       // Parallelize over the sequence length
@@ -422,11 +437,26 @@ void MHACoreLayer::compute_kcaches(
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
     if (sequence_len == 1) {
+      // Single token processing (common during generation)
+      // Parallelize over KV heads for decoding since Q direction is always 1
       int num_rows = is_causal ? from + 1 : from + sequence_len;
-      nntrainer::compute_kcaches(in.getData<_FP16>(), cache.getData<_FP16>(),
-                                 out.getData<_FP16>(), num_rows,
-                                 num_head / group_size, head_dim, group_size,
-                                 tile_size, local_window_size);
+      unsigned int num_cache_head = num_head / group_size;
+
+      // Use head-direction parallelization for decoding
+      std::vector<std::future<void>> futures;
+      futures.reserve(num_cache_head);
+
+      for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+        futures.emplace_back(pool.submit_task([=]() {
+          nntrainer::compute_kcaches(
+            in.getData<_FP16>(), cache.getData<_FP16>(), out.getData<_FP16>(),
+            num_rows, num_cache_head, head_dim, group_size, tile_size,
+            local_window_size, head_kv, head_kv + 1);
+        }));
+      }
+
+      for (auto &fut : futures)
+        fut.get();
     } else {
       std::vector<std::future<void>> futures;
       unsigned int seq_start =
@@ -1154,11 +1184,24 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       for (auto &fut : futures)
         fut.get();
     } else {
+      // Single token processing (common during generation)
+      // Parallelize over KV heads for decoding since Q direction is always 1
       int row_num = is_causal ? to - 1 : to;
-      nntrainer::compute_fp16vcache_fp32_transposed(
-        row_num, in.getData<float>(), vcache.getData<uint16_t>(),
-        output.getData<float>(), num_cache_head, gqa_size, head_dim,
-        local_window_size);
+
+      std::vector<std::future<void>> futures;
+      futures.reserve(num_cache_head);
+
+      for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+        futures.emplace_back(pool.submit_task([=]() {
+          nntrainer::compute_fp16vcache_fp32_transposed(
+            row_num, in.getData<float>(), vcache.getData<uint16_t>(),
+            output.getData<float>(), num_cache_head, gqa_size, head_dim,
+            local_window_size, head_kv, head_kv + 1);
+        }));
+      }
+
+      for (auto &fut : futures)
+        fut.get();
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
@@ -1191,11 +1234,24 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       for (auto &fut : futures)
         fut.get();
     } else {
+      // Single token processing (common during generation)
+      // Parallelize over KV heads for decoding since Q direction is always 1
       int row_num = is_causal ? to - 1 : to;
-      nntrainer::compute_fp16vcache_transposed(
-        row_num, in.getData<_FP16>(), vcache.getData<_FP16>(),
-        output.getData<_FP16>(), num_cache_head, gqa_size, head_dim,
-        local_window_size);
+
+      std::vector<std::future<void>> futures;
+      futures.reserve(num_cache_head);
+
+      for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+        futures.push_back(pool.submit_task([=]() {
+          nntrainer::compute_fp16vcache_transposed(
+            row_num, in.getData<_FP16>(), vcache.getData<_FP16>(),
+            output.getData<_FP16>(), num_cache_head, gqa_size, head_dim,
+            local_window_size, head_kv, head_kv + 1);
+        }));
+      }
+
+      for (auto &fut : futures)
+        fut.get();
     }
 #else
     NNTR_THROW_IF(true, std::invalid_argument) << "enable-fp16 is not set!";
