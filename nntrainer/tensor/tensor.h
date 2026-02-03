@@ -1648,6 +1648,18 @@ public:
   void save(std::ostream &file);
 
   /**
+   * @brief     Save the Tensor into file with dtype conversion
+   * @param[in] file output file stream
+   * @param[in] target_dtype target dtype to convert to before saving
+   * @note dtype conversion is only supported when source dtype is FP32.
+   *       If the source dtype is not FP32, an exception will be thrown.
+   * @note Currently supported target dtypes: Q4_0
+   * @throws std::runtime_error if source dtype is not FP32
+   * @throws std::invalid_argument if target dtype is not supported
+   */
+  void saveWithDtype(std::ostream &file, TensorDim::DataType target_dtype);
+
+  /**
    * @brief     Read the Tensor from file
    * @param[in] file input file stream
    */

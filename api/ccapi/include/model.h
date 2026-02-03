@@ -28,6 +28,7 @@
 #include <layer.h>
 #include <optimizer.h>
 #include <tensor_dim.h>
+#include <unordered_map>
 
 namespace nntrainer {
 class RunLayerContext;
@@ -97,6 +98,14 @@ for inference and training without any configurations*/
 };
 
 /**
+ * @brief Type alias for per-layer dtype configuration
+ * @details Maps layer names to their target save dtype.
+ *          Used when saving model with different dtypes per layer.
+ */
+using SaveDtypeConfig =
+  std::unordered_map<std::string, ml::train::TensorDim::DataType>;
+
+/**
  * @class   Model Class
  * @brief   Model Class containing configuration, layers, optimizer and dataset
  */
@@ -164,6 +173,27 @@ public:
    */
   virtual void save(const std::string &file_path,
                     ModelFormat format = ModelFormat::MODEL_FORMAT_BIN) = 0;
+
+  /**
+   * @brief  save model with dtype conversion
+   * @param file_path file_path to save the model
+   * @param format format to save parameters
+   * @param save_dtype target dtype to convert weights before saving
+   *        (e.g., TensorDim::DataType::Q4_0)
+   * @param layer_dtype_config optional per-layer dtype configuration.
+   *        Maps layer names to their target dtype. If a layer is not in
+   *        this map, save_dtype will be used as the default.
+   * @note dtype conversion is only supported when the source weight dtype
+   *       is FP32. If the weight dtype is not FP32, an exception will be
+   *       thrown.
+   * @note Currently supported target dtypes: Q4_0
+   * @throws std::runtime_error if weight dtype is not FP32
+   * @throws std::invalid_argument if target dtype is not supported
+   */
+  virtual void
+  save(const std::string &file_path, ModelFormat format,
+       TensorDim::DataType save_dtype,
+       const SaveDtypeConfig &layer_dtype_config = SaveDtypeConfig{}) = 0;
 
   /**
    * @brief  load model with regard to the format

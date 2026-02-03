@@ -378,6 +378,53 @@ public:
   }
 
   /**
+   * @brief     save layer Weight & Bias data with dtype conversion
+   * @param file output file stream
+   * @param run_context run context for the layer
+   * @param opt_var boolean variable whether saving optimizer variables
+   * @param mode Execution mode
+   * @param trainable is there trainable weight
+   * @param definedWeightDataType current data type of the layer
+   * @param save_dtype target dtype to convert weights before saving
+   * @note dtype conversion is only supported when weight dtype is FP32.
+   *       If not FP32, an exception will be thrown.
+   * @throws std::runtime_error if weight dtype is not FP32
+   */
+  virtual void save(std::ofstream &file, RunLayerContext &run_context,
+                    bool opt_var, ml::train::ExecutionMode mode, bool trainable,
+                    TensorDim::DataType definedWeightDataType,
+                    TensorDim::DataType save_dtype) const {
+    // If save_dtype is the same as current dtype or FP32, use regular save
+    if (save_dtype == definedWeightDataType ||
+        save_dtype == TensorDim::DataType::FP32) {
+      save(file, run_context, opt_var, mode, trainable, definedWeightDataType);
+      return;
+    }
+
+    if (opt_var) {
+      // Optimizer variables are not converted
+      for (unsigned int i = 0; i < run_context.getNumWeights(); ++i) {
+        if (run_context.isGradientFirstAccess(i) && trainable) {
+          if (run_context.weightHasGradient(i)) {
+            for (unsigned int j = 0; j < run_context.getNumWeightOptVar(i);
+                 ++j) {
+              run_context.getWeightOptVar(i, j).save(file);
+            }
+          }
+        }
+      }
+    } else {
+      // @note shared weights are only be saved at the first access
+      for (unsigned int i = 0; i < run_context.getNumWeights(); ++i) {
+        if (run_context.isGradientFirstAccess(i)) {
+          // Use saveWithDtype for dtype conversion
+          run_context.getWeight(i).saveWithDtype(file, save_dtype);
+        }
+      }
+    }
+  }
+
+  /**
    * @brief     read layer Weight & Bias data from file
    * @param file input file stream
    * @param run context for layer

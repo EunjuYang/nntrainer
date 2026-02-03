@@ -12,9 +12,11 @@
 #include <numeric>
 
 #include <char_tensor.h>
+#include <cpu_backend.h>
 #include <float_tensor.h>
 #include <int4_tensor.h>
 #include <lazy_tensor.h>
+#include <nntrainer_error.h>
 #include <q4_0_tensor.h>
 #include <q4_k_tensor.h>
 #include <q6_k_tensor.h>
@@ -1374,6 +1376,61 @@ void Tensor::save(std::ostream &file) {
     << getName() << " is not contiguous, cannot save.";
 
   itensor_->save(file);
+}
+
+void Tensor::saveWithDtype(std::ostream &file, TensorDim::DataType target_dtype) {
+  NNTR_THROW_IF(!getContiguous(), std::invalid_argument)
+    << getName() << " is not contiguous, cannot save.";
+
+  // If target dtype is same as current dtype, use regular save
+  if (target_dtype == getDataType()) {
+    save(file);
+    return;
+  }
+
+  // Currently, dtype conversion is only supported when source dtype is FP32
+  NNTR_THROW_IF(getDataType() != TensorDim::DataType::FP32, std::runtime_error)
+    << "dtype conversion is only supported when source dtype is FP32. "
+    << "Current tensor '" << getName() << "' has dtype: "
+    << static_cast<int>(getDataType());
+
+  // Handle Q4_0 conversion
+  if (target_dtype == TensorDim::DataType::Q4_0) {
+    // Q4_0 requires width to be divisible by 32 (QK4_0)
+    constexpr int Q4_0_BLOCK_SIZE = 32;
+    NNTR_THROW_IF(width() % Q4_0_BLOCK_SIZE != 0, std::invalid_argument)
+      << "Q4_0 quantization requires width to be divisible by " << Q4_0_BLOCK_SIZE
+      << ". Tensor '" << getName() << "' has width: " << width();
+
+    // Calculate Q4_0 buffer size
+    // block_q4_0: 2 bytes for delta (fp16) + 16 bytes for 32 nibbles = 18 bytes per 32 values
+    size_t num_elements = size();
+    size_t num_blocks = num_elements / Q4_0_BLOCK_SIZE;
+    size_t q4_buffer_size = num_blocks * 18; // 18 bytes per block (sizeof(block_q4_0))
+
+    // Allocate buffer for quantized data
+    std::vector<uint8_t> q4_buffer(q4_buffer_size);
+
+    // Quantize FP32 to Q4_0
+    int64_t nrow = static_cast<int64_t>(height() * batch() * channel());
+    int64_t n_per_row = static_cast<int64_t>(width());
+
+    quantize_q4_0(getData<float>(), q4_buffer.data(), nrow, n_per_row, nullptr);
+
+    // Write quantized data to file
+    file.write(reinterpret_cast<const char*>(q4_buffer.data()), q4_buffer_size);
+
+    NNTR_THROW_IF(!file.good(), std::runtime_error)
+      << "Failed to write Q4_0 quantized data for tensor '" << getName() << "'";
+
+    return;
+  }
+
+  // Unsupported target dtype
+  NNTR_THROW_IF(true, std::invalid_argument)
+    << "Unsupported target dtype for conversion: "
+    << static_cast<int>(target_dtype)
+    << ". Currently only Q4_0 conversion is supported.";
 }
 
 void Tensor::read(std::ifstream &file, size_t start_offset,

@@ -676,6 +676,53 @@ void NeuralNetwork::save(const std::string &file_path,
   }
 }
 
+void NeuralNetwork::save(const std::string &file_path,
+                         ml::train::ModelFormat format,
+                         TensorDim::DataType save_dtype,
+                         const ml::train::SaveDtypeConfig &layer_dtype_config) {
+  NNTR_THROW_IF(!initialized, std::runtime_error)
+    << "Cannot save model if not initialized yet, path: " << file_path
+    << " format: " << static_cast<unsigned>(format);
+
+  // Currently only binary format supports dtype conversion
+  NNTR_THROW_IF(format != ml::train::ModelFormat::MODEL_FORMAT_BIN,
+                std::invalid_argument)
+    << "dtype conversion during save is only supported for binary format";
+
+  auto model_file = checkedOpenStream<std::ofstream>(
+    file_path, std::ios::out | std::ios::binary | std::ios::trunc);
+
+  for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); iter++) {
+    // Determine the dtype for this layer
+    TensorDim::DataType layer_save_dtype = save_dtype;
+
+    // Check if this layer has a specific dtype configuration
+    auto it = layer_dtype_config.find((*iter)->getName());
+    if (it != layer_dtype_config.end()) {
+      layer_save_dtype = it->second;
+    }
+
+    // Save the layer with the determined dtype
+    (*iter)->save(model_file, false, exec_mode, layer_save_dtype);
+  }
+
+  // Optimizer variables are saved without dtype conversion
+  if (opt && istrequal(opt->getType(), "adam")) {
+    std::string adam = "adam";
+    model_file.write(adam.c_str(), 4);
+    for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); iter++) {
+      (*iter)->save(model_file, true);
+    }
+  }
+
+  if (exec_mode == ml::train::ExecutionMode::TRAIN) {
+    model_file.write((char *)&epoch_idx, sizeof(epoch_idx));
+    model_file.write((char *)&iter, sizeof(iter));
+  }
+
+  model_file.close();
+}
+
 void NeuralNetwork::load(const std::string &file_path,
                          ml::train::ModelFormat format) {
   /// @todo this switch case should be delegating the function call only. It's

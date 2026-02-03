@@ -794,6 +794,19 @@ public:
        ml::train::ExecutionMode mode = ml::train::ExecutionMode::TRAIN) const;
 
   /**
+   * @brief     save layer Weight & Bias data with dtype conversion
+   * @param file output file stream
+   * @param opt_var save optimizer variables
+   * @param mode execution mode
+   * @param save_dtype target dtype to convert weights before saving
+   * @note dtype conversion is only supported when weight dtype is FP32.
+   *       If not FP32, an exception will be thrown.
+   * @throws std::runtime_error if weight dtype is not FP32
+   */
+  void save(std::ofstream &file, bool opt_var, ml::train::ExecutionMode mode,
+            TensorDim::DataType save_dtype) const;
+
+  /**
    * @brief clear optimizer variable to initial state
    *
    */

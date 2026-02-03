@@ -526,6 +526,46 @@ void LayerNode::save(std::ofstream &file, bool opt_var,
                    getWeightDataType());
 }
 
+void LayerNode::save(std::ofstream &file, bool opt_var,
+                     ml::train::ExecutionMode mode,
+                     TensorDim::DataType save_dtype) const {
+  NNTR_THROW_IF(!run_context, std::runtime_error)
+    << __func__ << " layer needs to be finalized first!";
+
+  // If save_dtype is the same as current weight dtype, use regular save
+  if (save_dtype == getWeightDataType() ||
+      save_dtype == TensorDim::DataType::FP32) {
+    getLayer()->save(file, *run_context, opt_var, mode,
+                     (getTrainable() && mode == ml::train::ExecutionMode::TRAIN),
+                     getWeightDataType());
+    return;
+  }
+
+  // For dtype conversion, we need to handle it here
+  if (opt_var) {
+    // Optimizer variables are not converted
+    for (unsigned int i = 0; i < run_context->getNumWeights(); ++i) {
+      if (run_context->isGradientFirstAccess(i) &&
+          (getTrainable() && mode == ml::train::ExecutionMode::TRAIN)) {
+        // @note save optimizer variables without conversion
+        if (run_context->weightHasGradient(i)) {
+          for (unsigned int j = 0; j < run_context->getNumWeightOptVar(i); ++j) {
+            run_context->getWeightOptVar(i, j).save(file);
+          }
+        }
+      }
+    }
+  } else {
+    // @note shared weights are only be saved at the first access
+    for (unsigned int i = 0; i < run_context->getNumWeights(); ++i) {
+      if (run_context->isGradientFirstAccess(i)) {
+        // Use saveWithDtype for dtype conversion
+        run_context->getWeight(i).saveWithDtype(file, save_dtype);
+      }
+    }
+  }
+}
+
 void LayerNode::clearOptVar() {
   NNTR_THROW_IF(!run_context, std::runtime_error)
     << __func__ << " layer needs to be finalized first!";
