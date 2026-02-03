@@ -300,8 +300,10 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
  * @param[in] head_start start index of KV heads to process (default 0).
  *            Used for head-direction parallelization during decoding.
  * @param[in] head_end end index (exclusive) of KV heads to process.
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
  *            Default -1 means process all heads from head_start to
- * num_cache_head.
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const __fp16 *vcache, float *output,
@@ -333,8 +335,10 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
  * @param[in] head_start start index of KV heads to process (default 0).
  *            Used for head-direction parallelization during decoding.
  * @param[in] head_end end index (exclusive) of KV heads to process.
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
  *            Default -1 means process all heads from head_start to
- * num_cache_head.
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 template <typename BType>
 void compute_kcaches(const float *in, const BType *kcache, float *output,
@@ -375,7 +379,10 @@ void compute_rotary_emb_value(unsigned int width, unsigned int dim,
  * @param[in] head_start start index of KV heads to process (default 0).
  *            Used for head-direction parallelization during decoding.
  * @param[in] head_end end index (exclusive) of KV heads to process.
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
  *            Default -1 means process all heads from head_start to
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  * num_cache_head.
  */
 void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
@@ -398,6 +405,10 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
  * @param[in] local_window_size windows size for local attention
  * @param[in] head_start start index of KV heads to process (default 0)
  * @param[in] head_end end index of KV heads to process (default num_cache_head)
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
+ *            Default -1 means process all heads from head_start to
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
                      int num_rows, int num_cache_head, int head_dim,
@@ -837,6 +848,10 @@ void transform_int4_osv32_isv2_to_q4_0x4(size_t N, size_t K,
  * @param[in] local_window_size windows size for local attention
  * @param[in] head_start start index of KV heads to process (default 0)
  * @param[in] head_end end index of KV heads to process (default num_cache_head)
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
+ *            Default -1 means process all heads from head_start to
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const uint16_t *vcache, float *output,
@@ -859,6 +874,10 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
  * @param[in] local_window_size windows size for local attention
  * @param[in] head_start start index of KV heads to process (default 0)
  * @param[in] head_end end index of KV heads to process (default num_cache_head)
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
+ *            Default -1 means process all heads from head_start to
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 void compute_kcaches_uint16(const float *in, const uint16_t *kcache,
                             float *output, int num_rows, int num_cache_head,

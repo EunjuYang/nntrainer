@@ -1588,8 +1588,14 @@ void compute_kcaches_uint16(const float *in, const uint16_t *kcache,
                             int head_end) {
   std::vector<float> tmp_fp32(head_dim);
 
-  // If head_end is -1, process all heads from head_start
+  // If head_end is -1, process all heads from num_cache_head
+  // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  // Validate head range: head_start must be less than actual_head_end
+  NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
+    << "head_start (" << head_start << ") must be less than head_end ("
+    << actual_head_end << ")";
 
   int start_row =
     num_rows < local_window_size ? 0 : num_rows - local_window_size;
@@ -1648,8 +1654,14 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         int head_start, int head_end) {
   std::vector<float> tmp_fp32(head_dim);
 
-  // If head_end is -1, process all heads from head_start
+  // If head_end is -1, process all heads from head_start to num_cache_head.
+  // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  // Validate head range: head_start must be less than actual_head_end
+  NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
+    << "head_start (" << head_start << ") must be less than head_end ("
+    << actual_head_end << ")";
 
   for (int n = head_start; n < actual_head_end; ++n) {
     int num_blocks = head_dim / 4;

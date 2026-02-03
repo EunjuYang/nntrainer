@@ -1150,6 +1150,10 @@ void __fallback_softmax_row(float *qk_out, size_t start_row, size_t end_row,
  * @param[in] local_window_size windows size for local attention
  * @param[in] head_start start index of KV heads to process (default 0)
  * @param[in] head_end end index of KV heads to process (default num_cache_head)
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
+ *            Default -1 means process all heads from head_start to
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 void __fallback_compute_fp16vcache_fp32_transposed(
   int row_num, const float *in, const uint16_t *vcache, float *output,
@@ -1170,6 +1174,10 @@ void __fallback_compute_fp16vcache_fp32_transposed(
  * @param[in] local_window_size windows size for local attention
  * @param[in] head_start start index of KV heads to process (default 0)
  * @param[in] head_end end index of KV heads to process (default num_cache_head)
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
+ *            Default -1 means process all heads from head_start to
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 template <typename BType>
 void __fallback_compute_kcaches(const float *in, const BType *kcache,

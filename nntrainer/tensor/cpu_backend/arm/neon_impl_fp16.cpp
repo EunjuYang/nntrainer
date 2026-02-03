@@ -16,6 +16,7 @@
 #include <memory>
 #include <neon_impl.h>
 #include <neon_setting.h>
+#include <nntrainer_error.h>
 #ifdef ARMV7
 #include <armv7_neon.h>
 #endif
@@ -1911,8 +1912,14 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         int head_start, int head_end) {
   std::vector<float> tmp_fp32(head_dim);
 
-  // If head_end is -1, process all heads from head_start
+  // If head_end is -1, process all heads from head_start to num_cache_head.
+  // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  // Validate head range: head_start must be less than actual_head_end
+  NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
+    << "head_start (" << head_start << ") must be less than head_end ("
+    << actual_head_end << ")";
 
   for (int n = head_start; n < actual_head_end; ++n) {
     int num_blocks = head_dim / 4;
@@ -1975,8 +1982,14 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
                                    int num_cache_head, int gqa_size,
                                    int head_dim, size_t local_window_size,
                                    int head_start, int head_end) {
-  // If head_end is -1, process all ehadsd from head_start
+  // If head_end is -1, process all heads from head_start to num_cache_head.
+  // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  // Validate head range: head_start must be less than actual_head_end
+  NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
+    << "head_start (" << head_start << ") must be less than head_end ("
+    << actual_head_end << ")";
 
   // Iterating over each cache head (N) within the specified range
   // This loop structure handles heads for parallelization
@@ -2052,8 +2065,14 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
                      int head_start, int head_end) {
   std::vector<float> tmp_fp32(head_dim);
 
-  // If head_end is -1, process all heads from head_start
+  // If head_end is -1, process all heads from head_start to num_cache_head.
+  // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  // Validate head range: head_start must be less than actual_head_end
+  NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
+    << "head_start (" << head_start << ") must be less than head_end ("
+    << actual_head_end << ")";
 
   int start_row =
     num_rows < local_window_size ? 0 : num_rows - local_window_size;
@@ -2113,8 +2132,14 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
                      int gqa_size, int tile_size, size_t local_window_size,
                      int head_start, int head_end) {
 
-  // If head_end is -1, process all heads from head_start
+  // If head_end is -1, process all heads from head_start to num_cache_head.
+  // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  // Validate head range: head_start must be less than actual_head_end
+  NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
+    << "head_start (" << head_start << ") must be less than head_end ("
+    << actual_head_end << ")";
 
   // Calculate valid row range considering local window size
   int start_row =

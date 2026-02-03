@@ -190,8 +190,10 @@ void softmax_row(float *qk_out, size_t start_row, size_t end_row,
  * @param[in] head_start start index of KV heads to process (default 0)
  *            Used for head-direction parallelization during decoding.
  * @param[in] head_end end index of KV heads to process (default num_cache_head)
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
  *            Default -1 means process all heads from head_start to
- * num_cache_head.
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const uint16_t *vcache, float *output,
@@ -215,8 +217,10 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
  * @param[in] head_start start index of KV heads to process (default 0).
  *            Used for head-direction parallelization during decoding.
  * @param[in] head_end end index (exclusive) of KV heads to process.
+ *            The range is [head_start, head_end), i.e., head_end is exclusive.
  *            Default -1 means process all heads from head_start to
- * num_cache_head.
+ *            num_cache_head. No other negative values are accepted.
+ * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 template <typename BType>
 void compute_kcaches(const float *in, const BType *kcache, float *output,
