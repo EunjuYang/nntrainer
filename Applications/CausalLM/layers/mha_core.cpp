@@ -388,7 +388,9 @@ void MHACoreLayer::compute_kcaches(
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
     if (sequence_len == 1) {
       // Single token processing (common during generation)
-      int row_to_compute = is_causal ? from + 1 : from + sequence_len;
+      // For both causal & bidirectional, it is always from + 1.
+      // (note, sequence_len ==1 )
+      int row_to_compute = from + 1;
       nntrainer::compute_kcaches<uint16_t>(
         in.getData<float>(), cache.getData<uint16_t>(), out.getData<float>(),
         row_to_compute, num_head / group_size, head_dim, group_size, tile_size,
@@ -423,7 +425,9 @@ void MHACoreLayer::compute_kcaches(
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
     if (sequence_len == 1) {
-      int num_rows = is_causal ? from + 1 : from + sequence_len;
+      // For both causal & bidirectional, it is always from + 1.
+      // (note, sequence_len ==1 )
+      int num_rows = from + 1;
       nntrainer::compute_kcaches(in.getData<_FP16>(), cache.getData<_FP16>(),
                                  out.getData<_FP16>(), num_rows,
                                  num_head / group_size, head_dim, group_size,
