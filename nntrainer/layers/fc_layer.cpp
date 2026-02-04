@@ -376,4 +376,19 @@ void FullyConnectedLayer::calcGradient(RunLayerContext &context) {
   }
 }
 
+void FullyConnectedLayer::updateTensorsByInputDimensions(
+  nntrainer::RunLayerContext &context,
+  std::vector<nntrainer::TensorDim> input_dimensions) {
+  nntrainer::TensorDim in_dim = context.getInput(SINGLE_INOUT_IDX).getDim();
+  nntrainer::TensorDim out_dim = context.getOutput(SINGLE_INOUT_IDX).getDim();
+
+  unsigned int height = input_dimensions[0].height();
+
+  in_dim.width(height);
+  out_dim.height(height);
+
+  context.updateInput(SINGLE_INOUT_IDX, in_dim);
+  context.updateOutput(SINGLE_INOUT_IDX, out_dim);
+}
+
 } /* namespace nntrainer */

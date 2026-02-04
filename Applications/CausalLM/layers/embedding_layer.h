@@ -114,6 +114,13 @@ public:
    */
   WIN_EXPORT void setProperty(const std::vector<std::string> &values) override;
 
+  /**
+   * @copydoc Layer::supportBackwarding()
+   */
+  WIN_EXPORT void updateTensorsByInputDimensions(
+    nntrainer::RunLayerContext &context,
+    std::vector<nntrainer::TensorDim> input_dimensions) override;
+
   inline static const std::string type = "embedding_layer";
 
 private:
