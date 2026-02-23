@@ -529,10 +529,13 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     }
 
     if (is_finish) {
-      free(input_sample);
       break;
     }
   }
+
+  // Always release the input buffer after the generation loop, whether
+  // the loop exited early (EOS found) or ran to the maximum token limit.
+  free(input_sample);
 
   global_token_len += (generation_cnt + init_len);
 
