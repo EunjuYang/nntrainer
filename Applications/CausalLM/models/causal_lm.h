@@ -134,7 +134,6 @@ protected:
 
   unsigned int SYS_PROMP_LEN;
   std::string PRE_COMPUTED_CACHE_PATH;
-  std::string TAIL_PROMPT;
   bool SAVE_KVCACHE;
   bool USE_KVCACHE;
   unsigned int global_token_len;
