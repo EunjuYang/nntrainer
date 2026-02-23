@@ -157,17 +157,41 @@ void CausalLM::registerOutputs(
   }
 }
 
+/**
+ * @brief Save the Key-Value cache for every MHACore layer to a binary file.
+ *
+ * Only the first `to_` sequence positions are serialised so that the file
+ * stores exactly the system-prompt slice of each layer's K/V tensors.
+ * The on-disk layout is:
+ *
+ *   [ layer_0 K (to_ positions) ][ layer_0 V (to_ positions) ]
+ *   [ layer_1 K (to_ positions) ][ layer_1 V (to_ positions) ]
+ *   ...
+ *
+ * @param path  Destination file path.
+ * @param to_   Number of sequence positions (i.e. system-prompt token count)
+ *              to save per layer.  Must be <= the allocated height of the
+ *              K/V cache tensors.
+ */
 void CausalLM::save_kvcache(std::string path, int to_) {
   auto f = nntrainer::checkedOpenStream<std::ofstream>(
     path, std::ios::out | std::ios::binary | std::ios::trunc);
 
+  // Callback invoked for every layer in the model.
+  // We only act on MHACore layers because those own the K/V cache tensors.
   std::function<void(ml::train::Layer &, nntrainer::RunLayerContext &, void *)>
     fn = [&f](ml::train::Layer &l, nntrainer::RunLayerContext &context,
               void *idx) {
       if (l.getType() == causallm::MHACoreLayer::type) {
+        // `idx` carries to_ as an intptr_t to satisfy the void* callback API.
         int to = static_cast<int>(reinterpret_cast<intptr_t>(idx));
+
+        // getTensor(0) → K cache,  getTensor(1) → V cache.
         auto k_cache = context.getTensor(0);
         auto v_cache = context.getTensor(1);
+
+        // Create a view that covers only the first `to` rows (sequence
+        // positions) so we do not serialise uninitialised tail memory.
         ml::train::TensorDim k_dim = k_cache.getDim();
         ml::train::TensorDim v_dim = v_cache.getDim();
         k_dim.height(to);
@@ -176,28 +200,50 @@ void CausalLM::save_kvcache(std::string path, int to_) {
           k_cache.getSharedDataTensor(k_dim, 0, true);
         nntrainer::Tensor v_cache_prompt =
           v_cache.getSharedDataTensor(v_dim, 0, true);
+
         k_cache_prompt.save(f);
         v_cache_prompt.save(f);
       }
     };
+
   void *arg = reinterpret_cast<void *>(static_cast<intptr_t>(to_));
   model->forEachLayer(fn, arg);
   f.close();
 }
 
+/**
+ * @brief Load a previously saved Key-Value cache from a binary file.
+ *
+ * Restores the first `to_` sequence positions of each MHACore layer's K/V
+ * tensors from the file produced by save_kvcache().  After loading, the KV
+ * cache behaves as if the system prompt has already been processed: the model
+ * can continue inference from position `to_` without re-running the system
+ * prompt through the network.
+ *
+ * @param path  Source file path (produced by save_kvcache).
+ * @param to_   Number of sequence positions to restore per layer.  Must match
+ *              the value used when the cache was saved.
+ */
 void CausalLM::load_kvcache(std::string path, int to_) {
   auto f = nntrainer::checkedOpenStream<std::ifstream>(
     path, std::ios::in | std::ios::binary);
 
+  // Allocate model memory before writing into the KV cache tensors.
   model->allocate(ml::train::ExecutionMode::INFERENCE);
 
+  // Callback invoked for every layer in the model.
   std::function<void(ml::train::Layer &, nntrainer::RunLayerContext &, void *)>
     fn = [&f](ml::train::Layer &l, nntrainer::RunLayerContext &context,
               void *idx) {
       if (l.getType() == causallm::MHACoreLayer::type) {
+        // getTensor(0) → K cache,  getTensor(1) → V cache.
         auto k_cache = context.getTensor(0);
         auto v_cache = context.getTensor(1);
+
         int to = static_cast<int>(reinterpret_cast<intptr_t>(idx));
+
+        // Build a view covering only the first `to` rows so that we read
+        // exactly the bytes written by save_kvcache().
         ml::train::TensorDim k_dim = k_cache.getDim();
         ml::train::TensorDim v_dim = v_cache.getDim();
         k_dim.height(to);
@@ -206,10 +252,12 @@ void CausalLM::load_kvcache(std::string path, int to_) {
           k_cache.getSharedDataTensor(k_dim, 0, true);
         nntrainer::Tensor v_cache_prompt =
           v_cache.getSharedDataTensor(v_dim, 0, true);
+
         k_cache_prompt.read(f);
         v_cache_prompt.read(f);
       }
     };
+
   void *arg = reinterpret_cast<void *>(static_cast<intptr_t>(to_));
   model->forEachLayer(fn, arg);
   f.close();
