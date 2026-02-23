@@ -569,32 +569,56 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   auto prefill_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
     finish_prefill - start_prefill);
 
-  /**
-   * TOKEN GENERATION
-   */
-
+  // -------------------------------------------------------------------------
+  // AUTO-REGRESSIVE DECODING LOOP
+  // -------------------------------------------------------------------------
+  // After prefill we enter single-step decoding: one forward pass per token.
+  //
+  // input_len is extended to cover the system-prompt positions that the KV
+  // cache already holds.  This value is passed as seq_len to
+  // incremental_inference so the attention layer knows the full KV context
+  // size (system prompt + user prompt).
   input_len += SYS_PROMP_LEN;
 
-  // Update generated token by prefill as an input
+  // Place the first generated token (from prefill) into slot [0] of every
+  // batch entry in input_sample.  During decoding the model always reads
+  // the single new token from slot [0] of the buffer; the KV cache provides
+  // the context for all earlier positions.
   for (unsigned int b = 0; b < BATCH_SIZE; ++b)
     input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
       static_cast<float>(id_list[b]);
 
   auto start_generation = std::chrono::high_resolution_clock::now();
 
-  for (token_generation_idx = input_len + 1;
+  // token_generation_idx is the position in the full KV-cache sequence that
+  // the new token occupies (1-based relative to input_len):
+  //   iter 1: position = input_len + 1  → decoding step 1
+  //   iter 2: position = input_len + 2  → decoding step 2
+  //   ...
+  // global_token_len shifts all positions to account for tokens already in
+  // the KV cache from previous multi-turn calls.
+  for (unsigned int token_generation_idx = input_len + 1;
        token_generation_idx < input_len + 1 + NUM_TO_GENERATE;
        ++token_generation_idx) {
 
+    // Single-step inference.
+    //
+    // incremental_inference arguments:
+    //   seq_len   = input_len                           (full KV context size)
+    //   start_pos = token_generation_idx - 1 + global_token_len
+    //               (position of the token we just placed in input_sample[0])
+    //   end_pos   = token_generation_idx + global_token_len
+    //               (position after the new token — the model predicts this)
+    //   last_only = true (default): return only the logits for the last pos
     auto output_interval =
       model->incremental_inference(BATCH_SIZE, input, label, input_len,
                                    token_generation_idx - 1 + global_token_len,
                                    token_generation_idx + global_token_len);
+
+    // Sample (or greedily pick) the next token from the output logits.
     std::vector<unsigned int> ids_list(generate(output_interval[0], do_sample));
 
-    // Feed the newly generated token back as the next input token.
-    // token_generation_idx always starts at input_len + 1, so we are
-    // always in the auto-regressive generation phase here.
+    // Feed the newly sampled token back as the input for the next step.
     for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
       input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
         static_cast<float>(ids_list[b]);
@@ -602,7 +626,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list);
     ++generation_cnt;
 
-    // check FINISH
+    // Mark any batch entry that produced an EOS token as finished.
     for (unsigned int j = 0; j < BATCH_SIZE; ++j) {
       if (!eos_list[j] && (std::find(EOS_TOKEN_ID.begin(), EOS_TOKEN_ID.end(),
                                      ids_list[j]) != EOS_TOKEN_ID.end())) {
@@ -610,6 +634,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       }
     }
 
+    // Stop when every batch entry has emitted an EOS token.
     bool is_finish = true;
     for (unsigned int j = 0; j < BATCH_SIZE; ++j) {
       if (!eos_list[j]) {
@@ -627,6 +652,18 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   // the loop exited early (EOS found) or ran to the maximum token limit.
   free(input_sample);
 
+  // -------------------------------------------------------------------------
+  // MULTI-TURN CONTEXT UPDATE
+  // -------------------------------------------------------------------------
+  // global_token_len accumulates the number of tokens processed in previous
+  // turns of a multi-turn conversation, *excluding* the system prompt.
+  // It is used as an offset in all subsequent calls to incremental_inference
+  // so that new turns are appended at the correct KV-cache position:
+  //   next_start_pos = SYS_PROMP_LEN + global_token_len
+  //
+  // We add init_len (user-prompt tokens) and generation_cnt (decoded tokens)
+  // but NOT SYS_PROMP_LEN, because the system-prompt offset is applied
+  // separately via the SYS_PROMP_LEN term in each incremental_inference call.
   global_token_len += (generation_cnt + init_len);
 
   auto finish_generation = std::chrono::high_resolution_clock::now();
