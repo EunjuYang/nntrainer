@@ -384,7 +384,6 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   std::vector<bool> eos_list(BATCH_SIZE, false);
 
   unsigned int input_len = init_len;
-  unsigned int token_generation_idx = input_len + 1;
 
   for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
     for (unsigned int i = 0; i < input_len; ++i) {
@@ -484,7 +483,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
   auto start_generation = std::chrono::high_resolution_clock::now();
 
-  for (token_generation_idx = input_len + 1;
+  for (unsigned int token_generation_idx = input_len + 1;
        token_generation_idx < input_len + 1 + NUM_TO_GENERATE;
        ++token_generation_idx) {
 
