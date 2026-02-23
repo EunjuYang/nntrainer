@@ -355,17 +355,45 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   unsigned int generation_cnt = 0;
   int64_t total_generation_duration = 0;
 
-  /**
-   * INPUT PREPARATION
-   */
+  // -------------------------------------------------------------------------
+  // INPUT PREPARATION
+  // -------------------------------------------------------------------------
+  //
+  // KV-cache token layout across the full MAX_SEQ_LEN context window:
+  //
+  //  Case A – no KV cache (USE_KVCACHE == false):
+  //
+  //   KV cache positions:
+  //   | 0 ............. init_len-1 | init_len ... init_len+NUM_TO_GENERATE-1 |
+  //   |<---- prefill (full prompt) --->|<--------- decoded tokens ---------->|
+  //
+  //  Case B – KV cache SAVE mode (SAVE_KVCACHE == true):
+  //   Only the system-prompt is processed and saved; run() returns early.
+  //
+  //   KV cache positions:
+  //   | 0 ........... SYS_PROMP_LEN-1 |
+  //   |<---- system prompt (saved) --->|
+  //
+  //  Case C – KV cache LOAD mode (USE_KVCACHE == true, SAVE_KVCACHE == false):
+  //
+  //   KV cache positions:
+  //   | 0 ......... SYS_PROMP_LEN-1 | SYS_PROMP_LEN .. SYS_PROMP_LEN+init_len-1 | ... decoded ... |
+  //   |<-- system prompt (loaded) -->|<---------- user prompt (prefill) --------->|<--- decoded --->|
+  //
+  //   For multi-turn conversations global_token_len accumulates the tokens
+  //   from all previous turns (user prompts + decoded tokens, excluding the
+  //   system prompt).  New turns are appended at position:
+  //     SYS_PROMP_LEN + global_token_len
+  // -------------------------------------------------------------------------
+
   std::vector<float *> input;
   std::vector<float *> label;
 
-  /**
-   * SAVE_KVCACHE ?
-   *  if USE_KVCACHE && system_prompt is given && but the
-   * PRE_COMPUTED_CACHE_PATH does not exist
-   */
+  // Decide whether this call should save the KV cache rather than run normal
+  // inference.  We enter save mode when:
+  //   - KV-cache feature is enabled (USE_KVCACHE),
+  //   - a system_prompt was provided (non-empty),
+  //   - the cache file does not yet exist on disk.
   SAVE_KVCACHE = (USE_KVCACHE && system_prompt != "" &&
                   !std::filesystem::exists(PRE_COMPUTED_CACHE_PATH));
 
@@ -373,16 +401,24 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   // Print the full input text: system prompt + user prompt.
   // Mirror the non-Windows branch which also prints tail_prompt.
   std::wcout << system_prompt << prompt << tail_prompt << std::endl;
+
+  // In SAVE_KVCACHE mode tokenise only the system_prompt (the user prompt
+  // will be handled in the next call after the cache is available).
   std::wstring prompt_ = prompt;
   if (!SAVE_KVCACHE)
     prompt_ += tail_prompt;
   std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
   auto _input = tokenizer->Encode(converter.to_bytes(prompt_));
 #else
-  // print input text
+  // Print the full text that will be processed in this call.
   std::cout << system_prompt << prompt << tail_prompt << std::endl;
 
-  // actual prompt to be used in computation
+  // Build the string that will actually be tokenised and fed to the model.
+  //   SAVE mode : tokenise only the system_prompt so we can compute and
+  //               persist the system-prompt KV cache.
+  //   LOAD mode : tokenise only the user prompt + tail; the system-prompt
+  //               positions in the KV cache are restored from disk.
+  //   No cache  : tokenise the full concatenation of all parts.
   std::string prompt_;
 
   if (USE_KVCACHE) {
@@ -391,35 +427,31 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     prompt_ = system_prompt + prompt + tail_prompt;
   }
 
+  // If SYS_PROMP_LEN was not supplied in the config, derive it by tokenising
+  // the system_prompt string (only needed once per session when loading cache).
   if (USE_KVCACHE && !SAVE_KVCACHE && SYS_PROMP_LEN == 0)
     SYS_PROMP_LEN = tokenizer->Encode(system_prompt).size();
 
   auto _input = tokenizer->Encode(prompt_);
-  ///@note insert bos token at the beginning of the input
+  ///@note BOS token insertion is intentionally disabled.
   // _input.insert(_input.begin(), BOS_TOKEN_ID);
 #endif
 
-  // | <------------------- MAX_SEQ_LEN -------------------> |
-  //                       ||             ||
-  // |<-- System prompt -->||<-- input -->||<-- generate -->|
-
+  // Clamp the tokenised input to the budget available for user text:
+  //   budget = MAX_SEQ_LEN - NUM_TO_GENERATE
+  // Tokens beyond this limit are silently dropped.
+  // Note: this budget does not account for SYS_PROMP_LEN, so callers should
+  // ensure SYS_PROMP_LEN + user_tokens + NUM_TO_GENERATE <= MAX_SEQ_LEN.
+  ///@todo Enforce the SYS_PROMP_LEN-aware budget here.
   std::vector<int64_t> init_input;
   unsigned int _len = _input.size();
   unsigned int num_allow_str = MAX_SEQ_LEN - NUM_TO_GENERATE;
-  unsigned text_len = _len;
+  unsigned int text_len = (_len > num_allow_str) ? num_allow_str : _len;
 
-  if (_len > num_allow_str)
-    text_len = num_allow_str;
-
-  // feed only available length
-  // if _input is allowed, it feeds all of the _input
-  // otherwise, feeds only a part of _input
   for (unsigned int i = 0; i < text_len; ++i)
     init_input.push_back(_input[i]);
 
-  ///@todo currently, the whole sequence may not be fed into the model
-  /// This should be handled later.
-  _input.clear();
+  _input.clear(); // raw token list no longer needed
 
   unsigned int init_len = init_input.size();
   float *input_sample =
