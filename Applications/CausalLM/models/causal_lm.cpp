@@ -360,17 +360,45 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   unsigned int generation_cnt = 0;
   int64_t total_generation_duration = 0;
 
-  /**
-   * INPUT PREPARATION
-   */
+  // -------------------------------------------------------------------------
+  // INPUT PREPARATION
+  // -------------------------------------------------------------------------
+  //
+  // KV-cache token layout across the full MAX_SEQ_LEN context window:
+  //
+  //  Case A – no KV cache (USE_KVCACHE == false):
+  //
+  //   KV cache positions:
+  //   | 0 ............. init_len-1 | init_len ... init_len+NUM_TO_GENERATE-1 |
+  //   |<---- prefill (full prompt) --->|<--------- decoded tokens ---------->|
+  //
+  //  Case B – KV cache SAVE mode (SAVE_KVCACHE == true):
+  //   Only the system-prompt is processed and saved; run() returns early.
+  //
+  //   KV cache positions:
+  //   | 0 ........... SYS_PROMP_LEN-1 |
+  //   |<---- system prompt (saved) --->|
+  //
+  //  Case C – KV cache LOAD mode (USE_KVCACHE == true, SAVE_KVCACHE == false):
+  //
+  //   KV cache positions:
+  //| 0 .... SYS_PROMP_LEN-1|SYS_PROMP_LEN.SYS_PROMP_LEN+init_len-1|.decoded.|
+  //|<system prompt(loaded)>|<-------user prompt (prefill)-------->|<decoded>|
+  //
+  //   For multi-turn conversations global_token_len accumulates the tokens
+  //   from all previous turns (user prompts + decoded tokens, excluding the
+  //   system prompt).  New turns are appended at position:
+  //     SYS_PROMP_LEN + global_token_len
+  // -------------------------------------------------------------------------
+
   std::vector<float *> input;
   std::vector<float *> label;
 
-  /**
-   * SAVE_KVCACHE ?
-   *  if USE_KVCACHE && system_prompt is given && but the
-   * PRE_COMPUTED_CACHE_PATH does not exist
-   */
+  // Decide whether this call should save the KV cache rather than run normal
+  // inference.  We enter save mode when:
+  //   - KV-cache feature is enabled (USE_KVCACHE),
+  //   - a system_prompt was provided (non-empty),
+  //   - the cache file does not yet exist on disk.
   SAVE_KVCACHE = (USE_KVCACHE && system_prompt != "" &&
                   !std::filesystem::exists(PRE_COMPUTED_CACHE_PATH));
 
@@ -379,17 +407,25 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   // Mirror the non-Windows branch which also prints tail_prompt.
   if (log_output)
     std::wcout << system_prompt << prompt << tail_prompt << std::endl;
+
+  // In SAVE_KVCACHE mode tokenise only the system_prompt (the user prompt
+  // will be handled in the next call after the cache is available).
   std::wstring prompt_ = prompt;
   if (!SAVE_KVCACHE)
     prompt_ += tail_prompt;
   std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
   auto _input = tokenizer->Encode(converter.to_bytes(prompt_));
 #else
-  // print input text
+  // Print the full text that will be processed in this call.
   if (log_output)
     std::cout << system_prompt << prompt << tail_prompt << std::endl;
 
-  // actual prompt to be used in computation
+  // Build the string that will actually be tokenised and fed to the model.
+  //   SAVE mode : tokenise only the system_prompt so we can compute and
+  //               persist the system-prompt KV cache.
+  //   LOAD mode : tokenise only the user prompt + tail; the system-prompt
+  //               positions in the KV cache are restored from disk.
+  //   No cache  : tokenise the full concatenation of all parts.
   std::string prompt_;
 
   if (USE_KVCACHE) {
@@ -398,43 +434,53 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     prompt_ = system_prompt + prompt + tail_prompt;
   }
 
+  // If SYS_PROMP_LEN was not supplied in the config, derive it by tokenising
+  // the system_prompt string (only needed once per session when loading cache).
   if (USE_KVCACHE && !SAVE_KVCACHE && SYS_PROMP_LEN == 0)
     SYS_PROMP_LEN = tokenizer->Encode(system_prompt).size();
 
   auto _input = tokenizer->Encode(prompt_);
-  ///@note insert bos token at the beginning of the input
+  ///@note BOS token insertion is intentionally disabled.
   // _input.insert(_input.begin(), BOS_TOKEN_ID);
 #endif
 
-  // | <------------------- MAX_SEQ_LEN -------------------> |
-  //                       ||             ||
-  // |<-- System prompt -->||<-- input -->||<-- generate -->|
-
+  // Clamp the tokenised input to the budget available for user text:
+  //   budget = MAX_SEQ_LEN - NUM_TO_GENERATE
+  // Tokens beyond this limit are silently dropped.
+  // Note: this budget does not account for SYS_PROMP_LEN, so callers should
+  // ensure SYS_PROMP_LEN + user_tokens + NUM_TO_GENERATE <= MAX_SEQ_LEN.
+  ///@todo Enforce the SYS_PROMP_LEN-aware budget here.
   std::vector<int64_t> init_input;
   unsigned int _len = _input.size();
   unsigned int num_allow_str = MAX_SEQ_LEN - NUM_TO_GENERATE;
-  unsigned text_len = _len;
+  unsigned int text_len = (_len > num_allow_str) ? num_allow_str : _len;
 
-  if (_len > num_allow_str)
-    text_len = num_allow_str;
-
-  // feed only available length
-  // if _input is allowed, it feeds all of the _input
-  // otherwise, feeds only a part of _input
   for (unsigned int i = 0; i < text_len; ++i)
     init_input.push_back(_input[i]);
 
-  ///@todo currently, the whole sequence may not be fed into the model
-  /// This should be handled later.
-  _input.clear();
+  _input.clear(); // raw token list no longer needed
 
+  // init_len: number of input tokens the model will actually see during
+  // prefill (may be less than the original prompt length after clamping).
   unsigned int init_len = init_input.size();
+
+  // input_sample: flat buffer [ batch_0_tokens | batch_1_tokens | ... ]
+  // Each batch slot is MAX_SEQ_LEN floats wide.
+  //   Prefill  → slots [0, init_len) hold the prompt token IDs.
+  //   Decoding → slot [0] is overwritten with the latest generated token;
+  //              the model uses start_pos / end_pos to locate it in the
+  //              sequence without re-reading the full buffer every step.
   float *input_sample =
     (float *)malloc(sizeof(float) * BATCH_SIZE * MAX_SEQ_LEN);
   std::vector<bool> eos_list(BATCH_SIZE, false);
 
+  // input_len tracks the total number of sequence positions the model has
+  // already populated in the KV cache.  It starts equal to init_len and
+  // grows by SYS_PROMP_LEN after prefill (see below).
   unsigned int input_len = init_len;
 
+  // Populate input_sample and ids_history with the prompt token IDs.
+  // ids_history is a history buffer used for repetition-penalty lookups.
   for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
     for (unsigned int i = 0; i < input_len; ++i) {
       input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN + i] =
@@ -443,38 +489,39 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     }
   }
 
-  /**
-   * PREFILL
-   */
-  std::vector<int64_t> token_ids;
-  input.push_back(input_sample);
+  // -------------------------------------------------------------------------
+  // PREFILL
+  // -------------------------------------------------------------------------
+  // Feed all prompt tokens into the model in a single forward pass.
+  // The model fills the KV cache for every prompt position and returns
+  // logits for the last position, which we use to predict the first
+  // generated token.
 
-  ///@note contains possible bug
-  // std::vector<ml::train::TensorDim> input_dims;
-  // ml::train::TensorDim input_dim(1, 1, input_len, DIM);
-  // input_dims.push_back(input_dim);
-  // model->resetInputDimension(input_dims);
+  input.push_back(input_sample);
 
   auto start_prefill = std::chrono::high_resolution_clock::now();
 
   std::vector<float *> output;
 
   if (SAVE_KVCACHE) {
-    //@note This is for the save the kv cache. precomputed kv cache should be
-    // always located at the begining of the prompt.
-    // Therefore, it start from 0. and system prompt should be saved in the
-    // init_input, so that we can compute system prompt size properly
+    // -----------------------------------------------------------------------
+    // KV-CACHE SAVE MODE
+    // -----------------------------------------------------------------------
+    // Run the model on the system prompt only.  The resulting KV cache
+    // (positions [0, init_len)) is serialised to disk so future calls can
+    // skip this step entirely.
     //
-    // The structure of this precomputed K,V Cache is :
-    //
-    //  //<-- System Prompt -->/<-- Input Tokens -->/<-- Tail prompt --> //
-    //  //< Precomputed cache >/<--given as input-->/<--- from json ---->//
-    //
+    // incremental_inference arguments:
+    //   seq_len   = input_len        (number of tokens in the system prompt)
+    //   start_pos = global_token_len (always 0 for the first save call)
+    //   end_pos   = input_len + global_token_len
+    //   last_only = false            (we need all position outputs to fill KV)
 
     if (log_output)
       std::cout << "\n==============[KV CACHE SAVE MODE]================\n";
+
     output = model->incremental_inference(BATCH_SIZE, input, label, input_len,
-                                          0 + global_token_len,
+                                          global_token_len,
                                           input_len + global_token_len, false);
 
     SYS_PROMP_LEN = input_len;
@@ -493,21 +540,40 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   }
 
   if (USE_KVCACHE) {
+    // -----------------------------------------------------------------------
+    // KV-CACHE LOAD MODE
+    // -----------------------------------------------------------------------
+    // Restore the pre-computed system-prompt KV cache from disk.
+    // After this call, KV-cache positions [0, SYS_PROMP_LEN) are populated
+    // as if the model just processed the system prompt.
     load_kvcache(PRE_COMPUTED_CACHE_PATH, SYS_PROMP_LEN);
   } else {
+    // No KV-cache: treat the full concatenated prompt as a single prefill.
     SYS_PROMP_LEN = 0;
   }
-  output = model->incremental_inference(BATCH_SIZE, input, label, init_len,
-                                        SYS_PROMP_LEN,
-                                        SYS_PROMP_LEN + input_len, false);
 
-  // Extract the predicted next token from the prefill output logits.
-  // Pass init_len (the number of tokens actually written to ids_history)
-  // rather than _len (the original, possibly trimmed token count) so the
-  // repetition-penalty window covers exactly the tokens the model saw.
+  // Run the model over the user prompt (init_len tokens).
+  //
+  // incremental_inference arguments:
+  //   seq_len   = init_len                      (user-prompt token count)
+  //   start_pos = SYS_PROMP_LEN + global_token_len
+  //               ├─ SYS_PROMP_LEN: skip the pre-filled system-prompt slots
+  //               └─ global_token_len: skip tokens from previous turns
+  //   end_pos   = SYS_PROMP_LEN + init_len + global_token_len
+  //   last_only = false (fill KV for all positions; last logit predicts
+  //   tok_0)
+  output = model->incremental_inference(
+    BATCH_SIZE, input, label, init_len, SYS_PROMP_LEN + global_token_len,
+    SYS_PROMP_LEN + input_len + global_token_len, false);
+
+  // Extract the first generated token from the prefill logits.
+  // Pass init_len (tokens actually written to ids_history) rather than _len
+  // (the pre-clamp size) so the repetition-penalty window is correct.
   std::vector<unsigned int> id_list(generate_multi_tokens(
     output[0], NUM_VOCAB, BATCH_SIZE, 1, ids_history, init_len));
 
+  // Emit the token predicted after prefill (position init_len in the
+  // sequence) unless the prompt filled the entire prefill budget exactly.
   if (init_len < INIT_SEQ_LEN)
     registerOutputs(tokenizer, id_list, init_len, eos_list, log_output);
 
@@ -520,37 +586,62 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   auto prefill_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
     finish_prefill - start_prefill);
 
-  /**
-   * TOKEN GENERATION
-   */
-
+  // -------------------------------------------------------------------------
+  // AUTO-REGRESSIVE DECODING LOOP
+  // -------------------------------------------------------------------------
+  // After prefill we enter single-step decoding: one forward pass per token.
+  //
+  // input_len is extended to cover the system-prompt positions that the KV
+  // cache already holds.  This value is passed as seq_len to
+  // incremental_inference so the attention layer knows the full KV context
+  // size (system prompt + user prompt).
   input_len += SYS_PROMP_LEN;
 
-  // Update generated token by prefill as an input
+  // Place the first generated token (from prefill) into slot [0] of every
+  // batch entry in input_sample.  During decoding the model always reads
+  // the single new token from slot [0] of the buffer; the KV cache provides
+  // the context for all earlier positions.
   for (unsigned int b = 0; b < BATCH_SIZE; ++b)
     input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
       static_cast<float>(id_list[b]);
 
   auto start_generation = std::chrono::high_resolution_clock::now();
 
+  // token_generation_idx is the position in the full KV-cache sequence that
+  // the new token occupies (1-based relative to input_len):
+  //   iter 1: position = input_len + 1  → decoding step 1
+  //   iter 2: position = input_len + 2  → decoding step 2
+  //   ...
+  // global_token_len shifts all positions to account for tokens already in
+  // the KV cache from previous multi-turn calls.
   for (unsigned int token_generation_idx = input_len + 1;
        token_generation_idx < input_len + 1 + NUM_TO_GENERATE;
        ++token_generation_idx) {
 
+    // Single-step inference.
+    //
+    // incremental_inference arguments:
+    //   seq_len   = input_len                           (full KV context
+    //   size) start_pos = token_generation_idx - 1 + global_token_len
+    //               (position of the token we just placed in input_sample[0])
+    //   end_pos   = token_generation_idx + global_token_len
+    //               (position after the new token — the model predicts this)
+    //   last_only = true (default): return only the logits for the last pos
     auto output_interval =
       model->incremental_inference(BATCH_SIZE, input, label, input_len,
                                    token_generation_idx - 1 + global_token_len,
                                    token_generation_idx + global_token_len);
+
+    // Sample (or greedily pick) the next token from the output logits.
     std::vector<unsigned int> ids_list(generate(output_interval[0], do_sample));
 
-    // Feed the newly generated token back as the next input token.
-    // token_generation_idx always starts at input_len + 1, so we are
-    // always in the auto-regressive generation phase here.
+    // Feed the newly sampled token back as the input for the next step.
     for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
       input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
         static_cast<float>(ids_list[b]);
     }
-    registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list, log_output);
+    registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list,
+                    log_output);
     ++generation_cnt;
 
     // output should be deallocated after use
@@ -558,7 +649,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       delete[] out;
     }
 
-    // check FINISH
+    // Mark any batch entry that produced an EOS token as finished.
     for (unsigned int j = 0; j < BATCH_SIZE; ++j) {
       if (!eos_list[j] && (std::find(EOS_TOKEN_ID.begin(), EOS_TOKEN_ID.end(),
                                      ids_list[j]) != EOS_TOKEN_ID.end())) {
@@ -566,6 +657,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       }
     }
 
+    // Stop when every batch entry has emitted an EOS token.
     bool is_finish = true;
     for (unsigned int j = 0; j < BATCH_SIZE; ++j) {
       if (!eos_list[j]) {
@@ -583,6 +675,18 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   // the loop exited early (EOS found) or ran to the maximum token limit.
   free(input_sample);
 
+  // -------------------------------------------------------------------------
+  // MULTI-TURN CONTEXT UPDATE
+  // -------------------------------------------------------------------------
+  // global_token_len accumulates the number of tokens processed in previous
+  // turns of a multi-turn conversation, *excluding* the system prompt.
+  // It is used as an offset in all subsequent calls to incremental_inference
+  // so that new turns are appended at the correct KV-cache position:
+  //   next_start_pos = SYS_PROMP_LEN + global_token_len
+  //
+  // We add init_len (user-prompt tokens) and generation_cnt (decoded tokens)
+  // but NOT SYS_PROMP_LEN, because the system-prompt offset is applied
+  // separately via the SYS_PROMP_LEN term in each incremental_inference call.
   global_token_len += (generation_cnt + init_len);
 
   auto finish_generation = std::chrono::high_resolution_clock::now();
