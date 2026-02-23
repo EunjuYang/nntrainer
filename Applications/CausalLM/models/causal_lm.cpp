@@ -322,10 +322,12 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
                   !std::filesystem::exists(PRE_COMPUTED_CACHE_PATH));
 
 #if defined(_WIN32)
-  std::wcout << L"" << system_prompt << L"" << text_ << std::endl;
+  // Print the full input text: system prompt + user prompt.
+  // Mirror the non-Windows branch which also prints tail_prompt.
+  std::wcout << system_prompt << prompt << tail_prompt << std::endl;
   std::wstring prompt_ = prompt;
   if (!SAVE_KVCACHE)
-    prompt_ += TAIL_PROMPT;
+    prompt_ += tail_prompt;
   std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
   auto _input = tokenizer->Encode(converter.to_bytes(prompt_));
 #else
