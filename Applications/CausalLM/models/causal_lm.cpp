@@ -474,19 +474,15 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
                                    token_generation_idx - 1 + global_token_len,
                                    token_generation_idx + global_token_len);
     std::vector<unsigned int> ids_list(generate(output_interval[0], do_sample));
-    if (token_generation_idx < input_len) {
-      for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
-        input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
-          static_cast<float>(init_input[token_generation_idx - SYS_PROMP_LEN]);
-      }
-      registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list);
-    } else {
-      for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
-        input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
-          static_cast<float>(ids_list[b]);
-      }
-      registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list);
+
+    // Feed the newly generated token back as the next input token.
+    // token_generation_idx always starts at input_len + 1, so we are
+    // always in the auto-regressive generation phase here.
+    for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
+      input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
+        static_cast<float>(ids_list[b]);
     }
+    registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list);
     ++generation_cnt;
 
     // check FINISH
