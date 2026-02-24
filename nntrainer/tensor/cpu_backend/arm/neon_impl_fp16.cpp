@@ -1649,124 +1649,21 @@ void softmax_row_inplace(__fp16 *qk_out, size_t start_row, size_t end_row,
 }
 
 // Static helper function for softmax_row with __fp16 sink
+// Delegates to softmax_row_inplace_with_fp16_sink to avoid double exp()
+// computation. The original computed exp(x-max) twice per element: once
+// during sum accumulation and again during normalization.
 static void softmax_row_with_fp16_sink(__fp16 *qk_out, size_t start_row,
                                        size_t end_row, size_t num_heads,
                                        __fp16 *sink) {
-  const size_t full_block = (num_heads / 8) * 8;
-
-  __fp16 *max_vals = new __fp16[num_heads];
-  __fp16 *sum_vals = new __fp16[num_heads];
-
-  // 1. Find Max along with col (including sink)
-  for (size_t c = 0; c < num_heads; ++c) {
-    __fp16 max_val = sink[c];
-    for (size_t r = start_row; r < end_row; ++r) {
-      max_val = std::max<__fp16>(max_val, qk_out[r * num_heads + c]);
-    }
-    max_vals[c] = max_val;
-  }
-
-  // 2. Compute sum along with col (exp vectorized, including sink)
-  for (size_t c = 0; c < full_block; c += 8) {
-    float16x8_t maxv = vld1q_f16(&max_vals[c]);
-    float16x8_t sinkv = vld1q_f16(&sink[c]);
-    float16x8_t sum = exp_f16x8(vsubq_f16(sinkv, maxv)); // Include sink in sum
-
-    for (size_t r = start_row; r < end_row; ++r) {
-      float16x8_t val = vld1q_f16(&qk_out[r * num_heads + c]);
-      float16x8_t sub = vsubq_f16(val, maxv);
-      float16x8_t e = exp_f16x8(sub);
-      sum = vaddq_f16(sum, e);
-    }
-    vst1q_f16(&sum_vals[c], sum);
-  }
-
-  for (size_t c = full_block; c < num_heads; ++c) {
-    float sum = std::exp(sink[c] - max_vals[c]); // Include sink in sum
-    for (size_t r = start_row; r < end_row; ++r) {
-      sum += std::exp(qk_out[r * num_heads + c] - max_vals[c]);
-    }
-    sum_vals[c] = sum;
-  }
-
-  // 3. apply softmax
-  for (size_t r = start_row; r < end_row; ++r) {
-    for (size_t c = 0; c < full_block; c += 8) {
-      float16x8_t val = vld1q_f16(&qk_out[r * num_heads + c]);
-      float16x8_t maxv = vld1q_f16(&max_vals[c]);
-      float16x8_t sub = vsubq_f16(val, maxv);
-      float16x8_t e = exp_f16x8(sub);
-      float16x8_t sumv = vld1q_f16(&sum_vals[c]);
-      float16x8_t softmax = vdivq_f16(e, sumv);
-      vst1q_f16(&qk_out[r * num_heads + c], softmax);
-    }
-    for (size_t c = full_block; c < num_heads; ++c) {
-      qk_out[r * num_heads + c] =
-        std::exp(qk_out[r * num_heads + c] - max_vals[c]) / sum_vals[c];
-    }
-  }
-
-  delete[] max_vals;
-  delete[] sum_vals;
+  return softmax_row_inplace_with_fp16_sink(qk_out, start_row, end_row,
+                                            num_heads, sink);
 }
 
 // Static helper function for softmax_row without sink
+// Delegates to softmax_row_inplace_no_sink to avoid double exp() computation.
 static void softmax_row_no_sink(__fp16 *qk_out, size_t start_row,
                                 size_t end_row, size_t num_heads) {
-  const size_t full_block = (num_heads / 8) * 8;
-
-  __fp16 *max_vals = new __fp16[num_heads];
-  __fp16 *sum_vals = new __fp16[num_heads];
-
-  // 1. Find Max along with col
-  for (size_t c = 0; c < num_heads; ++c) {
-    __fp16 max_val = -INFINITY;
-    for (size_t r = start_row; r < end_row; ++r) {
-      max_val = std::max<__fp16>(max_val, qk_out[r * num_heads + c]);
-    }
-    max_vals[c] = max_val;
-  }
-
-  // 2. Compute sum along with col (exp vectorized)
-  for (size_t c = 0; c < full_block; c += 8) {
-    float16x8_t sum = vdupq_n_f16(0.0f);
-    for (size_t r = start_row; r < end_row; ++r) {
-      float16x8_t val = vld1q_f16(&qk_out[r * num_heads + c]);
-      float16x8_t maxv = vld1q_f16(&max_vals[c]);
-      float16x8_t sub = vsubq_f16(val, maxv);
-      float16x8_t e = exp_f16x8(sub);
-      sum = vaddq_f16(sum, e);
-    }
-    vst1q_f16(&sum_vals[c], sum);
-  }
-
-  for (size_t c = full_block; c < num_heads; ++c) {
-    float sum = 0.0f;
-    for (size_t r = start_row; r < end_row; ++r) {
-      sum += std::exp(qk_out[r * num_heads + c] - max_vals[c]);
-    }
-    sum_vals[c] = sum;
-  }
-
-  // 3. apply softmax
-  for (size_t r = start_row; r < end_row; ++r) {
-    for (size_t c = 0; c < full_block; c += 8) {
-      float16x8_t val = vld1q_f16(&qk_out[r * num_heads + c]);
-      float16x8_t maxv = vld1q_f16(&max_vals[c]);
-      float16x8_t sub = vsubq_f16(val, maxv);
-      float16x8_t e = exp_f16x8(sub);
-      float16x8_t sumv = vld1q_f16(&sum_vals[c]);
-      float16x8_t softmax = vdivq_f16(e, sumv);
-      vst1q_f16(&qk_out[r * num_heads + c], softmax);
-    }
-    for (size_t c = full_block; c < num_heads; ++c) {
-      qk_out[r * num_heads + c] =
-        std::exp(qk_out[r * num_heads + c] - max_vals[c]) / sum_vals[c];
-    }
-  }
-
-  delete[] max_vals;
-  delete[] sum_vals;
+  return softmax_row_inplace_no_sink(qk_out, start_row, end_row, num_heads);
 }
 
 template <>
@@ -1781,104 +1678,13 @@ void softmax_row(__fp16 *qk_out, size_t start_row, size_t end_row,
 }
 
 // Static helper function for softmax_row with float sink
+// Delegates to softmax_row_inplace_with_fp32_sink to avoid double exp()
+// computation.
 static void softmax_row_with_fp32_sink(__fp16 *qk_out, size_t start_row,
                                        size_t end_row, size_t num_heads,
                                        float *sink) {
-  const size_t full_block = (num_heads / 8) * 8;
-
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
-
-  // 1. Find Max along with col (including sink)
-  for (size_t c = 0; c < num_heads; ++c) {
-    float max_val = sink[c];
-    for (size_t r = start_row; r < end_row; ++r) {
-      float val = static_cast<float>(qk_out[r * num_heads + c]);
-      max_val = std::max(max_val, val);
-    }
-    max_vals[c] = max_val;
-  }
-
-  // 2. Compute sum along with col (exp vectorized, including sink)
-  for (size_t c = 0; c < full_block; c += 8) {
-    float32x4_t maxv_low = vld1q_f32(&max_vals[c]);
-    float32x4_t maxv_high = vld1q_f32(&max_vals[c + 4]);
-    float32x4_t sinkv_low = vld1q_f32(&sink[c]);
-    float32x4_t sinkv_high = vld1q_f32(&sink[c + 4]);
-
-    // Calculate exp(sink - max) for sum initialization
-    float32x4_t sum_low = exp_ps(vsubq_f32(sinkv_low, maxv_low));
-    float32x4_t sum_high = exp_ps(vsubq_f32(sinkv_high, maxv_high));
-
-    for (size_t r = start_row; r < end_row; ++r) {
-      float16x8_t val_fp16 = vld1q_f16(&qk_out[r * num_heads + c]);
-
-      // Convert to float32 for computation
-      float32x4_t val_low = vcvt_f32_f16(vget_low_f16(val_fp16));
-      float32x4_t val_high = vcvt_f32_f16(vget_high_f16(val_fp16));
-
-      float32x4_t sub_low = vsubq_f32(val_low, maxv_low);
-      float32x4_t sub_high = vsubq_f32(val_high, maxv_high);
-
-      float32x4_t e_low = exp_ps(sub_low);
-      float32x4_t e_high = exp_ps(sub_high);
-
-      sum_low = vaddq_f32(sum_low, e_low);
-      sum_high = vaddq_f32(sum_high, e_high);
-    }
-
-    vst1q_f32(&sum_vals[c], sum_low);
-    vst1q_f32(&sum_vals[c + 4], sum_high);
-  }
-
-  for (size_t c = full_block; c < num_heads; ++c) {
-    float maxv = max_vals[c];
-    float sum = std::exp(sink[c] - maxv); // Include sink in sum
-    for (size_t r = start_row; r < end_row; ++r) {
-      float val = static_cast<float>(qk_out[r * num_heads + c]);
-      sum += std::exp(val - maxv);
-    }
-    sum_vals[c] = sum;
-  }
-
-  // 3. apply softmax
-  for (size_t r = start_row; r < end_row; ++r) {
-    for (size_t c = 0; c < full_block; c += 8) {
-      float16x8_t val_fp16 = vld1q_f16(&qk_out[r * num_heads + c]);
-
-      // Convert to float32 for computation
-      float32x4_t val_low = vcvt_f32_f16(vget_low_f16(val_fp16));
-      float32x4_t val_high = vcvt_f32_f16(vget_high_f16(val_fp16));
-
-      float32x4_t maxv_low = vld1q_f32(&max_vals[c]);
-      float32x4_t maxv_high = vld1q_f32(&max_vals[c + 4]);
-
-      float32x4_t sub_low = vsubq_f32(val_low, maxv_low);
-      float32x4_t sub_high = vsubq_f32(val_high, maxv_high);
-
-      float32x4_t e_low = exp_ps(sub_low);
-      float32x4_t e_high = exp_ps(sub_high);
-
-      float32x4_t sumv_low = vld1q_f32(&sum_vals[c]);
-      float32x4_t sumv_high = vld1q_f32(&sum_vals[c + 4]);
-
-      float32x4_t softmax_low = vdivq_f32(e_low, sumv_low);
-      float32x4_t softmax_high = vdivq_f32(e_high, sumv_high);
-
-      // Convert back to fp16 and store
-      float16x8_t softmax_fp16 =
-        vcombine_f16(vcvt_f16_f32(softmax_low), vcvt_f16_f32(softmax_high));
-      vst1q_f16(&qk_out[r * num_heads + c], softmax_fp16);
-    }
-    for (size_t c = full_block; c < num_heads; ++c) {
-      float val = static_cast<float>(qk_out[r * num_heads + c]);
-      qk_out[r * num_heads + c] =
-        static_cast<__fp16>(std::exp(val - max_vals[c]) / sum_vals[c]);
-    }
-  }
-
-  delete[] max_vals;
-  delete[] sum_vals;
+  return softmax_row_inplace_with_fp32_sink(qk_out, start_row, end_row,
+                                            num_heads, sink);
 }
 
 // Overloaded function for softmax_row with __fp16 input and float sink

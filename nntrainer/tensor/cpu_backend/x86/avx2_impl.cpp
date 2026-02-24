@@ -1311,121 +1311,20 @@ void softmax_row_inplace(float *qk_out, size_t start_row, size_t end_row,
 
 static void softmax_row(float *qk_out, size_t start_row, size_t end_row,
                         size_t num_heads) {
-  const size_t full_block = (num_heads / 8) * 8;
-
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
-
-  // 1. Find Max along with col
-  for (size_t c = 0; c < num_heads; ++c) {
-    float max_val = -INFINITY;
-    for (size_t r = start_row; r < end_row; ++r) {
-      max_val = std::max(max_val, qk_out[r * num_heads + c]);
-    }
-    max_vals[c] = max_val;
-  }
-
-  // 2. Compute sum along with col (exp vectorized)
-  for (size_t c = 0; c < full_block; c += 8) {
-    __m256 sum = _mm256_setzero_ps();
-    for (size_t r = start_row; r < end_row; ++r) {
-      __m256 val = _mm256_loadu_ps(&qk_out[r * num_heads + c]);
-      __m256 maxv = _mm256_loadu_ps(&max_vals[c]);
-      __m256 sub = _mm256_sub_ps(val, maxv);
-      __m256 e = exp256_ps(sub);
-      sum = _mm256_add_ps(sum, e);
-    }
-    _mm256_storeu_ps(&sum_vals[c], sum);
-  }
-
-  for (size_t c = full_block; c < num_heads; ++c) {
-    float sum = 0.0f;
-    for (size_t r = start_row; r < end_row; ++r) {
-      sum += std::exp(qk_out[r * num_heads + c] - max_vals[c]);
-    }
-    sum_vals[c] = sum;
-  }
-
-  // 3. apply softmax
-  for (size_t r = start_row; r < end_row; ++r) {
-    for (size_t c = 0; c < full_block; c += 8) {
-      __m256 val = _mm256_loadu_ps(&qk_out[r * num_heads + c]);
-      __m256 maxv = _mm256_loadu_ps(&max_vals[c]);
-      __m256 sub = _mm256_sub_ps(val, maxv);
-      __m256 e = exp256_ps(sub);
-      __m256 sumv = _mm256_loadu_ps(&sum_vals[c]);
-      __m256 softmax = _mm256_div_ps(e, sumv);
-      _mm256_storeu_ps(&qk_out[r * num_heads + c], softmax);
-    }
-    for (size_t c = full_block; c < num_heads; ++c) {
-      qk_out[r * num_heads + c] =
-        std::exp(qk_out[r * num_heads + c] - max_vals[c]) / sum_vals[c];
-    }
-  }
-
-  delete[] max_vals;
-  delete[] sum_vals;
+  // Delegate to softmax_row_inplace which computes exp(x-max) once and stores
+  // the result, then divides by sum. The original non-inplace implementation
+  // computed exp(x-max) twice per element: once during sum accumulation
+  // (step 2) and again during normalization (step 3). This eliminates ~50%
+  // of exp() calls, which are the most expensive operation in softmax.
+  return softmax_row_inplace(qk_out, start_row, end_row, num_heads);
 }
 
 static void softmax_row_with_sink(float *qk_out, size_t start_row,
                                   size_t end_row, size_t num_heads,
                                   float *sink) {
-  const size_t full_block = (num_heads / 8) * 8;
-
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
-
-  // 1. Find Max along with col
-  for (size_t c = 0; c < num_heads; ++c) {
-    float max_val = -INFINITY;
-    for (size_t r = start_row; r < end_row; ++r) {
-      max_val = std::max(max_val, qk_out[r * num_heads + c]);
-    }
-    max_vals[c] = std::max(max_val, sink[c]);
-  }
-
-  // 2. Compute sum along with col (exp vectorized)
-  for (size_t c = 0; c < full_block; c += 8) {
-    __m256 maxv = _mm256_loadu_ps(&max_vals[c]);
-    __m256 sum = _mm256_loadu_ps(&sink[c]);
-    sum = _mm256_sub_ps(sum, maxv);
-    sum = exp256_ps(sum);
-    for (size_t r = start_row; r < end_row; ++r) {
-      __m256 val = _mm256_loadu_ps(&qk_out[r * num_heads + c]);
-      __m256 sub = _mm256_sub_ps(val, maxv);
-      __m256 e = exp256_ps(sub);
-      sum = _mm256_add_ps(sum, e);
-    }
-    _mm256_storeu_ps(&sum_vals[c], sum);
-  }
-
-  for (size_t c = full_block; c < num_heads; ++c) {
-    float sum = std::exp(sink[c] - max_vals[c]);
-    for (size_t r = start_row; r < end_row; ++r) {
-      sum += std::exp(qk_out[r * num_heads + c] - max_vals[c]);
-    }
-    sum_vals[c] = sum;
-  }
-
-  // 3. apply softmax
-  for (size_t r = start_row; r < end_row; ++r) {
-    for (size_t c = 0; c < full_block; c += 8) {
-      __m256 val = _mm256_loadu_ps(&qk_out[r * num_heads + c]);
-      __m256 maxv = _mm256_loadu_ps(&max_vals[c]);
-      __m256 sub = _mm256_sub_ps(val, maxv);
-      __m256 e = exp256_ps(sub);
-      __m256 sumv = _mm256_loadu_ps(&sum_vals[c]);
-      __m256 softmax = _mm256_div_ps(e, sumv);
-      _mm256_storeu_ps(&qk_out[r * num_heads + c], softmax);
-    }
-    for (size_t c = full_block; c < num_heads; ++c) {
-      qk_out[r * num_heads + c] =
-        std::exp(qk_out[r * num_heads + c] - max_vals[c]) / sum_vals[c];
-    }
-  }
-
-  delete[] max_vals;
-  delete[] sum_vals;
+  // Delegate to softmax_row_with_sink_inplace to avoid double exp() computation.
+  return softmax_row_with_sink_inplace(qk_out, start_row, end_row, num_heads,
+                                       sink);
 }
 
 template <>
