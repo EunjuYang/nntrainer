@@ -676,6 +676,41 @@ void NeuralNetwork::save(const std::string &file_path,
   }
 }
 
+void NeuralNetwork::save(
+  const std::string &file_path, ml::train::ModelFormat format,
+  TensorDim::DataType default_type,
+  const std::map<std::string, TensorDim::DataType> &layer_type_map) {
+  NNTR_THROW_IF(!initialized, std::runtime_error)
+    << "Cannot save model if not initialized yet, path: " << file_path
+    << " format: " << static_cast<unsigned>(format);
+
+  NNTR_THROW_IF(format != ml::train::ModelFormat::MODEL_FORMAT_BIN,
+                std::invalid_argument)
+    << "save with data type conversion only supports MODEL_FORMAT_BIN";
+
+  auto model_file = checkedOpenStream<std::ofstream>(
+    file_path, std::ios::out | std::ios::binary | std::ios::trunc);
+
+  for (auto iter = model_graph.cbegin(); iter != model_graph.cend(); iter++) {
+    const auto &layer_node = *iter;
+    std::string layer_name = layer_node->getName();
+
+    auto it = layer_type_map.find(layer_name);
+    TensorDim::DataType target_type =
+      (it != layer_type_map.end()) ? it->second : default_type;
+
+    TensorDim::DataType current_type = layer_node->getWeightDataType();
+
+    if (target_type == current_type) {
+      layer_node->save(model_file, false, exec_mode);
+    } else {
+      layer_node->save(model_file, target_type);
+    }
+  }
+
+  model_file.close();
+}
+
 void NeuralNetwork::load(const std::string &file_path,
                          ml::train::ModelFormat format) {
   /// @todo this switch case should be delegating the function call only. It's

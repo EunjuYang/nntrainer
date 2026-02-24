@@ -794,6 +794,13 @@ public:
        ml::train::ExecutionMode mode = ml::train::ExecutionMode::TRAIN) const;
 
   /**
+   * @brief     save layer Weight & Bias data with data type conversion
+   * @param file output file stream
+   * @param target_type target data type to convert weights before saving
+   */
+  void save(std::ofstream &file, TensorDim::DataType target_type) const;
+
+  /**
    * @brief clear optimizer variable to initial state
    *
    */

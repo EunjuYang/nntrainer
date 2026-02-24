@@ -24,12 +24,14 @@
 #include <common_properties.h>
 #include <connection.h>
 #include <context.h>
+#include <cpu_backend.h>
 #include <engine.h>
 #include <layer_node.h>
 #include <nntrainer_error.h>
 #include <nntrainer_log.h>
 #include <node_exporter.h>
 #include <profiler.h>
+#include <q4_0_tensor.h>
 #include <time_dist.h>
 #include <tracer.h>
 #include <util_func.h>
@@ -524,6 +526,61 @@ void LayerNode::save(std::ofstream &file, bool opt_var,
   getLayer()->save(file, *run_context, opt_var, mode,
                    (getTrainable() && mode == ml::train::ExecutionMode::TRAIN),
                    getWeightDataType());
+}
+
+void LayerNode::save(std::ofstream &file,
+                     TensorDim::DataType target_type) const {
+  NNTR_THROW_IF(!run_context, std::runtime_error)
+    << __func__ << " layer needs to be finalized first!";
+
+  for (unsigned int i = 0; i < run_context->getNumWeights(); ++i) {
+    if (!run_context->isGradientFirstAccess(i))
+      continue;
+
+    Tensor &weight = run_context->getWeight(i);
+    TensorDim::DataType current_type = weight.getDataType();
+
+    if (current_type == target_type) {
+      weight.save(file);
+      continue;
+    }
+
+    NNTR_THROW_IF(current_type != TensorDim::DataType::FP32,
+                  std::invalid_argument)
+      << "Data type conversion during save is only supported from FP32. "
+      << "Layer: " << getName() << ", weight: " << weight.getName()
+      << " has non-FP32 type.";
+
+    NNTR_THROW_IF(target_type != TensorDim::DataType::Q4_0,
+                  std::invalid_argument)
+      << "Only Q4_0 target data type is currently supported for save "
+         "conversion. Layer: "
+      << getName();
+
+    const float *fp32_data = weight.getData<float>();
+    size_t total_elements = weight.getDim().getDataLen();
+
+    NNTR_THROW_IF(total_elements % QK4_0 != 0, std::invalid_argument)
+      << "Total number of elements (" << total_elements
+      << ") must be divisible by " << QK4_0 << " for Q4_0 quantization. "
+      << "Layer: " << getName() << ", weight: " << weight.getName();
+
+    size_t num_blocks = total_elements / QK4_0;
+    size_t q4_0_bytes = num_blocks * Q4_0_SIZE;
+    std::vector<uint8_t> q4_buffer(q4_0_bytes);
+
+    int64_t n_per_row = static_cast<int64_t>(weight.width());
+    int64_t nrow = static_cast<int64_t>(total_elements / weight.width());
+    if (n_per_row % QK4_0 != 0) {
+      n_per_row = static_cast<int64_t>(total_elements);
+      nrow = 1;
+    }
+
+    quantize_q4_0(fp32_data, q4_buffer.data(), nrow, n_per_row, nullptr);
+
+    file.write(reinterpret_cast<const char *>(q4_buffer.data()),
+               static_cast<std::streamsize>(q4_0_bytes));
+  }
 }
 
 void LayerNode::clearOptVar() {
