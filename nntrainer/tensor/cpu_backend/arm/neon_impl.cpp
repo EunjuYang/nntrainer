@@ -1581,12 +1581,27 @@ static inline void load_fp16_4_to_chunk(const uint16_t *src, float *dst,
   }
 }
 
+/// Maximum head dimension supported for stack-allocated scratch buffers.
+/// Covers all common transformer architectures (64, 96, 128, 256).
+/// Using stack allocation eliminates malloc/free contention when multiple
+/// OMP threads call these functions concurrently during decoding.
+static constexpr int kMaxHeadDim = 256;
+
+/// Maximum GQA group size supported for stack-allocated accumulator buffers.
+static constexpr int kMaxGqaSize = 16;
+
 void compute_kcaches_uint16(const float *in, const uint16_t *kcache,
                             float *output, int num_rows, int num_cache_head,
                             int head_dim, int gqa_size, int tile_size,
                             size_t local_window_size, int head_start,
                             int head_end) {
-  std::vector<float> tmp_fp32(head_dim);
+  // Use stack buffer to avoid heap allocation contention across OMP threads.
+  // Each thread calls this function independently; concurrent malloc/free
+  // causes lock contention and latency jitter on Android.
+  alignas(16) float tmp_fp32[kMaxHeadDim];
+  NNTR_THROW_IF(head_dim > kMaxHeadDim, std::invalid_argument)
+    << "head_dim (" << head_dim << ") exceeds kMaxHeadDim (" << kMaxHeadDim
+    << ")";
 
   // If head_end is -1, process all heads from num_cache_head
   // No other negative values are accepted for head_end.
@@ -1619,9 +1634,9 @@ void compute_kcaches_uint16(const float *in, const uint16_t *kcache,
           }
           const uint16_t *kptr = kcache + (row * num_cache_head + n) * head_dim;
 
-          load_fp16_4_to_chunk(kptr, tmp_fp32.data(), head_dim);
+          load_fp16_4_to_chunk(kptr, tmp_fp32, head_dim);
 
-          const float *k_row = tmp_fp32.data();
+          const float *k_row = tmp_fp32;
 
           float sum = 0.0f;
           int i = 0;
@@ -1652,7 +1667,11 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         int num_cache_head, int gqa_size,
                                         int head_dim, size_t local_window_size,
                                         int head_start, int head_end) {
-  std::vector<float> tmp_fp32(head_dim);
+  // Use stack buffers to avoid heap allocation contention across OMP threads.
+  alignas(16) float tmp_fp32[kMaxHeadDim];
+  NNTR_THROW_IF(head_dim > kMaxHeadDim, std::invalid_argument)
+    << "head_dim (" << head_dim << ") exceeds kMaxHeadDim (" << kMaxHeadDim
+    << ")";
 
   // If head_end is -1, process all heads from head_start to num_cache_head.
   // No other negative values are accepted for head_end.
@@ -1667,15 +1686,24 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
     int num_blocks = head_dim / 4;
     int rem = head_dim % 4;
 
-    std::vector<float32x4_t> sumVec(num_blocks * gqa_size, vdupq_n_f32(0.0f));
-    std::vector<float> sumRem(gqa_size * rem, 0.0f);
+    constexpr int kMaxBlocks = kMaxHeadDim / 4;
+    NNTR_THROW_IF(gqa_size > kMaxGqaSize, std::invalid_argument)
+      << "gqa_size (" << gqa_size << ") exceeds kMaxGqaSize (" << kMaxGqaSize
+      << ")";
+
+    alignas(16) float32x4_t sumVec[kMaxGqaSize * kMaxBlocks];
+    float sumRem[kMaxGqaSize * 4]; // rem < 4 always for /4 blocking
+    for (int i = 0; i < num_blocks * gqa_size; ++i)
+      sumVec[i] = vdupq_n_f32(0.0f);
+    for (int i = 0; i < gqa_size * rem; ++i)
+      sumRem[i] = 0.0f;
 
     for (int j = row_num < local_window_size ? 0
                                              : row_num + 1 - local_window_size;
          j <= row_num; ++j) {
       const uint16_t *vptr = vcache + (j * num_cache_head + n) * head_dim;
 
-      load_fp16_4_to_chunk(vptr, tmp_fp32.data(), head_dim);
+      load_fp16_4_to_chunk(vptr, tmp_fp32, head_dim);
 
       for (int h = 0; h < gqa_size; ++h) {
         float a_val = in[(row_num < local_window_size
@@ -1692,7 +1720,7 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
             vfmaq_f32(sumVec[h * num_blocks + b], inVec, bVec);
         }
 
-        float *remPtr = &sumRem.data()[h * rem];
+        float *remPtr = &sumRem[h * rem];
         int base = num_blocks * 4;
         for (int r = 0; r < rem; ++r) {
           remPtr[r] += a_val * tmp_fp32[base + r];
@@ -1706,7 +1734,7 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
         vst1q_f32(&output[out_base], sumVec[h * num_blocks + b]);
       }
 
-      float *remPtr = &sumRem.data()[h * rem];
+      float *remPtr = &sumRem[h * rem];
       int base = num_blocks * 4;
       for (int r = 0; r < rem; ++r) {
         int out_idx = (n * gqa_size + h) * head_dim + base + r;
