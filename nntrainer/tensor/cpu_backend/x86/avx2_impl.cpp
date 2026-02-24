@@ -1181,14 +1181,20 @@ static inline __m256 exp256_ps(__m256 x) {
   return _mm256_mul_ps(y, pow2n);
 }
 
+// Max num_heads for stack allocation (covers typical models: 8, 16, 32, 64, 128)
+static constexpr size_t SOFTMAX_STACK_HEADS = 128;
+
 static void softmax_row_inplace(float *qk_out, size_t start_row, size_t end_row,
                                 size_t num_heads) {
   size_t row_range = end_row - start_row;
   const size_t full_blocks = (num_heads / 8) * 8;
-  // const size_t remainder = num_heads % 8;
 
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
+  // Use stack allocation for typical num_heads values to avoid heap overhead.
+  // This function is called thousands of times during decoding.
+  alignas(32) float stack_max[SOFTMAX_STACK_HEADS];
+  alignas(32) float stack_sum[SOFTMAX_STACK_HEADS];
+  float *max_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_max : new float[num_heads];
+  float *sum_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_sum : new float[num_heads];
   // 1. max
   for (size_t c = 0; c < num_heads; ++c) {
     float max_val = -INFINITY;
@@ -1235,8 +1241,10 @@ static void softmax_row_inplace(float *qk_out, size_t start_row, size_t end_row,
     }
   }
 
-  delete[] max_vals;
-  delete[] sum_vals;
+  if (num_heads > SOFTMAX_STACK_HEADS) {
+    delete[] max_vals;
+    delete[] sum_vals;
+  }
 }
 
 static void softmax_row_with_sink_inplace(float *qk_out, size_t start_row,
@@ -1245,8 +1253,10 @@ static void softmax_row_with_sink_inplace(float *qk_out, size_t start_row,
   size_t row_range = end_row - start_row;
   const size_t full_blocks = (num_heads / 8) * 8;
 
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
+  alignas(32) float stack_max[SOFTMAX_STACK_HEADS];
+  alignas(32) float stack_sum[SOFTMAX_STACK_HEADS];
+  float *max_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_max : new float[num_heads];
+  float *sum_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_sum : new float[num_heads];
   // 1. max
   for (size_t c = 0; c < num_heads; ++c) {
     float max_val = -INFINITY;
@@ -1294,8 +1304,10 @@ static void softmax_row_with_sink_inplace(float *qk_out, size_t start_row,
     }
   }
 
-  delete[] max_vals;
-  delete[] sum_vals;
+  if (num_heads > SOFTMAX_STACK_HEADS) {
+    delete[] max_vals;
+    delete[] sum_vals;
+  }
 }
 
 template <>
@@ -1426,34 +1438,49 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
     << "head_start (" << head_start << ") must be less than head_end ("
     << actual_head_end << ")";
 
-  std::vector<float> tmp_fp32(head_dim);
+  // Use stack allocation for typical head_dim values (64, 128, 256).
+  static constexpr int VCACHE_STACK_BLOCKS = 256;
+  static constexpr int VCACHE_STACK_HEAD_DIM = 256;
+
+  alignas(32) float stack_tmp_fp32[VCACHE_STACK_HEAD_DIM];
+  float *tmp_fp32 = (head_dim <= VCACHE_STACK_HEAD_DIM)
+                      ? stack_tmp_fp32
+                      : new float[head_dim];
+
   int num_blocks = head_dim / 8;
-  __m256 *sumVec = new __m256[std::max(1, num_blocks * gqa_size)];
+  int sumVec_count = std::max(1, num_blocks * gqa_size);
+
+  alignas(32) __m256 stack_sumVec[VCACHE_STACK_BLOCKS];
+  __m256 *sumVec = (sumVec_count <= VCACHE_STACK_BLOCKS)
+                     ? stack_sumVec
+                     : new __m256[sumVec_count];
+
+  // Precompute the start of the sliding window
+  int j_start = row_num < (int)local_window_size
+                  ? 0
+                  : row_num + 1 - (int)local_window_size;
 
   for (int n = head_start; n < actual_head_end; ++n) {
     int rem = head_dim % 8;
 
-    /* Declaration: std::vector<__m256> sumVec(num_blocks * gqa_size,
-     * _mm256_setzero_ps()); caused warning: ignoring attributes on template
-     * argument ‘__m256’ [-Wignored-attributes].
-     * So it is implemented that way.
-     */
     for (int i = 0; i < num_blocks * gqa_size; i++) {
       sumVec[i] = _mm256_setzero_ps();
     }
-    std::vector<float> sumRem((size_t)gqa_size * rem, 0.0f);
+    // Use stack for small remainder arrays
+    alignas(32) float stack_sumRem[64];
+    int sumRem_count = gqa_size * rem;
+    float *sumRem = (sumRem_count <= 64) ? stack_sumRem : new float[sumRem_count];
+    std::fill(sumRem, sumRem + sumRem_count, 0.0f);
 
-    for (int j = row_num < local_window_size ? 0
-                                             : row_num + 1 - local_window_size;
-         j <= row_num; ++j) {
+    for (int j = j_start; j <= row_num; ++j) {
       const uint16_t *vptr = vcache + (j * num_cache_head + n) * head_dim;
-      load_fp16_8_to_chunk(vptr, tmp_fp32.data(), head_dim);
+      load_fp16_8_to_chunk(vptr, tmp_fp32, head_dim);
 
       for (int h = 0; h < gqa_size; ++h) {
         float a_val =
-          in[(row_num < local_window_size
+          in[(row_num < (int)local_window_size
                 ? j
-                : (unsigned long)(j - (row_num + 1 - local_window_size))) *
+                : (unsigned long)(j - j_start)) *
                (unsigned long)(gqa_size * num_cache_head) +
              (unsigned long)(n * gqa_size) + h];
 
@@ -1465,7 +1492,7 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
             _mm256_fmadd_ps(inVec, bVec, sumVec[h * num_blocks + b]);
         }
 
-        float *remPtr = &sumRem.data()[h * rem];
+        float *remPtr = &sumRem[h * rem];
         int base = num_blocks * 8;
         for (int r = 0; r < rem; ++r) {
           remPtr[r] += a_val * tmp_fp32[base + r];
@@ -1479,16 +1506,21 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
         _mm256_storeu_ps(&output[out_base], sumVec[h * num_blocks + b]);
       }
 
-      float *remPtr = &sumRem.data()[h * rem];
-      // float *remPtr = &sumRem[h * rem];
+      float *remPtr = &sumRem[h * rem];
       int base = num_blocks * 8;
       for (int r = 0; r < rem; ++r) {
         int out_idx = (n * gqa_size + h) * head_dim + base + r;
         output[out_idx] = remPtr[r];
       }
     }
+
+    if (sumRem_count > 64)
+      delete[] sumRem;
   }
-  delete[] sumVec;
+  if (sumVec_count > VCACHE_STACK_BLOCKS)
+    delete[] sumVec;
+  if (head_dim > VCACHE_STACK_HEAD_DIM)
+    delete[] tmp_fp32;
 }
 
 template <>

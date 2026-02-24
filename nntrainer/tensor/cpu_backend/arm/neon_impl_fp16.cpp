@@ -1393,6 +1393,9 @@ inline static float16x8_t exp_f16x8(float16x8_t x) {
   return vcombine_f16(vcvt_f16_f32(res_low), vcvt_f16_f32(res_high));
 }
 
+// Max num_heads for stack allocation (covers typical models: 8, 16, 32, 64, 128)
+static constexpr size_t SOFTMAX_STACK_HEADS = 128;
+
 // Static helper function for softmax_row_inplace with __fp16 sink
 // Performs softmax along the row dimension (sequence length) for each head.
 // Includes handling of a "sink" token (attention sink)
@@ -1402,8 +1405,10 @@ static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
   size_t row_range = end_row - start_row;
   const size_t full_blocks = (num_heads / 8) * 8;
 
-  __fp16 *max_vals = new __fp16[num_heads];
-  __fp16 *sum_vals = new __fp16[num_heads];
+  alignas(16) __fp16 stack_max[SOFTMAX_STACK_HEADS];
+  alignas(16) __fp16 stack_sum[SOFTMAX_STACK_HEADS];
+  __fp16 *max_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_max : new __fp16[num_heads];
+  __fp16 *sum_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_sum : new __fp16[num_heads];
 
   // 1. Find max value for numerical stability (Safe Softmax)
   // Formula: Softmax(x) = Softmax(x - max(x))
@@ -1460,8 +1465,10 @@ static void softmax_row_inplace_with_fp16_sink(__fp16 *qk_out, size_t start_row,
     }
   }
 
-  delete[] max_vals;
-  delete[] sum_vals;
+  if (num_heads > SOFTMAX_STACK_HEADS) {
+    delete[] max_vals;
+    delete[] sum_vals;
+  }
 }
 
 // Static helper function for softmax_row_inplace without sink
@@ -1471,8 +1478,10 @@ static void softmax_row_inplace_no_sink(__fp16 *qk_out, size_t start_row,
   const size_t full_blocks = (num_heads / 8) * 8;
   // const size_t remainder = num_heads % 8;
 
-  __fp16 *max_vals = new __fp16[num_heads];
-  __fp16 *sum_vals = new __fp16[num_heads];
+  alignas(16) __fp16 stack_max[SOFTMAX_STACK_HEADS];
+  alignas(16) __fp16 stack_sum[SOFTMAX_STACK_HEADS];
+  __fp16 *max_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_max : new __fp16[num_heads];
+  __fp16 *sum_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_sum : new __fp16[num_heads];
 
   // 1. max
   for (size_t c = 0; c < num_heads; ++c) {
@@ -1520,8 +1529,10 @@ static void softmax_row_inplace_no_sink(__fp16 *qk_out, size_t start_row,
     }
   }
 
-  delete[] max_vals;
-  delete[] sum_vals;
+  if (num_heads > SOFTMAX_STACK_HEADS) {
+    delete[] max_vals;
+    delete[] sum_vals;
+  }
 }
 
 template <>
@@ -1542,8 +1553,10 @@ static void softmax_row_inplace_with_fp32_sink(__fp16 *qk_out, size_t start_row,
   size_t row_range = end_row - start_row;
   const size_t full_blocks = (num_heads / 8) * 8;
 
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
+  alignas(16) float stack_max[SOFTMAX_STACK_HEADS];
+  alignas(16) float stack_sum[SOFTMAX_STACK_HEADS];
+  float *max_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_max : new float[num_heads];
+  float *sum_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_sum : new float[num_heads];
 
   // 1. max (including sink)
   for (size_t c = 0; c < num_heads; ++c) {
@@ -1633,8 +1646,10 @@ static void softmax_row_inplace_with_fp32_sink(__fp16 *qk_out, size_t start_row,
     }
   }
 
-  delete[] max_vals;
-  delete[] sum_vals;
+  if (num_heads > SOFTMAX_STACK_HEADS) {
+    delete[] max_vals;
+    delete[] sum_vals;
+  }
 }
 
 // Overloaded function for __fp16 input with float sink

@@ -1021,14 +1021,19 @@ void exp_i(const unsigned int N, float *X) {
   }
 }
 
+// Max num_heads for stack allocation (covers typical models: 8, 16, 32, 64, 128)
+static constexpr size_t SOFTMAX_STACK_HEADS = 128;
+
 static void softmax_row_inplace(float *qk_out, size_t start_row, size_t end_row,
                                 size_t num_heads) {
   size_t row_range = end_row - start_row;
   const size_t full_blocks = (num_heads / 4) * 4;
-  // const size_t remainder = num_heads % 4;
 
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
+  // Use stack allocation for typical num_heads values to avoid heap overhead.
+  alignas(16) float stack_max[SOFTMAX_STACK_HEADS];
+  alignas(16) float stack_sum[SOFTMAX_STACK_HEADS];
+  float *max_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_max : new float[num_heads];
+  float *sum_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_sum : new float[num_heads];
 
   // 1. max
   for (size_t c = 0; c < num_heads; ++c) {
@@ -1076,8 +1081,10 @@ static void softmax_row_inplace(float *qk_out, size_t start_row, size_t end_row,
     }
   }
 
-  delete[] max_vals;
-  delete[] sum_vals;
+  if (num_heads > SOFTMAX_STACK_HEADS) {
+    delete[] max_vals;
+    delete[] sum_vals;
+  }
 }
 
 static void softmax_row_with_sink_inplace(float *qk_out, size_t start_row,
@@ -1086,8 +1093,10 @@ static void softmax_row_with_sink_inplace(float *qk_out, size_t start_row,
   size_t row_range = end_row - start_row;
   const size_t full_blocks = (num_heads / 4) * 4;
 
-  float *max_vals = new float[num_heads];
-  float *sum_vals = new float[num_heads];
+  alignas(16) float stack_max[SOFTMAX_STACK_HEADS];
+  alignas(16) float stack_sum[SOFTMAX_STACK_HEADS];
+  float *max_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_max : new float[num_heads];
+  float *sum_vals = (num_heads <= SOFTMAX_STACK_HEADS) ? stack_sum : new float[num_heads];
 
   // 1. max
   for (size_t c = 0; c < num_heads; ++c) {
@@ -1136,8 +1145,10 @@ static void softmax_row_with_sink_inplace(float *qk_out, size_t start_row,
     }
   }
 
-  delete[] max_vals;
-  delete[] sum_vals;
+  if (num_heads > SOFTMAX_STACK_HEADS) {
+    delete[] max_vals;
+    delete[] sum_vals;
+  }
 }
 
 template <>
