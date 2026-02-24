@@ -1885,25 +1885,34 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
   int row_cnt = num_rows < local_window_size ? num_rows : local_window_size;
   const int tile_count = (row_cnt + tile_size - 1) / tile_size;
 
+  // Precompute the scaling factor to avoid redundant sqrt() per element.
+  const float inv_sqrt_head_dim = 1.0f / sqrt((float)head_dim);
+
   for (int n = head_start; n < actual_head_end; ++n) {
     for (int t = 0; t < tile_count; ++t) {
       int row_tile_start = t * tile_size;
       int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
 
-      for (int g = 0; g < gqa_size; ++g) {
-        const float *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
-        for (int t_row = 0; t_row < tile_rows; ++t_row) {
-          int row = start_row + row_tile_start + t_row;
-          if (t_row + 1 < tile_rows) {
-            const __fp16 *next_kptr =
-              kcache + ((row + 1) * num_cache_head + n) * head_dim;
-            __builtin_prefetch(next_kptr, 0, 3); // Read, L1 cache
-          }
-          const __fp16 *kptr = kcache + (row * num_cache_head + n) * head_dim;
+      // Loop restructured: t_row (cache rows) is now the outer loop, and
+      // g (GQA groups) is the inner loop. This allows the FP16→FP32
+      // conversion of each cache row to happen once per row instead of
+      // gqa_size times, since all GQA groups share the same KV head.
+      for (int t_row = 0; t_row < tile_rows; ++t_row) {
+        int row = start_row + row_tile_start + t_row;
+        if (t_row + 1 < tile_rows) {
+          const __fp16 *next_kptr =
+            kcache + ((row + 1) * num_cache_head + n) * head_dim;
+          __builtin_prefetch(next_kptr, 0, 3);
+        }
+        // Convert FP16 cache row to FP32 once per row, shared across all
+        // GQA groups.
+        const __fp16 *kptr = kcache + (row * num_cache_head + n) * head_dim;
+        load_fp16_4_to_chunk(kptr, tmp_fp32.data(), head_dim);
 
-          load_fp16_4_to_chunk(kptr, tmp_fp32.data(), head_dim);
+        const float *k_row = tmp_fp32.data();
 
-          const float *k_row = tmp_fp32.data();
+        for (int g = 0; g < gqa_size; ++g) {
+          const float *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
 
           float sum = 0.0f;
           int i = 0;
@@ -1922,7 +1931,7 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
             sum += in_ptr[i] * k_row[i];
 
           output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
-                 g] = sum / sqrt((float)head_dim);
+                 g] = sum * inv_sqrt_head_dim;
         }
       }
     }
@@ -1955,6 +1964,9 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
   // Calculate number of tiles for cache blocking optimization
   const int tile_count = (row_cnt + tile_size - 1) / tile_size;
 
+  // Precompute the scaling factor to avoid redundant sqrt() per element.
+  const float inv_sqrt_head_dim = 1.0f / sqrt((float)head_dim);
+
   // Loop over each Key head (within the specified range for parallelization)
   for (int n = head_start; n < actual_head_end; ++n) {
     // Loop over tiles (Cache Blocking) to improve memory access patterns
@@ -1970,50 +1982,35 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
         // Loop within the tile
         for (int t_row = 0; t_row < tile_rows; ++t_row) {
           int row = start_row + row_tile_start + t_row;
-          // Prefetching next row's key cache to L1 cache for performance
-          // __builtin_prefetch(addr, rw, locality):
-          // rw=0 (read), locality=3 (keep in all cache levels)
           if (t_row + 1 < tile_rows) {
             const __fp16 *next_kptr =
               kcache + ((row + 1) * num_cache_head + n) * head_dim;
-            __builtin_prefetch(next_kptr, 0, 3); // Read, L1 cache
+            __builtin_prefetch(next_kptr, 0, 3);
           }
-          // Pointer to current Key vector
           const __fp16 *k_row = kcache + (row * num_cache_head + n) * head_dim;
 
-          // Compute Dot Product: Query, Key
           __fp16 sum = 0.0f;
           int i = 0;
           float16x8_t acc = vdupq_n_f16(0.0);
 
-          // Main NEON loop for dot product (8 elements at a time)
           for (; i + 8 <= head_dim; i += 8) {
-            float16x8_t va = vld1q_f16(in_ptr + i); // Load Query
-            float16x8_t vb = vld1q_f16(k_row + i);  // Load Key
+            float16x8_t va = vld1q_f16(in_ptr + i);
+            float16x8_t vb = vld1q_f16(k_row + i);
             acc = vfmaq_f16(acc, va, vb);
           }
 
-          // Horizontal sum of the vector accumulator
-          // Reduces [x0, x1, ... , x7] to scalar sum
-          // vpaddq_f16(a, b): Pairwise add
-          // [a0+a1, a2+a3, ..., b0+b1, ...]
-          // Step 1: 8 elems -> 4 pair sums (duplicated)
           acc = vpaddq_f16(acc, acc);
-          // Step 2: 4 elems -> 2 pair sums
           acc = vpaddq_f16(acc, acc);
-          // Step 3: 2 elems -> 1 pair sums (in lane 0)
           acc = vpaddq_f16(acc, acc);
-          // vgetq_lane_f16(vec, lane_idx): Extract scalar from vector lane
           sum += vgetq_lane_f16(acc, 0);
 
-          // Handle remaining elements
           for (; i < head_dim; ++i)
             sum += in_ptr[i] * k_row[i];
 
           // Apply scaling factor (1/sqrt(head_dim)) and store result
           // This is the "Scaled" Dot-Product Attention
           output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
-                 g] = sum / sqrt((float)head_dim);
+                 g] = sum * inv_sqrt_head_dim;
         }
       }
     }

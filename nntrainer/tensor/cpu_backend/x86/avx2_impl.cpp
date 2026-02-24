@@ -1512,25 +1512,34 @@ void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
   int row_cnt = num_rows < local_window_size ? num_rows : local_window_size;
   const int tile_count = (row_cnt + tile_size - 1) / tile_size;
 
+  // Precompute the scaling factor to avoid redundant sqrt() per element.
+  const float inv_sqrt_head_dim = 1.0f / sqrt((float)head_dim);
+
   for (int n = head_start; n < actual_head_end; ++n) {
     for (int t = 0; t < tile_count; ++t) {
       int row_tile_start = t * tile_size;
       int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
 
-      for (int g = 0; g < gqa_size; ++g) {
-        const float *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
-        for (int t_row = 0; t_row < tile_rows; ++t_row) {
-          int row = start_row + row_tile_start + t_row;
-          if (row + 1 < num_rows) {
-            const uint16_t *next_kptr =
-              kcache + ((row + 1) * num_cache_head + n) * head_dim;
-            _mm_prefetch(reinterpret_cast<const char *>(next_kptr),
-                         _MM_HINT_T0);
-          }
-          const uint16_t *kptr = kcache + (row * num_cache_head + n) * head_dim;
-          load_fp16_8_to_chunk(kptr, tmp_fp32.data(), head_dim);
+      // Loop restructured: t_row (cache rows) is now the outer loop, and
+      // g (GQA groups) is the inner loop. This allows the FP16→FP32
+      // conversion of each cache row to happen once per row instead of
+      // gqa_size times, since all GQA groups share the same KV head.
+      for (int t_row = 0; t_row < tile_rows; ++t_row) {
+        int row = start_row + row_tile_start + t_row;
+        if (row + 1 < num_rows) {
+          const uint16_t *next_kptr =
+            kcache + ((row + 1) * num_cache_head + n) * head_dim;
+          _mm_prefetch(reinterpret_cast<const char *>(next_kptr), _MM_HINT_T0);
+        }
+        // Convert FP16 cache row to FP32 once per row, shared across all
+        // GQA groups.
+        const uint16_t *kptr = kcache + (row * num_cache_head + n) * head_dim;
+        load_fp16_8_to_chunk(kptr, tmp_fp32.data(), head_dim);
 
-          const float *k_row = tmp_fp32.data();
+        const float *k_row = tmp_fp32.data();
+
+        for (int g = 0; g < gqa_size; ++g) {
+          const float *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
 
           float sum = 0.0f;
           int i = 0;
@@ -1552,7 +1561,7 @@ void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
             sum += in_ptr[i] * k_row[i];
 
           output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
-                 g] = sum / sqrt((float)head_dim);
+                 g] = sum * inv_sqrt_head_dim;
         }
       }
     }
