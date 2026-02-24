@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <cmath>
 #include <mutex>
+#include <omp.h>
 #include <thread>
 #include <vector>
 
@@ -387,28 +388,22 @@ void MHACoreLayer::compute_kcaches(
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
     if (sequence_len == 1) {
       // Single token processing (common during generation)
-      // Parallelize over KV heads using the unified thread pool to avoid
-      // OpenMP scheduling jitter on Android big.LITTLE architectures and
-      // eliminate contention between dual threading runtimes.
+      // Parallelize over KV heads for decoding since Q direction is always 1
       int row_to_compute = is_causal ? from + 1 : from + sequence_len;
       unsigned int num_cache_head = num_head / group_size;
 
+      // Use OpenMP for lower overhead parallelization during decoding
       const float *in_data = in.getData<float>();
       const uint16_t *cache_data = cache.getData<uint16_t>();
       float *out_data = out.getData<float>();
 
-      std::vector<std::future<void>> futures;
-      futures.reserve(num_cache_head);
+#pragma omp parallel for schedule(static)
       for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        futures.emplace_back(pool.submit_task([=]() {
-          nntrainer::compute_kcaches<uint16_t>(
-            in_data, cache_data, out_data, row_to_compute, num_cache_head,
-            head_dim, group_size, tile_size, local_window_size, head_kv,
-            head_kv + 1);
-        }));
+        nntrainer::compute_kcaches<uint16_t>(
+          in_data, cache_data, out_data, row_to_compute, num_cache_head,
+          head_dim, group_size, tile_size, local_window_size, head_kv,
+          head_kv + 1);
       }
-      for (auto &fut : futures)
-        fut.get();
 
     } else {
       // Sequence processing (prefill or chunked)
@@ -441,27 +436,21 @@ void MHACoreLayer::compute_kcaches(
 #ifdef ENABLE_FP16
     if (sequence_len == 1) {
       // Single token processing (common during generation)
-      // Parallelize over KV heads using the unified thread pool to avoid
-      // OpenMP scheduling jitter on Android big.LITTLE architectures and
-      // eliminate contention between dual threading runtimes.
+      // Parallelize over KV heads for decoding since Q direction is always 1
       int num_rows = is_causal ? from + 1 : from + sequence_len;
       unsigned int num_cache_head = num_head / group_size;
 
+      // Use OpenMP for lower overhead parallelization during decoding
       const _FP16 *in_data = in.getData<_FP16>();
       const _FP16 *cache_data = cache.getData<_FP16>();
       _FP16 *out_data = out.getData<_FP16>();
 
-      std::vector<std::future<void>> futures;
-      futures.reserve(num_cache_head);
+#pragma omp parallel for schedule(static)
       for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        futures.emplace_back(pool.submit_task([=]() {
-          nntrainer::compute_kcaches(
-            in_data, cache_data, out_data, num_rows, num_cache_head, head_dim,
-            group_size, tile_size, local_window_size, head_kv, head_kv + 1);
-        }));
+        nntrainer::compute_kcaches(
+          in_data, cache_data, out_data, num_rows, num_cache_head, head_dim,
+          group_size, tile_size, local_window_size, head_kv, head_kv + 1);
       }
-      for (auto &fut : futures)
-        fut.get();
     } else {
       std::vector<std::future<void>> futures;
       unsigned int seq_start =
@@ -1190,26 +1179,20 @@ void MHACoreLayer::compute_fp16vcache_transposed(
         fut.get();
     } else {
       // Single token processing (common during generation)
-      // Parallelize over KV heads using the unified thread pool to avoid
-      // OpenMP scheduling jitter on Android big.LITTLE architectures and
-      // eliminate contention between dual threading runtimes.
+      // Parallelize over KV heads for decoding since Q direction is always 1
       int row_num = is_causal ? to - 1 : to;
 
+      // Use OpenMP for lower overhead parallelization during decoding
       const float *in_data = in.getData<float>();
       const uint16_t *vcache_data = vcache.getData<uint16_t>();
       float *output_data = output.getData<float>();
 
-      std::vector<std::future<void>> futures;
-      futures.reserve(num_cache_head);
+#pragma omp parallel for schedule(static)
       for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        futures.emplace_back(pool.submit_task([=]() {
-          nntrainer::compute_fp16vcache_fp32_transposed(
-            row_num, in_data, vcache_data, output_data, num_cache_head,
-            gqa_size, head_dim, local_window_size, head_kv, head_kv + 1);
-        }));
+        nntrainer::compute_fp16vcache_fp32_transposed(
+          row_num, in_data, vcache_data, output_data, num_cache_head, gqa_size,
+          head_dim, local_window_size, head_kv, head_kv + 1);
       }
-      for (auto &fut : futures)
-        fut.get();
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
@@ -1243,26 +1226,20 @@ void MHACoreLayer::compute_fp16vcache_transposed(
         fut.get();
     } else {
       // Single token processing (common during generation)
-      // Parallelize over KV heads using the unified thread pool to avoid
-      // OpenMP scheduling jitter on Android big.LITTLE architectures and
-      // eliminate contention between dual threading runtimes.
+      // Parallelize over KV heads for decoding since Q direction is always 1
       int row_num = is_causal ? to - 1 : to;
 
+      // Use OpenMP for lower overhead parallelization during decoding
       const _FP16 *in_data = in.getData<_FP16>();
       const _FP16 *vcache_data = vcache.getData<_FP16>();
       _FP16 *output_data = output.getData<_FP16>();
 
-      std::vector<std::future<void>> futures;
-      futures.reserve(num_cache_head);
+#pragma omp parallel for schedule(static)
       for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        futures.emplace_back(pool.submit_task([=]() {
-          nntrainer::compute_fp16vcache_transposed(
-            row_num, in_data, vcache_data, output_data, num_cache_head,
-            gqa_size, head_dim, local_window_size, head_kv, head_kv + 1);
-        }));
+        nntrainer::compute_fp16vcache_transposed(
+          row_num, in_data, vcache_data, output_data, num_cache_head, gqa_size,
+          head_dim, local_window_size, head_kv, head_kv + 1);
       }
-      for (auto &fut : futures)
-        fut.get();
     }
 #else
     NNTR_THROW_IF(true, std::invalid_argument) << "enable-fp16 is not set!";
