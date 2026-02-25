@@ -148,6 +148,12 @@ public:
   void initialize() override;
 
   /**
+   * @copydoc TensorBase::save()
+   * @note Repacks Q4_0 data to Q4_0x8 interleaved layout before writing
+   */
+  void save(std::ostream &file) override;
+
+  /**
    * @copydoc Tensor::print()
    */
   void print(std::ostream &out) const override {

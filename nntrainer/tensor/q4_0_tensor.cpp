@@ -104,4 +104,19 @@ void Q4_0_Tensor::initialize() {
 
 QScheme Q4_0_Tensor::q_scheme() const { return QScheme::Q4_0; }
 
+void Q4_0_Tensor::save(std::ostream &file) {
+  std::streamsize sz = static_cast<std::streamsize>(bytes());
+  NNTR_THROW_IF(sz < 0, std::invalid_argument)
+    << "save size: " << bytes()
+    << " is too big. It cannot be represented by std::streamsize";
+
+  // Repack Q4_0 data to Q4_0x8 interleaved layout before saving
+  std::vector<uint8_t> repacked(size());
+  repack_q4_0(repacked.data(), getData(), size(), height(), width());
+
+  checkedWrite(file, (char *)repacked.data(), sz,
+               "[Q4_0_Tensor::save] operation failed");
+  putData();
+}
+
 } // namespace nntrainer
