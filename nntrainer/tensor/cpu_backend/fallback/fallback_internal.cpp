@@ -533,7 +533,7 @@ void __fallback_dequantize_row_q8_K(const void *x, float *y, int64_t k) {
   throw std::runtime_error("NYI : __fallback_dequantize_row_q8_K");
 }
 
-void __fallback_repack_q4_0_to_q4_0_4(void *W, void *repacked_W,
+void __fallback_repack_q4_0_to_q4_0_4(void *dst, void *src,
                                       size_t data_size, const unsigned int M,
                                       const unsigned int N) {
   constexpr int nrows_interleaved = 4;
@@ -541,8 +541,8 @@ void __fallback_repack_q4_0_to_q4_0_4(void *W, void *repacked_W,
   const int nblocks = N / QK4_0;
   const uint64_t xor_mask = 0x8888888888888888ULL;
 
-  ::block_q4_0x4 *dst_ = (::block_q4_0x4 *)repacked_W;
-  const ::block_q4_0 *src = (const ::block_q4_0 *)W;
+  ::block_q4_0x4 *dst_ = (::block_q4_0x4 *)dst;
+  const ::block_q4_0 *src_ = (const ::block_q4_0 *)src;
   ::block_q4_0 dst_tmp[4];
 
   assert(data_size == M * nblocks * sizeof(::block_q4_0));
@@ -550,7 +550,7 @@ void __fallback_repack_q4_0_to_q4_0_4(void *W, void *repacked_W,
   for (size_t b = 0; b < M; b += nrows_interleaved) {
     for (int64_t x = 0; x < nblocks; x++) {
       for (int i = 0; i < nrows_interleaved; i++) {
-        dst_tmp[i] = src[x + i * nblocks];
+        dst_tmp[i] = src_[x + i * nblocks];
       }
       // Pack: copy deltas, interleave and XOR quants
       ::block_q4_0x4 out;
@@ -569,11 +569,11 @@ void __fallback_repack_q4_0_to_q4_0_4(void *W, void *repacked_W,
       }
       *dst_++ = out;
     }
-    src += nrows_interleaved * nblocks;
+    src_ += nrows_interleaved * nblocks;
   }
 }
 
-void __fallback_repack_q4_0_to_q4_0_8(void *W, void *repacked_W,
+void __fallback_repack_q4_0_to_q4_0_8(void *dst, void *src,
                                       size_t data_size, const unsigned int M,
                                       const unsigned int N) {
   constexpr size_t nrows_interleaved = 8;
@@ -581,8 +581,8 @@ void __fallback_repack_q4_0_to_q4_0_8(void *W, void *repacked_W,
   const int nblocks = N / QK4_0;
   const uint64_t xor_mask = 0x8888888888888888ULL;
 
-  ::block_q4_0x8 *dst_ = (::block_q4_0x8 *)repacked_W;
-  const ::block_q4_0 *src = (const ::block_q4_0 *)W;
+  ::block_q4_0x8 *dst_ = (::block_q4_0x8 *)dst;
+  const ::block_q4_0 *src_ = (const ::block_q4_0 *)src;
   ::block_q4_0 dst_tmp[8];
 
   assert(data_size == M * nblocks * sizeof(::block_q4_0));
@@ -590,7 +590,7 @@ void __fallback_repack_q4_0_to_q4_0_8(void *W, void *repacked_W,
   for (size_t b = 0; b < M; b += nrows_interleaved) {
     for (int64_t x = 0; x < nblocks; x++) {
       for (size_t i = 0; i < nrows_interleaved; i++) {
-        dst_tmp[i] = src[x + i * nblocks];
+        dst_tmp[i] = src_[x + i * nblocks];
       }
       // Pack: copy deltas, interleave and XOR quants
       ::block_q4_0x8 out;
@@ -609,11 +609,11 @@ void __fallback_repack_q4_0_to_q4_0_8(void *W, void *repacked_W,
       }
       *dst_++ = out;
     }
-    src += nrows_interleaved * nblocks;
+    src_ += nrows_interleaved * nblocks;
   }
 }
 
-void __fallback_repack_q4_K_to_q4_K_8(void *W, void *repacked_W,
+void __fallback_repack_q4_K_to_q4_K_8(void *dst, void *src,
                                       size_t data_size, const unsigned int M,
                                       const unsigned int N) {
   throw std::runtime_error("NYI : __fallback_repack_q4_K_to_q4_K_8");
