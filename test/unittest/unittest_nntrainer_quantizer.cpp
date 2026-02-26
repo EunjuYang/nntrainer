@@ -18,6 +18,8 @@
 #include <quantizer.h>
 #include <tensor.h>
 
+#include <cpu_backend.h>
+
 /**
  * @brief Quantize to FP32 Tensor (negative test)
  */
@@ -401,6 +403,460 @@ TEST(nntrainer_Quantizer, per_tensor_affine_05_p) {
 
   ASSERT_EQ(output_s8, float_answer);
   ASSERT_EQ(output_u8, float_answer);
+}
+
+/**
+ * @brief Base quantizer repack throws not supported (negative test)
+ */
+TEST(nntrainer_Quantizer, base_repack_01_n) {
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(
+      nntrainer::QScheme::PER_TENSOR_AFFINE);
+
+  nntrainer::Tensor dummy_in(1, 1, 4, 4);
+  nntrainer::Tensor dummy_out(1, 1, 4, 4);
+
+  EXPECT_THROW(quantizer->repack(dummy_in, dummy_out), std::runtime_error);
+}
+
+/**
+ * @brief GGMLQuantizer Q6_K repack throws not supported (negative test)
+ */
+TEST(nntrainer_Quantizer, ggml_q6k_repack_01_n) {
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q6_K);
+
+  nntrainer::Tensor dummy_in(
+    {1, 1, 8, 256, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q6_K},
+    true, nntrainer::Initializer::NONE, "q6k_in", nntrainer::QScheme::Q6_K);
+  nntrainer::Tensor dummy_out(
+    {1, 1, 8, 256, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q6_K},
+    true, nntrainer::Initializer::NONE, "q6k_out", nntrainer::QScheme::Q6_K);
+
+  EXPECT_THROW(quantizer->repack(dummy_in, dummy_out), std::runtime_error);
+}
+
+/**
+ * @brief GGMLQuantizer Q4_Kx8 quantize and dequantize
+ */
+TEST(nntrainer_Quantizer, ggml_q4kx8_01_p) {
+  nntrainer::init_backend();
+
+  uint32_t K = 768;
+  uint32_t N = 256;
+
+  std::vector<float> weight =
+    generate_random_vector<float>(K * N, -0.05f, 0.05f);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  // Create GGML Q4_Kx8 quantizer
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q4_Kx8);
+
+  EXPECT_EQ(quantizer->qscheme(), nntrainer::QScheme::Q4_Kx8);
+
+  // Quantize
+  nntrainer::Tensor W_q4k =
+    quantizer->quantize(W_fp32, nntrainer::Tdatatype::Q4_K);
+
+  EXPECT_EQ(W_q4k.getDataType(), nntrainer::Tdatatype::Q4_K);
+
+  // Dequantize
+  nntrainer::Tensor W_deq =
+    quantizer->dequantize(W_q4k, nntrainer::Tdatatype::FP32);
+
+  EXPECT_EQ(W_deq.getDataType(), nntrainer::Tdatatype::FP32);
+
+  // Compare with direct quantization from cpu_backend
+  nntrainer::Tensor W_fp32_t = W_fp32.transpose("0:2:1");
+  const float *src_ptr = W_fp32_t.getData<float>();
+
+  nntrainer::Tensor W_q4k_ref(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_K}, true,
+    nntrainer::Initializer::NONE, "ref", nntrainer::QScheme::Q4_Kx8);
+
+  size_t data_size = W_q4k_ref.size();
+  std::vector<char> tmp(data_size);
+  nntrainer::quantize_q4_K(src_ptr, tmp.data(), N, K, nullptr);
+  nntrainer::repack_q4_K(W_q4k_ref.getData<uint8_t>(), tmp.data(), data_size,
+                         N, K);
+
+  // The quantizer result and the reference should match
+  EXPECT_EQ(
+    memcmp(W_q4k.getData<uint8_t>(), W_q4k_ref.getData<uint8_t>(), data_size),
+    0);
+}
+
+/**
+ * @brief GGMLQuantizer Q6_K quantize and dequantize
+ */
+TEST(nntrainer_Quantizer, ggml_q6k_01_p) {
+  nntrainer::init_backend();
+
+  uint32_t K = 512;
+  uint32_t N = 256;
+
+  std::vector<float> weight =
+    generate_random_vector<float>(K * N, -0.05f, 0.05f);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  // Create GGML Q6_K quantizer
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q6_K);
+
+  EXPECT_EQ(quantizer->qscheme(), nntrainer::QScheme::Q6_K);
+
+  // Quantize
+  nntrainer::Tensor W_q6k =
+    quantizer->quantize(W_fp32, nntrainer::Tdatatype::Q6_K);
+
+  EXPECT_EQ(W_q6k.getDataType(), nntrainer::Tdatatype::Q6_K);
+
+  // Dequantize
+  nntrainer::Tensor W_deq =
+    quantizer->dequantize(W_q6k, nntrainer::Tdatatype::FP32);
+
+  EXPECT_EQ(W_deq.getDataType(), nntrainer::Tdatatype::FP32);
+
+  // Verify quantization quality: MSE should be small
+  auto mean_squared_error =
+    mse<float, float>(W_fp32.getData(), W_deq.getData(), K * N);
+
+  const float eps = 1e-5;
+  EXPECT_NEAR(mean_squared_error, 0., eps * K * N);
+}
+
+/**
+ * @brief GGMLQuantizer Q4_0 quantize and dequantize
+ */
+TEST(nntrainer_Quantizer, ggml_q4_0_01_p) {
+  nntrainer::init_backend();
+
+  uint32_t K = 768;
+  uint32_t N = 256;
+
+  std::vector<float> weight =
+    generate_random_vector<float>(K * N, -0.05f, 0.05f);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  // Create GGML Q4_0 quantizer
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q4_0);
+
+  EXPECT_EQ(quantizer->qscheme(), nntrainer::QScheme::Q4_0);
+
+  // Quantize
+  nntrainer::Tensor W_q40 =
+    quantizer->quantize(W_fp32, nntrainer::Tdatatype::Q4_0);
+
+  EXPECT_EQ(W_q40.getDataType(), nntrainer::Tdatatype::Q4_0);
+
+  // Dequantize
+  nntrainer::Tensor W_deq =
+    quantizer->dequantize(W_q40, nntrainer::Tdatatype::FP32);
+
+  EXPECT_EQ(W_deq.getDataType(), nntrainer::Tdatatype::FP32);
+
+  // Compare with direct quantization from cpu_backend
+  nntrainer::Tensor W_fp32_t = W_fp32.transpose("0:2:1");
+  const float *src_ptr = W_fp32_t.getData<float>();
+
+  nntrainer::Tensor W_q40_ref(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_0}, true,
+    nntrainer::Initializer::NONE, "ref", nntrainer::QScheme::Q4_0);
+
+  size_t data_size = W_q40_ref.size();
+  std::vector<char> tmp(data_size);
+  nntrainer::quantize_q4_0(src_ptr, tmp.data(), N, K, nullptr);
+  nntrainer::repack_q4_0(W_q40_ref.getData<uint8_t>(), tmp.data(), data_size,
+                         N, K);
+
+  // The quantizer result and the reference should match
+  EXPECT_EQ(
+    memcmp(W_q40.getData<uint8_t>(), W_q40_ref.getData<uint8_t>(), data_size),
+    0);
+}
+
+/**
+ * @brief GGMLQuantizer Q4_Kx8 quantize with output tensor
+ */
+TEST(nntrainer_Quantizer, ggml_q4kx8_02_p) {
+  nntrainer::init_backend();
+
+  uint32_t K = 512;
+  uint32_t N = 256;
+
+  std::vector<float> weight =
+    generate_random_vector<float>(K * N, -0.05f, 0.05f);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  // Create GGML Q4_Kx8 quantizer
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q4_Kx8);
+
+  // Quantize using the two-arg version (auto-determines type)
+  nntrainer::Tensor W_q4k_auto =
+    quantizer->quantize(W_fp32, nntrainer::Tdatatype::Q4_K);
+
+  // Quantize using the four-arg version (output tensor provided)
+  nntrainer::Tensor W_q4k_out(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_K}, true,
+    nntrainer::Initializer::NONE, "out", nntrainer::QScheme::Q4_Kx8);
+
+  float dummy_scale = 1.0f;
+  quantizer->quantize(W_fp32, W_q4k_out, &dummy_scale);
+
+  size_t data_size = W_q4k_auto.size();
+  EXPECT_EQ(data_size, W_q4k_out.size());
+
+  // Both quantization paths should produce same result
+  EXPECT_EQ(memcmp(W_q4k_auto.getData<uint8_t>(),
+                   W_q4k_out.getData<uint8_t>(), data_size),
+            0);
+}
+
+/**
+ * @brief GGMLQuantizer repack for Q4_Kx8 (positive test)
+ */
+TEST(nntrainer_Quantizer, ggml_q4kx8_repack_01_p) {
+  nntrainer::init_backend();
+
+  uint32_t K = 512;
+  uint32_t N = 256;
+
+  std::vector<float> weight =
+    generate_random_vector<float>(K * N, -0.05f, 0.05f);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  // Raw quantize without repack
+  nntrainer::Tensor W_fp32_t = W_fp32.transpose("0:2:1");
+  const float *src_ptr = W_fp32_t.getData<float>();
+
+  nntrainer::Tensor W_raw(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_K}, true,
+    nntrainer::Initializer::NONE, "raw", nntrainer::QScheme::Q4_Kx8);
+
+  size_t data_size = W_raw.size();
+  std::vector<char> tmp(data_size);
+  nntrainer::quantize_q4_K(src_ptr, tmp.data(), N, K, nullptr);
+
+  // Repack via quantizer
+  nntrainer::Tensor W_repacked(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_K}, true,
+    nntrainer::Initializer::NONE, "repacked", nntrainer::QScheme::Q4_Kx8);
+
+  // Copy raw data into W_raw
+  memcpy(W_raw.getData<uint8_t>(), tmp.data(), data_size);
+
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q4_Kx8);
+
+  EXPECT_NO_THROW(quantizer->repack(W_raw, W_repacked));
+
+  // Repack via cpu_backend directly
+  nntrainer::Tensor W_ref(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_K}, true,
+    nntrainer::Initializer::NONE, "ref", nntrainer::QScheme::Q4_Kx8);
+  nntrainer::repack_q4_K(W_ref.getData<uint8_t>(), tmp.data(), data_size, N,
+                         K);
+
+  EXPECT_EQ(memcmp(W_repacked.getData<uint8_t>(), W_ref.getData<uint8_t>(),
+                   data_size),
+            0);
+}
+
+/**
+ * @brief GGMLQuantizer repack for Q4_0 (positive test)
+ */
+TEST(nntrainer_Quantizer, ggml_q4_0_repack_01_p) {
+  nntrainer::init_backend();
+
+  uint32_t K = 512;
+  uint32_t N = 256;
+
+  std::vector<float> weight =
+    generate_random_vector<float>(K * N, -0.05f, 0.05f);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  // Raw quantize without repack
+  nntrainer::Tensor W_fp32_t = W_fp32.transpose("0:2:1");
+  const float *src_ptr = W_fp32_t.getData<float>();
+
+  nntrainer::Tensor W_raw(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_0}, true,
+    nntrainer::Initializer::NONE, "raw", nntrainer::QScheme::Q4_0);
+
+  size_t data_size = W_raw.size();
+  std::vector<char> tmp(data_size);
+  nntrainer::quantize_q4_0(src_ptr, tmp.data(), N, K, nullptr);
+
+  // Copy raw data
+  memcpy(W_raw.getData<uint8_t>(), tmp.data(), data_size);
+
+  // Repack via quantizer
+  nntrainer::Tensor W_repacked(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_0}, true,
+    nntrainer::Initializer::NONE, "repacked", nntrainer::QScheme::Q4_0);
+
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q4_0);
+
+  EXPECT_NO_THROW(quantizer->repack(W_raw, W_repacked));
+
+  // Repack via cpu_backend directly
+  nntrainer::Tensor W_ref(
+    {1, 1, K, N, nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q4_0}, true,
+    nntrainer::Initializer::NONE, "ref", nntrainer::QScheme::Q4_0);
+  nntrainer::repack_q4_0(W_ref.getData<uint8_t>(), tmp.data(), data_size, N,
+                         K);
+
+  EXPECT_EQ(memcmp(W_repacked.getData<uint8_t>(), W_ref.getData<uint8_t>(),
+                   data_size),
+            0);
+}
+
+/**
+ * @brief GGMLQuantizer Q6_K quantize/dequantize quality check
+ */
+TEST(nntrainer_Quantizer, ggml_q6k_02_p) {
+  nntrainer::init_backend();
+
+  uint32_t K = 1024;
+  uint32_t N = 256;
+
+  std::vector<float> weight =
+    generate_random_vector<float>(K * N, -0.05f, 0.05f);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  // Quantize via GGMLQuantizer
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q6_K);
+
+  nntrainer::Tensor W_q6k =
+    quantizer->quantize(W_fp32, nntrainer::Tdatatype::Q6_K);
+
+  // Quantize directly using cpu_backend for reference
+  nntrainer::Tensor W_fp32_t = W_fp32.transpose("0:2:1");
+  nntrainer::Tensor W_q6k_ref(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::Q6_K});
+
+  nntrainer::quantize_q6_K(W_fp32_t.getData<float>(),
+                           W_q6k_ref.getData<uint8_t>(), N, K, nullptr);
+
+  // Both should produce the same quantized data
+  EXPECT_EQ(memcmp(W_q6k.getData<uint8_t>(), W_q6k_ref.getData<uint8_t>(),
+                   W_q6k.size()),
+            0);
+
+  // Dequantize and verify quality
+  nntrainer::Tensor W_deq =
+    quantizer->dequantize(W_q6k, nntrainer::Tdatatype::FP32);
+
+  nntrainer::Tensor W_deq_ref(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+  nntrainer::dequantize_row_q6_K(W_q6k_ref.getData<uint8_t>(),
+                                 W_deq_ref.getData(), K * N);
+
+  // Both dequantized results should match
+  auto deq_mse = mse<float, float>(W_deq.getData(), W_deq_ref.getData(),
+                                   K * N);
+  EXPECT_NEAR(deq_mse, 0., 1e-10);
+}
+
+/**
+ * @brief GGMLQuantizer input validation (negative test)
+ */
+TEST(nntrainer_Quantizer, ggml_quantize_non_fp32_01_n) {
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q4_Kx8);
+
+  nntrainer::Tensor input(1, 1, 8, 256, nntrainer::Tformat::NCHW,
+                          nntrainer::Tdatatype::QINT8);
+
+  EXPECT_THROW(quantizer->quantize(input, nntrainer::Tdatatype::Q4_K),
+               std::invalid_argument);
+}
+
+/**
+ * @brief GGMLQuantizer dequantize to non-FP32 (negative test)
+ */
+TEST(nntrainer_Quantizer, ggml_dequantize_non_fp32_01_n) {
+  nntrainer::init_backend();
+
+  uint32_t K = 256;
+  uint32_t N = 256;
+
+  std::vector<float> weight =
+    generate_random_vector<float>(K * N, -0.05f, 0.05f);
+
+  nntrainer::Tensor W_fp32(
+    1, 1, K, N,
+    {nntrainer::Tformat::NCHW, nntrainer::Tdatatype::FP32});
+
+  for (uint32_t k = 0; k < K; ++k)
+    for (uint32_t n = 0; n < N; ++n)
+      W_fp32.setValue(0, 0, k, n, weight[k * N + n]);
+
+  std::unique_ptr<nntrainer::Quantizer> quantizer =
+    nntrainer::Quantization::createQuantizer(nntrainer::QScheme::Q6_K);
+
+  nntrainer::Tensor W_q6k =
+    quantizer->quantize(W_fp32, nntrainer::Tdatatype::Q6_K);
+
+  // Dequantize to QINT8 should fail
+  EXPECT_THROW(quantizer->dequantize(W_q6k, nntrainer::Tdatatype::QINT8),
+               std::invalid_argument);
 }
 
 int main(int argc, char **argv) {

@@ -157,6 +157,20 @@ public:
    * @return Quantization scheme
    */
   virtual QScheme qscheme() const = 0;
+
+  /**
+   * @brief Repack quantized data into an optimized layout.
+   *
+   * @param input Quantized tensor to repack
+   * @param output Repacked tensor (output)
+   *
+   * @note Base implementation throws std::runtime_error. Derived classes
+   * that support repacking must override this method.
+   */
+  virtual void repack(const Tensor &input, Tensor &output) {
+    throw std::runtime_error(
+      "[Quantizer::repack] Repack is not supported for this quantizer.");
+  }
 };
 
 /**
@@ -347,6 +361,75 @@ private:
 };
 
 /**
+ * @class GGMLQuantizer class
+ * @brief GGMLQuantizer class supports GGML-based quantization schemes
+ * (Q4_Kx8, Q6_K, Q4_0).
+ *
+ * @note This quantizer wraps GGML quantization/dequantization routines and
+ * supports repacking into optimized layouts for efficient inference.
+ */
+class GGMLQuantizer : public NonUniformQuantizer {
+public:
+  /**
+   * @brief Constructor of a GGMLQuantizer
+   * @param scheme Quantization scheme (Q4_Kx8, Q6_K, or Q4_0)
+   */
+  GGMLQuantizer(QScheme scheme = QScheme::Q4_Kx8)
+    : NonUniformQuantizer(), scheme_(scheme) {}
+
+  /**
+   * @copydoc Quantizer::create()
+   */
+  std::unique_ptr<Quantizer> create() override;
+
+  /**
+   * @copydoc Quantizer::quantize(const Tensor &input,
+   * ml::train::TensorDim::DataType qtype)
+   */
+  Tensor quantize(const Tensor &input,
+                  ml::train::TensorDim::DataType qtype) override;
+
+  /**
+   * @copydoc Quantizer::quantize(const Tensor &input, Tensor &output, float
+   * *scales, unsigned int *zero_points)
+   */
+  Tensor &quantize(const Tensor &input, Tensor &output, float *scales,
+                   unsigned int *zero_points = nullptr) override;
+
+  /**
+   * @copydoc Quantizer::dequantize(const Tensor &input)
+   */
+  Tensor dequantize(const Tensor &input,
+                    ml::train::TensorDim::DataType dtype) override;
+
+  /**
+   * @copydoc Quantizer::qscheme()
+   */
+  QScheme qscheme() const override;
+
+  /**
+   * @brief Repack quantized data into an optimized layout for GEMM.
+   *
+   * @param input Quantized tensor (raw quantized data)
+   * @param output Repacked tensor (optimized layout, e.g., Q4_0x8, Q4_Kx8)
+   *
+   * @note Q4_0 is repacked to Q4_0x8 layout. Q4_Kx8 is repacked to Q4_Kx8
+   * layout. Q6_K does not require repacking and throws an error.
+   */
+  void repack(const Tensor &input, Tensor &output) override;
+
+private:
+  QScheme scheme_;
+
+  /**
+   * @copydoc Quantizer::calculateQParams(const Tensor &input,
+   * ml::train::TensorDim::DataType qtype)
+   */
+  void calculateQParams(const Tensor &input,
+                        ml::train::TensorDim::DataType qtype) override {}
+};
+
+/**
  * @brief Quantization class to create a quantizer
  *
  * @details The quantization class is a creator class to create a predefined
@@ -375,6 +458,11 @@ public:
       break;
     case QScheme::BINARY_CODE_BASED:
       return std::make_unique<BinaryCodeBasedQuantizer>();
+      break;
+    case QScheme::Q4_Kx8:
+    case QScheme::Q6_K:
+    case QScheme::Q4_0:
+      return std::make_unique<GGMLQuantizer>(qscheme);
       break;
     default:
       return Quantizer::getRegisteredQuantizer(qscheme)->create();
