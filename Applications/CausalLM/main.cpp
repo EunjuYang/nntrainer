@@ -39,6 +39,7 @@
 #include "qwen3_causallm.h"
 #include "qwen3_embedding.h"
 #include "qwen3_moe_causallm.h"
+#include "qwen3_shadow_causallm.h"
 #include "qwen3_slim_moe_causallm.h"
 #include <sys/resource.h>
 
@@ -111,7 +112,8 @@ std::string resolve_architecture(std::string model_type,
                  [](unsigned char c) { return std::tolower(c); });
 
   if (model_type == "embedding") {
-    if (architecture == "Qwen3ForCausalLM") {
+    if (architecture == "Qwen3ForCausalLM" ||
+        architecture == "Qwen3ShadowForCausalLM") {
       return "Qwen3Embedding";
     } else if (architecture == "Gemma3ForCausalLM" ||
                architecture == "Gemma3TextModel") {
@@ -139,6 +141,11 @@ int main(int argc, char *argv[]) {
     "Qwen3ForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
       return std::make_unique<causallm::Qwen3CausalLM>(cfg, generation_cfg,
                                                        nntr_cfg);
+    });
+  causallm::Factory::Instance().registerModel(
+    "Qwen3ShadowForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
+      return std::make_unique<causallm::Qwen3ShadowCausalLM>(
+        cfg, generation_cfg, nntr_cfg);
     });
   causallm::Factory::Instance().registerModel(
     "Qwen3MoeForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
