@@ -1856,6 +1856,226 @@ void NeuralNetwork::forEachLayer(
   };
 }
 
+RunStats NeuralNetwork::trainMeZO(const std::vector<unsigned int> &batch_sizes,
+                                  const std::vector<float *> &inputs,
+                                  const std::vector<float *> &labels,
+                                  const std::vector<std::string> &values) {
+
+  if (!compiled) {
+    throw std::runtime_error("Model must be compiled before training");
+  }
+
+  if (!initialized) {
+    throw std::runtime_error("Model must be initialized before training");
+  }
+
+  // Validate inputs, labels, and batch_sizes
+  if (inputs.empty()) {
+    throw std::runtime_error("No input pointers provided to trainMeZO");
+  }
+
+  if (labels.empty()) {
+    throw std::runtime_error("Labels are required for trainMeZO");
+  }
+
+  if (batch_sizes.empty() || batch_sizes.size() != inputs.size()) {
+    throw std::runtime_error("batch_sizes must have the same size as inputs");
+  }
+
+  // Parse training properties
+  unsigned int epochs = 1;
+  float learning_rate = 0.001f;
+  float mezo_epsilon = 0.01f;
+
+  for (const auto &prop : values) {
+    std::string key, value;
+    if (getKeyValue(prop, key, value) == ML_ERROR_NONE) {
+      if (key == "epochs") {
+        epochs = std::stoul(value);
+      } else if (key == "learning_rate") {
+        learning_rate = std::stof(value);
+      } else if (key == "mezo_epsilon") {
+        mezo_epsilon = std::stof(value);
+      }
+    }
+  }
+
+  // Get parameter pointers for MeZO
+  auto param_ptrs = getParameterPointers();
+  size_t total_params = 0;
+  for (auto *p : param_ptrs) {
+    total_params += p->getDim().getDataLen();
+  }
+
+  // Initialize random number generator for MeZO perturbations
+  std::mt19937 gen(42);
+  std::normal_distribution<float> normal_dist(0.0f, 1.0f);
+
+  RunStats stats;
+  stats.max_epoch = epochs;
+
+  ml_logi("Starting MeZO training with %zu parameters, epsilon=%.6f",
+          total_params, mezo_epsilon);
+
+  for (unsigned int epoch = 0; epoch < epochs; ++epoch) {
+    stats.epoch_idx = epoch;
+    float epoch_loss = 0.0f;
+    unsigned int batch_count = 0;
+
+    for (size_t b = 0; b < inputs.size(); ++b) {
+      unsigned int cur_batch_size = batch_sizes[b];
+      std::vector<float *> input_batch = {inputs[b]};
+      std::vector<float *> label_batch = {labels[b]};
+
+      // Generate random perturbation vector z
+      std::vector<float> z(total_params);
+      for (size_t i = 0; i < total_params; ++i) {
+        z[i] = normal_dist(gen);
+      }
+
+      // MeZO algorithm: estimate gradient using finite differences
+      // 1. Compute L(θ+ε·z) with positive perturbation
+      perturbParameters(mezo_epsilon, z, +1);
+      float loss_plus =
+        computeLossForwardOnly(cur_batch_size, input_batch, label_batch);
+
+      // 2. Compute L(θ-ε·z) with negative perturbation
+      perturbParameters(mezo_epsilon, z, -2);
+      float loss_minus =
+        computeLossForwardOnly(cur_batch_size, input_batch, label_batch);
+
+      // 3. Restore original parameters
+      perturbParameters(mezo_epsilon, z, +1);
+
+      // 4. Estimate gradient: g ≈ (L(θ+) - L(θ-)) / (2ε) · z
+      float diff = (loss_plus - loss_minus) / (2.0f * mezo_epsilon);
+      std::vector<float> gradient_estimate(total_params);
+      for (size_t i = 0; i < total_params; ++i) {
+        gradient_estimate[i] = diff * z[i];
+      }
+
+      // 5. Update parameters: θ = θ - η · g
+      updateParametersMeZO(gradient_estimate, learning_rate);
+
+      epoch_loss += (loss_plus + loss_minus) / 2.0f;
+      batch_count++;
+    }
+
+    if (batch_count > 0) {
+      stats.loss = epoch_loss / batch_count;
+      stats.num_iterations = batch_count;
+      stats.num_correct_predictions = 0;
+    }
+
+    std::cout << "loss: " << stats.loss << std::endl;
+    std::cout << "Epochs completed: " << epoch + 1 << std::endl;
+
+    ml_logi("MeZO Epoch %u/%u completed. Loss: %.6f", epoch + 1, epochs,
+            stats.loss);
+  }
+
+  return stats;
+}
+
+std::vector<nntrainer::Tensor *> NeuralNetwork::getParameterPointers() {
+  std::vector<nntrainer::Tensor *> params;
+  forEachLayer(
+    [&](ml::train::Layer &layer, RunLayerContext &rc, void *user_data) {
+      LayerNode &ln = static_cast<LayerNode &>(layer);
+      for (unsigned int i = 0; i < ln.getNumWeights(); ++i) {
+        params.push_back(&ln.getWeight(i));
+      }
+    },
+    nullptr);
+  return params;
+}
+
+void NeuralNetwork::perturbParameters(float epsilon,
+                                      const std::vector<float> &z,
+                                      int direction) {
+  auto param_ptrs = getParameterPointers();
+  size_t idx = 0;
+
+  for (const auto *ptr : param_ptrs) {
+    float *data = (float *)(ptr->getData());
+    size_t param_size = ptr->getDim().getDataLen();
+    for (size_t i = 0; i < param_size; ++i) {
+      // Apply perturbation based on direction:
+      // +1: add ε·z (for positive perturbation)
+      // -1: subtract ε·z (for negative perturbation)
+      // -2: subtract 2ε·z (to go from θ+ε·z to θ-ε·z)
+
+      data[i] += direction * epsilon * z[idx + i];
+    }
+    idx += param_size;
+  }
+}
+
+float NeuralNetwork::computeLossForwardOnly(unsigned int batch_size,
+                                            std::vector<float *> &inputs,
+                                            std::vector<float *> &labels) {
+  auto output = inference(batch_size, inputs)[0];
+
+  // Assuming output is logits and we need to apply softmax
+  // Assuming single output tensor with shape [batch_size, num_classes]
+  unsigned int num_classes = 10;
+  std::vector<float> softmax_output(batch_size * num_classes);
+
+  // Apply softmax to logits
+  for (unsigned int b = 0; b < batch_size; ++b) {
+    // Find max for numerical stability
+    float max_val = output[b * num_classes];
+    for (unsigned int c = 1; c < num_classes; ++c) {
+      max_val = std::max(max_val, output[b * num_classes + c]);
+    }
+
+    float sum = 0.0f;
+    for (unsigned int c = 0; c < num_classes; ++c) {
+      softmax_output[b * num_classes + c] =
+        std::exp(output[b * num_classes + c] - max_val);
+      sum += softmax_output[b * num_classes + c];
+    }
+
+    for (unsigned int c = 0; c < num_classes; ++c) {
+      softmax_output[b * num_classes + c] /= sum;
+    }
+  }
+
+  // Calculate cross entropy loss
+  float total_loss = 0.0f;
+  for (unsigned int b = 0; b < batch_size; ++b) {
+    unsigned int true_class = static_cast<unsigned int>(labels[0][b]);
+    if (true_class >= num_classes) {
+      throw std::runtime_error("Invalid class index in labels");
+    }
+
+    float predicted_prob = softmax_output[b * num_classes + true_class];
+    float epsilon = 1e-15f;
+    predicted_prob =
+      std::max(epsilon, std::min(1.0f - epsilon, predicted_prob));
+    total_loss -= std::log(predicted_prob);
+  }
+
+  return total_loss / static_cast<float>(batch_size);
+}
+
+void NeuralNetwork::updateParametersMeZO(
+  const std::vector<float> &gradient_estimate, float learning_rate) {
+  auto param_ptrs = getParameterPointers();
+  size_t idx = 0;
+
+  for (const auto *ptr : param_ptrs) {
+    float *data = (float *)(ptr->getData());
+    size_t param_size = ptr->getDim().getDataLen();
+    for (size_t i = 0; i < param_size; ++i) {
+      // Gradient descent update: θ = θ - η * g
+
+      data[i] -= learning_rate * gradient_estimate[idx + i];
+    }
+    idx += param_size;
+  }
+}
+
 void NeuralNetwork::exports(const ml::train::ExportMethods &method,
                             const std::string file_path) {
   switch (method) {

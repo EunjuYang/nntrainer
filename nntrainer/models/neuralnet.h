@@ -441,6 +441,55 @@ public:
                  std::shared_ptr<ml::train::Dataset> dataset) override;
 
   /**
+   * @brief Get pointers to all trainable weight parameters with their sizes
+   * @return std::vector<std::pair<float*, size_t>> Vector of pointers to weight
+   * parameters and their sizes
+   */
+  std::vector<nntrainer::Tensor *> getParameterPointers();
+
+  /**
+   * @brief Perturbs model parameters with a given perturbation vector
+   * @param epsilon Perturbation magnitude
+   * @param z Perturbation vector
+   * @param direction Direction of perturbation (-1, 0, or +1)
+   */
+  void perturbParameters(float epsilon, const std::vector<float> &z,
+                         int direction);
+
+  /**
+   * @brief Computes loss using forward pass only (no gradient computation)
+   * @param inputs Input data vector
+   * @param labels Label data vector
+   * @return float Computed loss value
+   */
+  float computeLossForwardOnly(unsigned int batch_size,
+                               std::vector<float *> &inputs,
+                               std::vector<float *> &labels);
+
+  /**
+   * @brief Updates model parameters using MeZO algorithm
+   * @param gradient_estimate Estimated gradient vector
+   * @param learning_rate Learning rate for parameter update
+   */
+  void updateParametersMeZO(const std::vector<float> &gradient_estimate,
+                            float learning_rate);
+
+  /**
+   * @brief Trains the model using MeZO (Memory-Efficient Zeroth-Order)
+   * optimizer
+   * @param values Training hyperparameters
+   * @param stop_cb Callback function to stop training
+   * @param stop_user_data User data for stop callback
+   * @param epoch_complete_cb Callback function called at epoch completion
+   * @param epoch_user_data User data for epoch completion callback
+   * @return RunStats Training statistics
+   */
+  RunStats trainMeZO(const std::vector<unsigned int> &batch_sizes,
+                     const std::vector<float *> &inputs,
+                     const std::vector<float *> &labels,
+                     const std::vector<std::string> &values = {});
+
+  /**
    * @copydoc void forEachLayer(std::function<void(Layer &,
    * nntrainer::RunLayerContext &), void *user_data> fn);
    *
