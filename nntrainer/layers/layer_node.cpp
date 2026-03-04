@@ -524,7 +524,7 @@ void LayerNode::save(std::ofstream &file, bool opt_var,
     << __func__ << " layer needs to be finalized first!";
   getLayer()->save(file, *run_context, opt_var, mode,
                    (getTrainable() && mode == ml::train::ExecutionMode::TRAIN),
-                   getWeightDataType());
+                   target_dtype);
 }
 
 void LayerNode::clearOptVar() {

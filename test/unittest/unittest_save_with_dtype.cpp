@@ -17,10 +17,10 @@
 
 #include <gtest/gtest.h>
 
-#include <ini_wrapper.h>
 #include <input_layer.h>
 #include <layer.h>
 #include <neuralnet.h>
+#include <optimizer.h>
 #include <tensor_dim.h>
 
 #include <nntrainer_test_util.h>
@@ -30,28 +30,56 @@ using DataType = TensorDim::DataType;
 using Format = TensorDim::Format;
 using ModelFormat = ml::train::ModelFormat;
 
-using I = nntrainer::IniSection;
-using INI = nntrainer::IniWrapper;
-
-static nntrainer::IniSection nn_base("model", "type = NeuralNetwork");
-static nntrainer::IniSection sgd_base("optimizer", "Type = sgd");
-static std::string input_base = "type = input";
-static std::string fc_base = "type = Fully_connected";
-
 /**
  * @brief Helper to create and return an initialized NeuralNetwork
+ *        using addLayer API.
+ *        FC layer weight dim = (1, 1, input_width, units).
+ *        Q4_0 requires: units % 32 == 0 (Q4_0_Tensor width constraint).
+ * @param input_width width of input_shape (1:1:input_width)
+ * @param units number of FC output units
  */
-static std::unique_ptr<nntrainer::NeuralNetwork> createInitializedNN() {
-  INI simple_fc("save_dtype_test_model",
-                {nn_base + "batch_size = 3 | loss = mse",
-                 sgd_base + "learning_rate = 0.1",
-                 I("input") + input_base + "input_shape = 1:1:3",
-                 I("dense") + fc_base + "unit = 5"});
-
+static std::unique_ptr<nntrainer::NeuralNetwork>
+createInitializedNN(unsigned int input_width = 3, unsigned int units = 5) {
   auto nn = std::make_unique<nntrainer::NeuralNetwork>();
-  simple_fc.save_ini();
-  nn->load(simple_fc.getIniName(), ModelFormat::MODEL_FORMAT_INI);
-  simple_fc.erase_ini();
+
+  nn->addLayer(ml::train::layer::Input(
+    {"name=input",
+     "input_shape=1:1:" + std::to_string(input_width)}));
+  nn->addLayer(ml::train::layer::FullyConnected(
+    {"name=dense", "unit=" + std::to_string(units)}));
+
+  nn->setOptimizer(
+    ml::train::optimizer::SGD({"learning_rate=0.1"}));
+  nn->setProperty({"loss=mse", "batch_size=1"});
+
+  nn->compile();
+  nn->initialize();
+  return nn;
+}
+
+/**
+ * @brief Helper to create an initialized NN with two FC layers
+ * @param input_width width of input_shape
+ * @param units1 number of units in first FC layer
+ * @param units2 number of units in second FC layer
+ */
+static std::unique_ptr<nntrainer::NeuralNetwork>
+createTwoLayerNN(unsigned int input_width, unsigned int units1,
+                 unsigned int units2) {
+  auto nn = std::make_unique<nntrainer::NeuralNetwork>();
+
+  nn->addLayer(ml::train::layer::Input(
+    {"name=input",
+     "input_shape=1:1:" + std::to_string(input_width)}));
+  nn->addLayer(ml::train::layer::FullyConnected(
+    {"name=dense1", "unit=" + std::to_string(units1)}));
+  nn->addLayer(ml::train::layer::FullyConnected(
+    {"name=dense2", "unit=" + std::to_string(units2)}));
+
+  nn->setOptimizer(
+    ml::train::optimizer::SGD({"learning_rate=0.1"}));
+  nn->setProperty({"loss=mse", "batch_size=1"});
+
   nn->compile();
   nn->initialize();
   return nn;
@@ -346,44 +374,228 @@ TEST(SaveWithDtype, save_bin_produces_nonempty_file_p) {
 }
 
 /**
- * @brief Save with dtype produces different file than default when Q4_0 is used
- * @note  This test verifies that the save function accepts Q4_0 dtype and
- *        produces output. Due to the quantization path involving Q4_0
- *        conversion, the file sizes should differ.
+ * @brief Save with FP16 dtype should throw (unsupported conversion)
  */
-TEST(SaveWithDtype, save_bin_with_q4_0_dtype_p) {
+TEST(SaveWithDtype, save_bin_with_fp16_dtype_throws_n) {
   auto nn = createInitializedNN();
 
-  std::string default_path = "test_default_save.bin";
-  std::string q4_path = "test_q4_0_save.bin";
+  EXPECT_THROW(nn->save("test_fp16.bin", ModelFormat::MODEL_FORMAT_BIN,
+                         DataType::FP16),
+               std::runtime_error);
+  remove("test_fp16.bin");
+}
+
+/**
+ * @brief Save with QINT8 dtype should throw (unsupported conversion)
+ */
+TEST(SaveWithDtype, save_bin_with_qint8_dtype_throws_n) {
+  auto nn = createInitializedNN();
+
+  EXPECT_THROW(nn->save("test_qint8.bin", ModelFormat::MODEL_FORMAT_BIN,
+                         DataType::QINT8),
+               std::runtime_error);
+  remove("test_qint8.bin");
+}
+
+// =============================================================================
+// Q4_0 dimension-dependent tests
+//
+// FC layer weight dim = (1, 1, input_width, units).
+// Q4_0_Tensor constructor requires: batch=1, channel=1, width % 32 == 0.
+// quantize_q4_0 requires: (nrow * n_per_row) % 32 == 0.
+// Therefore, the critical constraint is: units (width) must be divisible by 32.
+// =============================================================================
+
+/**
+ * @brief Q4_0 save succeeds when units=32, input=32
+ *        weight=(1,1,32,32): width=32 is divisible by 32
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units32_input32_p) {
+  auto nn = createInitializedNN(32, 32);
+
+  std::string file_path = "test_q4_32_32.bin";
+  EXPECT_NO_THROW(
+    nn->save(file_path, ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0));
+
+  std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+  EXPECT_TRUE(file.is_open());
+  EXPECT_GT(file.tellg(), 0);
+  file.close();
+
+  remove(file_path.c_str());
+}
+
+/**
+ * @brief Q4_0 save succeeds when units=64, input=32
+ *        weight=(1,1,32,64): width=64 is divisible by 32
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units64_input32_p) {
+  auto nn = createInitializedNN(32, 64);
+
+  std::string file_path = "test_q4_32_64.bin";
+  EXPECT_NO_THROW(
+    nn->save(file_path, ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0));
+
+  std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+  EXPECT_TRUE(file.is_open());
+  EXPECT_GT(file.tellg(), 0);
+  file.close();
+
+  remove(file_path.c_str());
+}
+
+/**
+ * @brief Q4_0 save succeeds when units=32, input=64
+ *        weight=(1,1,64,32): width=32 is divisible by 32
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units32_input64_p) {
+  auto nn = createInitializedNN(64, 32);
+
+  std::string file_path = "test_q4_64_32.bin";
+  EXPECT_NO_THROW(
+    nn->save(file_path, ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0));
+
+  std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+  EXPECT_TRUE(file.is_open());
+  EXPECT_GT(file.tellg(), 0);
+  file.close();
+
+  remove(file_path.c_str());
+}
+
+/**
+ * @brief Q4_0 save fails when units=5 (not divisible by 32)
+ *        weight=(1,1,3,5): width=5 is not divisible by 32
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units5_input3_n) {
+  auto nn = createInitializedNN(3, 5);
+
+  EXPECT_THROW(
+    nn->save("test_q4_3_5.bin", ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0),
+    std::invalid_argument);
+  remove("test_q4_3_5.bin");
+}
+
+/**
+ * @brief Q4_0 save fails when units=16 (not divisible by 32)
+ *        weight=(1,1,32,16): width=16 is not divisible by 32
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units16_input32_n) {
+  auto nn = createInitializedNN(32, 16);
+
+  EXPECT_THROW(nn->save("test_q4_32_16.bin", ModelFormat::MODEL_FORMAT_BIN,
+                         DataType::Q4_0),
+               std::invalid_argument);
+  remove("test_q4_32_16.bin");
+}
+
+/**
+ * @brief Q4_0 save fails when units=48 (not divisible by 32... wait, 48/32
+ *        is not integer). Actually 48 is NOT divisible by 32, so this fails.
+ *        weight=(1,1,32,48): width=48 is not divisible by 32
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units48_input32_n) {
+  auto nn = createInitializedNN(32, 48);
+
+  EXPECT_THROW(nn->save("test_q4_32_48.bin", ModelFormat::MODEL_FORMAT_BIN,
+                         DataType::Q4_0),
+               std::invalid_argument);
+  remove("test_q4_32_48.bin");
+}
+
+/**
+ * @brief Q4_0 save succeeds when units=128 (divisible by 32)
+ *        weight=(1,1,32,128): width=128 is divisible by 32
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units128_input32_p) {
+  auto nn = createInitializedNN(32, 128);
+
+  std::string file_path = "test_q4_32_128.bin";
+  EXPECT_NO_THROW(
+    nn->save(file_path, ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0));
+
+  std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+  EXPECT_TRUE(file.is_open());
+  EXPECT_GT(file.tellg(), 0);
+  file.close();
+
+  remove(file_path.c_str());
+}
+
+/**
+ * @brief Q4_0 produces smaller file than FP32 for the same model
+ *        FP32 weight size: 32*32*4 = 4096 bytes
+ *        Q4_0 weight size: (32*32/32)*18 = 576 bytes
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_file_smaller_than_fp32_p) {
+  auto nn = createInitializedNN(32, 32);
+
+  std::string fp32_path = "test_fp32_size.bin";
+  std::string q4_path = "test_q4_size.bin";
 
   EXPECT_NO_THROW(
-    nn->save(default_path, ModelFormat::MODEL_FORMAT_BIN, DataType::NONE));
+    nn->save(fp32_path, ModelFormat::MODEL_FORMAT_BIN, DataType::NONE));
   EXPECT_NO_THROW(
     nn->save(q4_path, ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0));
 
-  std::ifstream default_file(default_path, std::ios::binary | std::ios::ate);
+  std::ifstream fp32_file(fp32_path, std::ios::binary | std::ios::ate);
   std::ifstream q4_file(q4_path, std::ios::binary | std::ios::ate);
-  EXPECT_TRUE(default_file.is_open());
+  EXPECT_TRUE(fp32_file.is_open());
   EXPECT_TRUE(q4_file.is_open());
-  EXPECT_GT(default_file.tellg(), 0);
-  EXPECT_GT(q4_file.tellg(), 0);
 
-  default_file.close();
+  auto fp32_size = fp32_file.tellg();
+  auto q4_size = q4_file.tellg();
+  EXPECT_GT(fp32_size, 0);
+  EXPECT_GT(q4_size, 0);
+  EXPECT_LT(q4_size, fp32_size);
+
+  fp32_file.close();
   q4_file.close();
 
-  remove(default_path.c_str());
+  remove(fp32_path.c_str());
   remove(q4_path.c_str());
 }
 
 /**
- * @brief Save with layer_dtype_map produces output
+ * @brief Q4_0 save with NONE dtype (default) still saves as FP32 for a
+ *        Q4_0-compatible model, preserving backward compatibility
  */
-TEST(SaveWithDtype, save_bin_with_layer_dtype_map_p) {
-  auto nn = createInitializedNN();
+TEST(SaveWithDtypeQ4, save_none_dtype_same_as_fp32_p) {
+  auto nn = createInitializedNN(32, 32);
 
-  std::string file_path = "test_layer_dtype_map.bin";
-  std::map<std::string, DataType> dtype_map = {{"dense", DataType::Q4_0}};
+  std::string none_path = "test_none_path.bin";
+  std::string fp32_path = "test_fp32_path.bin";
+
+  EXPECT_NO_THROW(
+    nn->save(none_path, ModelFormat::MODEL_FORMAT_BIN, DataType::NONE));
+  EXPECT_NO_THROW(
+    nn->save(fp32_path, ModelFormat::MODEL_FORMAT_BIN, DataType::FP32));
+
+  std::ifstream none_file(none_path, std::ios::binary | std::ios::ate);
+  std::ifstream fp32_file(fp32_path, std::ios::binary | std::ios::ate);
+
+  EXPECT_EQ(none_file.tellg(), fp32_file.tellg());
+
+  none_file.close();
+  fp32_file.close();
+
+  remove(none_path.c_str());
+  remove(fp32_path.c_str());
+}
+
+/**
+ * @brief layer_dtype_map allows Q4_0 only for a specific Q4_0-compatible layer,
+ *        while others stay as FP32
+ *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=5)
+ *        dense1 weight: (1,1,32,32) - Q4_0 compatible
+ *        dense2 weight: (1,1,32,5) - NOT Q4_0 compatible
+ *        Applying Q4_0 only to dense1 via layer_dtype_map should succeed.
+ */
+TEST(SaveWithDtypeQ4, save_layer_dtype_map_compatible_layer_only_p) {
+  auto nn = createTwoLayerNN(32, 32, 5);
+
+  std::string file_path = "test_q4_map_compat.bin";
+  std::map<std::string, DataType> dtype_map = {{"dense1", DataType::Q4_0}};
 
   EXPECT_NO_THROW(nn->save(file_path, ModelFormat::MODEL_FORMAT_BIN,
                             DataType::NONE, dtype_map));
@@ -397,31 +609,135 @@ TEST(SaveWithDtype, save_bin_with_layer_dtype_map_p) {
 }
 
 /**
- * @brief Save with FP16 dtype does not throw because LayerNode::save currently
- *        passes getWeightDataType() (=FP32) rather than target_dtype to
- *        Layer::save, so the layer-level dtype check is never reached.
- * @note  If target_dtype forwarding is fixed in LayerNode::save, this test
- *        should be updated to EXPECT_THROW.
+ * @brief layer_dtype_map applying Q4_0 to an incompatible layer should throw
+ *        dense2 weight: (1,1,32,5) - NOT Q4_0 compatible (5 % 32 != 0)
  */
-TEST(SaveWithDtype, save_bin_with_fp16_dtype_no_throw_p) {
-  auto nn = createInitializedNN();
+TEST(SaveWithDtypeQ4, save_layer_dtype_map_incompatible_layer_n) {
+  auto nn = createTwoLayerNN(32, 32, 5);
 
-  EXPECT_NO_THROW(nn->save("test_fp16.bin", ModelFormat::MODEL_FORMAT_BIN,
-                            DataType::FP16));
-  remove("test_fp16.bin");
+  std::string file_path = "test_q4_map_incompat.bin";
+  std::map<std::string, DataType> dtype_map = {{"dense2", DataType::Q4_0}};
+
+  EXPECT_THROW(nn->save(file_path, ModelFormat::MODEL_FORMAT_BIN,
+                         DataType::NONE, dtype_map),
+               std::invalid_argument);
+  remove(file_path.c_str());
 }
 
 /**
- * @brief Save with QINT8 dtype does not throw for the same reason as above.
- * @note  If target_dtype forwarding is fixed in LayerNode::save, this test
- *        should be updated to EXPECT_THROW.
+ * @brief Global Q4_0 dtype fails when any layer has incompatible dimensions
+ *        dense2 weight: (1,1,32,5) - NOT Q4_0 compatible
  */
-TEST(SaveWithDtype, save_bin_with_qint8_dtype_no_throw_p) {
-  auto nn = createInitializedNN();
+TEST(SaveWithDtypeQ4, save_global_q4_0_with_incompatible_layer_n) {
+  auto nn = createTwoLayerNN(32, 32, 5);
 
-  EXPECT_NO_THROW(nn->save("test_qint8.bin", ModelFormat::MODEL_FORMAT_BIN,
-                            DataType::QINT8));
-  remove("test_qint8.bin");
+  EXPECT_THROW(nn->save("test_q4_global.bin", ModelFormat::MODEL_FORMAT_BIN,
+                         DataType::Q4_0),
+               std::invalid_argument);
+  remove("test_q4_global.bin");
+}
+
+/**
+ * @brief Global Q4_0 dtype succeeds when all layers have compatible dimensions
+ *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=64)
+ *        dense1 weight: (1,1,32,32) - Q4_0 compatible
+ *        dense2 weight: (1,1,32,64) - Q4_0 compatible
+ */
+TEST(SaveWithDtypeQ4, save_global_q4_0_all_compatible_p) {
+  auto nn = createTwoLayerNN(32, 32, 64);
+
+  std::string file_path = "test_q4_global_compat.bin";
+  EXPECT_NO_THROW(
+    nn->save(file_path, ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0));
+
+  std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+  EXPECT_TRUE(file.is_open());
+  EXPECT_GT(file.tellg(), 0);
+  file.close();
+
+  remove(file_path.c_str());
+}
+
+/**
+ * @brief layer_dtype_map overrides global dtype: global=NONE, layer=Q4_0
+ *        Only the specified layer should be quantized
+ */
+TEST(SaveWithDtypeQ4, save_layer_dtype_map_overrides_global_p) {
+  auto nn = createTwoLayerNN(32, 32, 64);
+
+  std::string global_none_path = "test_q4_override_none.bin";
+  std::string map_q4_path = "test_q4_override_map.bin";
+
+  // Save all as FP32 (global NONE)
+  EXPECT_NO_THROW(nn->save(global_none_path, ModelFormat::MODEL_FORMAT_BIN,
+                            DataType::NONE));
+
+  // Save dense1 as Q4_0 via map, rest as FP32 (global NONE)
+  std::map<std::string, DataType> dtype_map = {{"dense1", DataType::Q4_0}};
+  EXPECT_NO_THROW(nn->save(map_q4_path, ModelFormat::MODEL_FORMAT_BIN,
+                            DataType::NONE, dtype_map));
+
+  std::ifstream none_file(global_none_path, std::ios::binary | std::ios::ate);
+  std::ifstream map_file(map_q4_path, std::ios::binary | std::ios::ate);
+
+  // Q4_0 quantized file should be smaller
+  EXPECT_LT(map_file.tellg(), none_file.tellg());
+
+  none_file.close();
+  map_file.close();
+
+  remove(global_none_path.c_str());
+  remove(map_q4_path.c_str());
+}
+
+/**
+ * @brief layer_dtype_map can exclude a layer from global Q4_0 by setting FP32
+ *        Global: Q4_0, but dense2 is overridden to FP32 via map
+ *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=64)
+ */
+TEST(SaveWithDtypeQ4, save_layer_dtype_map_exclude_from_global_q4_p) {
+  auto nn = createTwoLayerNN(32, 32, 64);
+
+  std::string file_path = "test_q4_map_exclude.bin";
+  std::map<std::string, DataType> dtype_map = {{"dense2", DataType::FP32}};
+
+  EXPECT_NO_THROW(nn->save(file_path, ModelFormat::MODEL_FORMAT_BIN,
+                            DataType::Q4_0, dtype_map));
+
+  std::ifstream file(file_path, std::ios::binary | std::ios::ate);
+  EXPECT_TRUE(file.is_open());
+  EXPECT_GT(file.tellg(), 0);
+  file.close();
+
+  remove(file_path.c_str());
+}
+
+/**
+ * @brief Q4_0 save fails when input=16 (height not divisible by 32)
+ *        weight=(1,1,16,32): height=16 is not divisible by 32
+ *        quantize_q4_0 requires n_per_row (=height) % 32 == 0
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units32_input16_n) {
+  auto nn = createInitializedNN(16, 32);
+
+  EXPECT_THROW(
+    nn->save("test_q4_16_32.bin", ModelFormat::MODEL_FORMAT_BIN,
+             DataType::Q4_0),
+    std::invalid_argument);
+  remove("test_q4_16_32.bin");
+}
+
+/**
+ * @brief Q4_0 save fails when units=1 (trivially not divisible by 32)
+ *        weight=(1,1,32,1): width=1 not divisible by 32
+ */
+TEST(SaveWithDtypeQ4, save_q4_0_units1_n) {
+  auto nn = createInitializedNN(32, 1);
+
+  EXPECT_THROW(nn->save("test_q4_32_1.bin", ModelFormat::MODEL_FORMAT_BIN,
+                         DataType::Q4_0),
+               std::invalid_argument);
+  remove("test_q4_32_1.bin");
 }
 
 // =============================================================================

@@ -373,7 +373,7 @@ public:
       for (unsigned int i = 0; i < run_context.getNumWeights(); ++i) {
         if (run_context.isGradientFirstAccess(i)) {
           auto &weight = run_context.getWeight(i);
-          if (dtype != TensorDim::DataType::NONE &&
+          if (dtype == TensorDim::DataType::NONE ||
               weight.getDataType() == dtype)
             weight.save(file);
           else {
@@ -387,16 +387,28 @@ public:
               unsigned int K = dim.height();
               unsigned int N = dim.width();
 
-              Tensor weight_t = weight.transpose("0:2:1");
-              Tensor quant_weight(dim.batch(), dim.channel(), K, N,
-                                  {Tformat::NCHW, dtype});
-              std::vector<char> tmp(quant_weight.size());
+              // Skip quantization for bias-like tensors (1D with height == 1)
+              // as they are not suitable for Q4_0 block quantization
+              if (K == 1) {
+                weight.save(file);
+              } else {
+                NNTR_THROW_IF(N % 32 != 0 || K % 32 != 0,
+                              std::invalid_argument)
+                  << "Q4_0 quantization requires both width and height to be "
+                     "divisible by 32, but got height="
+                  << K << ", width=" << N;
 
-              quantize_q4_0(weight_t.getData<float>(), tmp.data(), N, K,
-                            nullptr);
-              repack_q4_0(quant_weight.getData<uint8_t>(), tmp.data(),
-                          quant_weight.size(), N, K);
-              quant_weight.save(file);
+                Tensor weight_t = weight.transpose("0:2:1");
+                Tensor quant_weight(dim.batch(), dim.channel(), K, N,
+                                    {Tformat::NCHW, dtype});
+                std::vector<char> tmp(quant_weight.size());
+
+                quantize_q4_0(weight_t.getData<float>(), tmp.data(), N, K,
+                              nullptr);
+                repack_q4_0(quant_weight.getData<uint8_t>(), tmp.data(),
+                            quant_weight.size(), N, K);
+                quant_weight.save(file);
+              }
             } else {
               NNTR_THROW_IF(true, std::runtime_error)
                 << "This dtype is not supported in save with quantization";
