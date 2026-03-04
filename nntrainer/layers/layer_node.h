@@ -788,10 +788,11 @@ public:
    * @brief     save layer Weight & Bias data from file
    * @param file output file stream
    * @param bool save optimizer variables
+   * @param target_dtype target data type to convert weights before saving
    */
-  void
-  save(std::ofstream &file, bool opt_var = false,
-       ml::train::ExecutionMode mode = ml::train::ExecutionMode::TRAIN) const;
+  void save(std::ofstream &file, bool opt_var = false,
+            ml::train::ExecutionMode mode = ml::train::ExecutionMode::TRAIN,
+            TensorDim::DataType target_dtype = TensorDim::DataType::NONE) const;
 
   /**
    * @brief clear optimizer variable to initial state
