@@ -1094,6 +1094,7 @@ static void softmax_row_with_sink_inplace(float *qk_out, size_t start_row,
     float max_val = sink[c];
     for (size_t r = start_row; r < end_row; ++r)
       max_val = std::max(max_val, qk_out[r * num_heads + c]);
+    max_vals[c] = max_val;
   }
 
   // 2. inplace exp + sum
