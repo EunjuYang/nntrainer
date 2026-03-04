@@ -21,6 +21,7 @@
 #include <layer.h>
 #include <neuralnet.h>
 #include <optimizer.h>
+#include <tensor.h>
 #include <tensor_dim.h>
 
 #include <nntrainer_test_util.h>
@@ -592,6 +593,184 @@ TEST(SaveWithDtypeQ4, save_q4_0_units1_n) {
     nn->save("test_q4_32_1.bin", ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0),
     std::invalid_argument);
   remove("test_q4_32_1.bin");
+}
+
+// =============================================================================
+// Quantize-Save-Load-Inference Comparison Tests
+//
+// These tests verify that a model saved with quantized dtype can be loaded
+// back and produce inference results close to the original FP32 model.
+// Due to quantization error, results are compared with a tolerance.
+// =============================================================================
+
+/**
+ * @brief Helper: run inference on a network with a fixed input and return
+ *        a copy of the output tensor.
+ * @param nn  Initialized (and weights-loaded) neural network
+ * @param input_dim  Dimension for the input tensor
+ * @param seed  Random seed so both calls produce the same input
+ */
+static nntrainer::Tensor
+runInference(nntrainer::NeuralNetwork &nn,
+             const nntrainer::TensorDim &input_dim, unsigned int seed = 42) {
+  nntrainer::Tensor input(input_dim);
+  input.setRandNormal(0.0f, 1.0f);
+
+  // Use a deterministic fill so the same seed always gives the same input
+  srand(seed);
+  for (unsigned int b = 0; b < input.batch(); ++b)
+    for (unsigned int c = 0; c < input.channel(); ++c)
+      for (unsigned int h = 0; h < input.height(); ++h)
+        for (unsigned int w = 0; w < input.width(); ++w)
+          input.setValue(b, c, h, w,
+                         static_cast<float>(rand()) / RAND_MAX - 0.5f);
+
+  nntrainer::sharedConstTensors in = {MAKE_SHARED_TENSOR(input)};
+  nntrainer::sharedConstTensors out = nn.inference(in, false);
+
+  return out[0]->clone();
+}
+
+/**
+ * @brief Save model as Q4_0, load it back, run inference, and compare
+ *        with original FP32 inference.
+ *        Model: input(1:1:32) -> dense(unit=32)
+ *        Weight: (1,1,32,32) — fully Q4_0-compatible.
+ */
+TEST(SaveWithDtypeInference, save_q4_0_load_inference_compare_p) {
+  const unsigned int input_width = 32;
+  const unsigned int units = 32;
+
+  // --- original model: run inference with FP32 weights ---
+  auto nn_orig = createInitializedNN(input_width, units);
+  nntrainer::TensorDim input_dim({1, 1, 1, input_width});
+  nntrainer::Tensor out_orig = runInference(*nn_orig, input_dim);
+
+  // --- save original weights as FP32, then save as Q4_0 ---
+  std::string fp32_path = "test_infer_fp32.bin";
+  std::string q4_path = "test_infer_q4.bin";
+  ASSERT_NO_THROW(
+    nn_orig->save(fp32_path, ModelFormat::MODEL_FORMAT_BIN, DataType::NONE));
+  ASSERT_NO_THROW(
+    nn_orig->save(q4_path, ModelFormat::MODEL_FORMAT_BIN, DataType::Q4_0));
+
+  // --- create a new model with same topology, load Q4_0 weights ---
+  auto nn_loaded = createInitializedNN(input_width, units);
+  ASSERT_NO_THROW(
+    nn_loaded->load(q4_path, ModelFormat::MODEL_FORMAT_BIN));
+
+  nntrainer::Tensor out_loaded = runInference(*nn_loaded, input_dim);
+
+  // --- compare outputs ---
+  ASSERT_EQ(out_orig.size(), out_loaded.size());
+
+  // Q4_0 quantization introduces error; allow a relative + absolute tolerance.
+  const float abs_tol = 0.5f;
+  for (unsigned int i = 0; i < out_orig.batch(); ++i) {
+    for (unsigned int j = 0; j < out_orig.channel(); ++j) {
+      for (unsigned int k = 0; k < out_orig.height(); ++k) {
+        for (unsigned int l = 0; l < out_orig.width(); ++l) {
+          float orig_val = out_orig.getValue<float>(i, j, k, l);
+          float load_val = out_loaded.getValue<float>(i, j, k, l);
+          EXPECT_NEAR(orig_val, load_val, abs_tol)
+            << "Mismatch at (" << i << "," << j << "," << k << "," << l << ")";
+        }
+      }
+    }
+  }
+
+  remove(fp32_path.c_str());
+  remove(q4_path.c_str());
+}
+
+/**
+ * @brief Save a two-layer model with per-layer dtype map (dense1=Q4_0,
+ *        dense2=FP32), load it back, and verify inference is close to
+ *        the original.
+ *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=64)
+ */
+TEST(SaveWithDtypeInference, save_layer_map_load_inference_compare_p) {
+  const unsigned int input_width = 32;
+  const unsigned int units1 = 32;
+  const unsigned int units2 = 64;
+
+  auto nn_orig = createTwoLayerNN(input_width, units1, units2);
+  nntrainer::TensorDim input_dim({1, 1, 1, input_width});
+  nntrainer::Tensor out_orig = runInference(*nn_orig, input_dim);
+
+  // Save with per-layer dtype: dense1 → Q4_0, dense2 → keep FP32
+  std::string save_path = "test_infer_layer_map.bin";
+  std::map<std::string, DataType> dtype_map = {{"dense1", DataType::Q4_0}};
+  ASSERT_NO_THROW(nn_orig->save(save_path, ModelFormat::MODEL_FORMAT_BIN,
+                                DataType::NONE, dtype_map));
+
+  // Load into fresh model
+  auto nn_loaded = createTwoLayerNN(input_width, units1, units2);
+  ASSERT_NO_THROW(
+    nn_loaded->load(save_path, ModelFormat::MODEL_FORMAT_BIN));
+
+  nntrainer::Tensor out_loaded = runInference(*nn_loaded, input_dim);
+
+  ASSERT_EQ(out_orig.size(), out_loaded.size());
+
+  const float abs_tol = 1.0f;
+  for (unsigned int i = 0; i < out_orig.batch(); ++i) {
+    for (unsigned int j = 0; j < out_orig.channel(); ++j) {
+      for (unsigned int k = 0; k < out_orig.height(); ++k) {
+        for (unsigned int l = 0; l < out_orig.width(); ++l) {
+          float orig_val = out_orig.getValue<float>(i, j, k, l);
+          float load_val = out_loaded.getValue<float>(i, j, k, l);
+          EXPECT_NEAR(orig_val, load_val, abs_tol)
+            << "Mismatch at (" << i << "," << j << "," << k << "," << l << ")";
+        }
+      }
+    }
+  }
+
+  remove(save_path.c_str());
+}
+
+/**
+ * @brief Save model as FP32 (no quantization), load it back, and verify
+ *        inference produces bit-exact results. This serves as a sanity
+ *        check that the save/load round-trip itself is lossless.
+ */
+TEST(SaveWithDtypeInference, save_fp32_load_inference_exact_p) {
+  const unsigned int input_width = 32;
+  const unsigned int units = 32;
+
+  auto nn_orig = createInitializedNN(input_width, units);
+  nntrainer::TensorDim input_dim({1, 1, 1, input_width});
+  nntrainer::Tensor out_orig = runInference(*nn_orig, input_dim);
+
+  std::string fp32_path = "test_infer_fp32_exact.bin";
+  ASSERT_NO_THROW(
+    nn_orig->save(fp32_path, ModelFormat::MODEL_FORMAT_BIN, DataType::FP32));
+
+  auto nn_loaded = createInitializedNN(input_width, units);
+  ASSERT_NO_THROW(
+    nn_loaded->load(fp32_path, ModelFormat::MODEL_FORMAT_BIN));
+
+  nntrainer::Tensor out_loaded = runInference(*nn_loaded, input_dim);
+
+  ASSERT_EQ(out_orig.size(), out_loaded.size());
+
+  // FP32 round-trip should be lossless
+  for (unsigned int i = 0; i < out_orig.batch(); ++i) {
+    for (unsigned int j = 0; j < out_orig.channel(); ++j) {
+      for (unsigned int k = 0; k < out_orig.height(); ++k) {
+        for (unsigned int l = 0; l < out_orig.width(); ++l) {
+          float orig_val = out_orig.getValue<float>(i, j, k, l);
+          float load_val = out_loaded.getValue<float>(i, j, k, l);
+          EXPECT_FLOAT_EQ(orig_val, load_val)
+            << "FP32 round-trip mismatch at (" << i << "," << j << "," << k
+            << "," << l << ")";
+        }
+      }
+    }
+  }
+
+  remove(fp32_path.c_str());
 }
 
 // =============================================================================
