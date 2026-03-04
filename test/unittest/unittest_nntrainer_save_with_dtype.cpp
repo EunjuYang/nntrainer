@@ -261,7 +261,16 @@ TEST(SaveWithDtype, save_bin_with_qint8_dtype_throws_n) {
 // Q4_0_Tensor constructor requires: batch=1, channel=1, width % 32 == 0.
 // quantize_q4_0 requires: (nrow * n_per_row) % 32 == 0.
 // Therefore, the critical constraint is: units (width) must be divisible by 32.
+//
+// File size formulas (MODEL_FORMAT_BIN, default TRAIN execution mode):
+//   Per FC layer (H=input_width, W=units):
+//     FP32:  weight = H*W*4,           bias = W*4
+//     Q4_0:  weight = (H*W)/32 * 18,   bias = W*4 (stays FP32 when height==1)
+//   Trailing metadata: epoch_idx(4) + iter(4) = 8 bytes
 // =============================================================================
+
+/// epoch_idx + iter written at end of bin file in TRAIN mode
+static constexpr std::streamsize TRAIN_METADATA_SIZE = 8;
 
 /**
  * @brief Q4_0 save succeeds when units=32, input=32
@@ -380,12 +389,20 @@ TEST(SaveWithDtypeQ4, save_q4_0_units128_input32_p) {
 }
 
 /**
- * @brief Q4_0 produces smaller file than FP32 for the same model
- *        FP32 weight size: 32*32*4 = 4096 bytes
- *        Q4_0 weight size: (32*32/32)*18 = 576 bytes
+ * @brief Q4_0 bin file must have the exact expected byte size.
+ *        Model: input(1:1:32) -> dense(unit=32)
+ *        FC weight: (1,1,32,32), bias: (1,1,1,32)
+ *
+ *        FP32: weight = 32*32*4 = 4096, bias = 32*4 = 128
+ *              total = 4224 bytes
+ *
+ *        Q4_0: weight = (32*32)/32 * 18 = 576 (quantized)
+ *              bias   = 32*4 = 128 (stays FP32, height==1)
+ *              total  = 704 bytes
  */
-TEST(SaveWithDtypeQ4, save_q4_0_file_smaller_than_fp32_p) {
-  auto nn = createInitializedNN(32, 32);
+TEST(SaveWithDtypeQ4, save_q4_0_exact_file_size_p) {
+  const unsigned int H = 32, W = 32;
+  auto nn = createInitializedNN(H, W);
 
   std::string fp32_path = "test_fp32_size.bin";
   std::string q4_path = "test_q4_size.bin";
@@ -400,11 +417,14 @@ TEST(SaveWithDtypeQ4, save_q4_0_file_smaller_than_fp32_p) {
   EXPECT_TRUE(fp32_file.is_open());
   EXPECT_TRUE(q4_file.is_open());
 
-  auto fp32_size = fp32_file.tellg();
-  auto q4_size = q4_file.tellg();
-  EXPECT_GT(fp32_size, 0);
-  EXPECT_GT(q4_size, 0);
-  EXPECT_LT(q4_size, fp32_size);
+  const std::streamsize expected_fp32 =
+    (H * W + W) * 4 + TRAIN_METADATA_SIZE;
+  const std::streamsize expected_q4 =
+    (H * W / 32) * 18 + W * 4 + TRAIN_METADATA_SIZE;
+
+  EXPECT_EQ(fp32_file.tellg(), expected_fp32);
+  EXPECT_EQ(q4_file.tellg(), expected_q4);
+  EXPECT_LT(q4_file.tellg(), fp32_file.tellg());
 
   fp32_file.close();
   q4_file.close();
@@ -442,11 +462,12 @@ TEST(SaveWithDtypeQ4, save_none_dtype_same_as_fp32_p) {
 
 /**
  * @brief layer_dtype_map allows Q4_0 only for a specific Q4_0-compatible layer,
- *        while others stay as FP32
+ *        while others stay as FP32. Verify exact file size.
+ *
  *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=5)
- *        dense1 weight: (1,1,32,32) - Q4_0 compatible
- *        dense2 weight: (1,1,32,5) - NOT Q4_0 compatible
- *        Applying Q4_0 only to dense1 via layer_dtype_map should succeed.
+ *        dense1 (Q4_0): (32*32)/32*18 + 32*4 = 576+128 = 704
+ *        dense2 (FP32): (32*5+5)*4 = 660
+ *        total = 1364
  */
 TEST(SaveWithDtypeQ4, save_layer_dtype_map_compatible_layer_only_p) {
   auto nn = createTwoLayerNN(32, 32, 5);
@@ -459,7 +480,12 @@ TEST(SaveWithDtypeQ4, save_layer_dtype_map_compatible_layer_only_p) {
 
   std::ifstream file(file_path, std::ios::binary | std::ios::ate);
   EXPECT_TRUE(file.is_open());
-  EXPECT_GT(file.tellg(), 0);
+
+  const std::streamsize expected =
+    (32 * 32 / 32) * 18 + 32 * 4 +   // dense1: Q4_0 weight + FP32 bias
+    (32 * 5 + 5) * 4 +               // dense2: FP32 weight + FP32 bias
+    TRAIN_METADATA_SIZE;
+  EXPECT_EQ(file.tellg(), expected);
   file.close();
 
   remove(file_path.c_str());
@@ -495,10 +521,13 @@ TEST(SaveWithDtypeQ4, save_global_q4_0_with_incompatible_layer_n) {
 }
 
 /**
- * @brief Global Q4_0 dtype succeeds when all layers have compatible dimensions
+ * @brief Global Q4_0 dtype succeeds when all layers have compatible dimensions.
+ *        Verify exact file size.
+ *
  *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=64)
- *        dense1 weight: (1,1,32,32) - Q4_0 compatible
- *        dense2 weight: (1,1,32,64) - Q4_0 compatible
+ *        dense1: Q4_0 weight = (32*32)/32*18 = 576, bias FP32 = 32*4 = 128
+ *        dense2: Q4_0 weight = (32*64)/32*18 = 1152, bias FP32 = 64*4 = 256
+ *        total = 576+128+1152+256 = 2112
  */
 TEST(SaveWithDtypeQ4, save_global_q4_0_all_compatible_p) {
   auto nn = createTwoLayerNN(32, 32, 64);
@@ -509,7 +538,12 @@ TEST(SaveWithDtypeQ4, save_global_q4_0_all_compatible_p) {
 
   std::ifstream file(file_path, std::ios::binary | std::ios::ate);
   EXPECT_TRUE(file.is_open());
-  EXPECT_GT(file.tellg(), 0);
+
+  const std::streamsize expected =
+    (32 * 32 / 32) * 18 + 32 * 4 +   // dense1: Q4_0 weight + FP32 bias
+    (32 * 64 / 32) * 18 + 64 * 4 +   // dense2: Q4_0 weight + FP32 bias
+    TRAIN_METADATA_SIZE;
+  EXPECT_EQ(file.tellg(), expected);
   file.close();
 
   remove(file_path.c_str());
@@ -517,7 +551,19 @@ TEST(SaveWithDtypeQ4, save_global_q4_0_all_compatible_p) {
 
 /**
  * @brief layer_dtype_map overrides global dtype: global=NONE, layer=Q4_0
- *        Only the specified layer should be quantized
+ *        Only the specified layer should be quantized.
+ *        Verify exact file sizes.
+ *
+ *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=64)
+ *        dense1: weight(1,1,32,32), bias(1,1,1,32)
+ *        dense2: weight(1,1,32,64), bias(1,1,1,64)
+ *
+ *        FP32 total: (32*32+32)*4 + (32*64+64)*4 = 4224 + 8448 = 12672
+ *
+ *        Map (dense1=Q4_0, dense2=FP32):
+ *          dense1: (32*32)/32*18 + 32*4 = 576+128 = 704
+ *          dense2: (32*64+64)*4 = 8448
+ *          total = 9152
  */
 TEST(SaveWithDtypeQ4, save_layer_dtype_map_overrides_global_p) {
   auto nn = createTwoLayerNN(32, 32, 64);
@@ -537,8 +583,15 @@ TEST(SaveWithDtypeQ4, save_layer_dtype_map_overrides_global_p) {
   std::ifstream none_file(global_none_path, std::ios::binary | std::ios::ate);
   std::ifstream map_file(map_q4_path, std::ios::binary | std::ios::ate);
 
-  // Q4_0 quantized file should be smaller
-  EXPECT_LT(map_file.tellg(), none_file.tellg());
+  const std::streamsize expected_fp32 =
+    (32 * 32 + 32) * 4 + (32 * 64 + 64) * 4 +
+    TRAIN_METADATA_SIZE;
+  const std::streamsize expected_map =
+    (32 * 32 / 32) * 18 + 32 * 4 + (32 * 64 + 64) * 4 +
+    TRAIN_METADATA_SIZE;
+
+  EXPECT_EQ(none_file.tellg(), expected_fp32);
+  EXPECT_EQ(map_file.tellg(), expected_map);
 
   none_file.close();
   map_file.close();
@@ -548,9 +601,15 @@ TEST(SaveWithDtypeQ4, save_layer_dtype_map_overrides_global_p) {
 }
 
 /**
- * @brief layer_dtype_map can exclude a layer from global Q4_0 by setting FP32
+ * @brief layer_dtype_map can exclude a layer from global Q4_0 by setting FP32.
+ *        Verify exact file size.
+ *
  *        Global: Q4_0, but dense2 is overridden to FP32 via map
  *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=64)
+ *
+ *        dense1 (Q4_0): (32*32)/32*18 + 32*4 = 576+128 = 704
+ *        dense2 (FP32): (32*64+64)*4 = 8448
+ *        total = 9152
  */
 TEST(SaveWithDtypeQ4, save_layer_dtype_map_exclude_from_global_q4_p) {
   auto nn = createTwoLayerNN(32, 32, 64);
@@ -563,7 +622,11 @@ TEST(SaveWithDtypeQ4, save_layer_dtype_map_exclude_from_global_q4_p) {
 
   std::ifstream file(file_path, std::ios::binary | std::ios::ate);
   EXPECT_TRUE(file.is_open());
-  EXPECT_GT(file.tellg(), 0);
+
+  const std::streamsize expected =
+    (32 * 32 / 32) * 18 + 32 * 4 + (32 * 64 + 64) * 4 +
+    TRAIN_METADATA_SIZE;
+  EXPECT_EQ(file.tellg(), expected);
   file.close();
 
   remove(file_path.c_str());
@@ -686,6 +749,81 @@ TEST(SaveWithDtypeInference, save_q4_0_load_inference_compare_p) {
   }
 
   remove(q4_path.c_str());
+}
+
+/**
+ * @brief Partial quantization via layer_dtype_map: dense1=Q4_0, dense2=FP32.
+ *        Save, load into a matching inference model, and compare with
+ *        original FP32 inference output.
+ *
+ *        Model: input(1:1:32) -> dense1(unit=32) -> dense2(unit=64)
+ *        dense1 weight: (1,1,32,32) — Q4_0 compatible
+ *        dense2 weight: (1,1,32,64) — stays FP32
+ *
+ *        The receiving inference model uses model_tensor_type=Q4_0-FP32
+ *        globally, then overrides dense2 with weight_dtype=FP32.
+ */
+TEST(SaveWithDtypeInference, save_partial_q4_load_inference_compare_p) {
+  const unsigned int input_width = 32;
+  const unsigned int units1 = 32;
+  const unsigned int units2 = 64;
+
+  // --- Step 1: create FP32 model, run inference ---
+  auto nn_orig = createTwoLayerNN(input_width, units1, units2);
+  nntrainer::Tensor input = buildInput(input_width);
+  nntrainer::Tensor out_orig = runInference(*nn_orig, input);
+
+  // --- Step 2: save with partial quantization (dense1=Q4_0, dense2=FP32) ---
+  std::string save_path = "test_infer_partial_q4.bin";
+  std::map<std::string, DataType> dtype_map = {{"dense1", DataType::Q4_0}};
+  ASSERT_NO_THROW(nn_orig->save(save_path, ModelFormat::MODEL_FORMAT_BIN,
+                                DataType::NONE, dtype_map));
+
+  // --- Step 3: verify exact file size ---
+  {
+    std::ifstream f(save_path, std::ios::binary | std::ios::ate);
+    const std::streamsize expected =
+      (32 * 32 / 32) * 18 + 32 * 4 +   // dense1: Q4_0 weight + FP32 bias
+      (32 * 64 + 64) * 4 +             // dense2: FP32 weight + FP32 bias
+      TRAIN_METADATA_SIZE;
+    EXPECT_EQ(f.tellg(), expected);
+  }
+
+  // --- Step 4: create a matching inference model ---
+  //     Global model_tensor_type=Q4_0-FP32, but dense2 overridden to FP32
+  auto nn_load = ml::train::createModel(ml::train::ModelType::NEURAL_NET,
+                                         {"loss=mse"});
+  nn_load->addLayer(ml::train::createLayer(
+    "input", {"name=input",
+              "input_shape=1:1:" + std::to_string(input_width)}));
+  nn_load->addLayer(ml::train::createLayer(
+    "fully_connected",
+    {"name=dense1", "unit=" + std::to_string(units1)}));
+  nn_load->addLayer(ml::train::createLayer(
+    "fully_connected",
+    {"name=dense2", "unit=" + std::to_string(units2),
+     "weight_dtype=FP32"}));
+  nn_load->setProperty(
+    {"batch_size=1", "model_tensor_type=Q4_0-FP32"});
+  ASSERT_EQ(nn_load->compile(ExecutionMode::INFERENCE), ML_ERROR_NONE);
+  ASSERT_EQ(nn_load->initialize(ExecutionMode::INFERENCE), ML_ERROR_NONE);
+  ASSERT_NO_THROW(nn_load->load(save_path, ModelFormat::MODEL_FORMAT_BIN));
+
+  // --- Step 5: run inference on loaded model ---
+  float *input_data = input.getData<float>();
+  std::vector<float *> in_raw = {input_data};
+  std::vector<float *> answer = nn_load->inference(1, in_raw);
+
+  // --- Step 6: compare outputs ---
+  // Only dense1 is quantized → error comes from first layer only.
+  for (unsigned int l = 0; l < units2; ++l) {
+    float orig_val = out_orig.getValue<float>(0, 0, 0, l);
+    float load_val = answer[0][l];
+    EXPECT_NEAR(orig_val, load_val, 1.0f)
+      << "Mismatch at output index " << l;
+  }
+
+  remove(save_path.c_str());
 }
 
 /**
