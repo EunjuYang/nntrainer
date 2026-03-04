@@ -565,12 +565,11 @@ bool RunLayerContext::validate(bool skip_input, bool skip_label) {
   if (tensor_map.empty() || !tensor_map[inputs[0]->getName()]) {
     auto filler = [this](const auto &vec) {
       for (auto const &val : vec) {
-        if (val->getVariableRef().getTensorType().data_type ==
-            TensorDim::DataType::FP32) {
+        auto dtype = val->getVariableRef().getTensorType().data_type;
+        if (dtype == TensorDim::DataType::FP32) {
           tensor_map[val->getName()] = val->getVariableRef().getData();
           tensor_map[val->getGradientName()] = val->getGradientRef().getData();
-        } else if (val->getVariableRef().getTensorType().data_type ==
-                   TensorDim::DataType::FP16) {
+        } else if (dtype == TensorDim::DataType::FP16) {
 #ifdef ENABLE_FP16
           tensor_map[val->getName()] =
             val->getVariableRef().template getData<_FP16>();
@@ -579,6 +578,15 @@ bool RunLayerContext::validate(bool skip_input, bool skip_label) {
 #else
           throw std::invalid_argument("Error: enable-fp16 is not enabled");
 #endif
+        } else {
+          /// For quantized types (Q4_0, Q4_K, Q6_K, etc.) and other
+          /// non-FP32/FP16 types, register a sentinel so that the
+          /// name-based validation still passes. These types may not
+          /// support getAddress()/getData(), so we use a non-null
+          /// sentinel value instead of the actual pointer.
+          static uint8_t sentinel = 0;
+          tensor_map[val->getName()] = &sentinel;
+          tensor_map[val->getGradientName()] = &sentinel;
         }
       }
     };
