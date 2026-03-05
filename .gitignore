@@ -21,6 +21,10 @@ Applications/**/data
 cifar-100-binary*
 Applications/**/*.bin
 Applications/**/res/*
+# allow Qwen3-0.6B resource files (configs, scripts, docs)
+!Applications/CausalLM/res/qwen3/
+!Applications/CausalLM/res/qwen3/qwen3-0.6b/
+!Applications/CausalLM/res/qwen3/qwen3-0.6b/**
 Applications/**/tokenizers-cpp-build/*
 
 # CTag

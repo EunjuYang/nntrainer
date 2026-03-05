@@ -13,6 +13,7 @@
 
 #include <cpu_backend.h>
 #include <layer_context.h>
+#include <q4_0_utils.h>
 #include <nntrainer_error.h>
 #include <nntrainer_log.h>
 #include <node_exporter.h>
@@ -208,6 +209,7 @@ void TieWordEmbedding::incremental_forwarding_embedding(
     nntrainer::TensorDim({1, 1, 1, out_dim}, hidden_.getTensorType());
 
   if (!(weight.getDataType() == nntrainer::TensorDim::DataType::Q6_K ||
+        weight.getDataType() == nntrainer::TensorDim::DataType::Q4_0 ||
         weight.getDataType() == nntrainer::TensorDim::DataType::FP32))
     throw std::invalid_argument(
       "Tieword embedding is not supported yet for the data type");
@@ -239,6 +241,16 @@ void TieWordEmbedding::incremental_forwarding_embedding(
         nntrainer::dequantize_row_q6_K(
           (void *)((char *)weight.getData<uint8_t>() +
                    (210 * num_blocks_per_row) * embed_idx),
+          out_tensor.getData(), out_dim);
+      } else if (weight.getDataType() ==
+                 nntrainer::TensorDim::DataType::Q4_0) {
+        ///@note Q4_0: each block is sizeof(block_q4_0)=18 bytes for 32
+        /// elements
+        int num_blocks_per_row = out_dim / QK4_0;
+        size_t bytes_per_row = num_blocks_per_row * sizeof(block_q4_0);
+        nntrainer::dequantize_row_q4_0(
+          (void *)((char *)weight.getData<uint8_t>() +
+                   bytes_per_row * embed_idx),
           out_tensor.getData(), out_dim);
       } else {
         out_tensor.copyData(cur_weight);
@@ -394,6 +406,26 @@ void TieWordEmbedding::save(std::ofstream &file,
 
             nntrainer::quantize_q6_K(weight.getData<float>(),
                                      quant_weight.getData<uint8_t>(), N, K,
+                                     nullptr);
+            quant_weight.save(file);
+          } else if (dtype == nntrainer::TensorDim::DataType::Q4_0) {
+            //////////////////////////////////////////////////////////////////
+            ///@note Embedding layer: quantize without transpose or repack.
+            /// The weight layout is [vocab_size, hidden_size] = [K, N].
+            /// Only N (hidden_size) needs to be divisible by QK4_0 (32).
+            /// K (vocab_size) can be any value since each row is quantized
+            /// independently.
+            //////////////////////////////////////////////////////////////////
+            NNTR_THROW_IF(N % 32 != 0, std::invalid_argument)
+              << "Q4_0 quantization requires width to be "
+                 "divisible by 32, but got width="
+              << N;
+
+            nntrainer::Tensor quant_weight(dim.batch(), dim.channel(), K, N,
+                                           {nntrainer::Tformat::NCHW, dtype});
+
+            nntrainer::quantize_q4_0(weight.getData<float>(),
+                                     quant_weight.getData<uint8_t>(), K, N,
                                      nullptr);
             quant_weight.save(file);
           } else {
