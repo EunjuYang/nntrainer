@@ -131,6 +131,62 @@ Options:
 | `run_pipeline.sh` | Automated end-to-end pipeline script |
 | `README.md` | This file |
 
+## Chat Template
+
+Qwen3 uses the ChatML-style chat template with special tokens:
+
+| Token | Token ID | Role |
+|---|---|---|
+| `<\|endoftext\|>` | 151643 | PAD / BOS |
+| `<\|im_start\|>` | 151644 | Start of message turn |
+| `<\|im_end\|>` | 151645 | End of message turn / EOS |
+| `<think>` | 151667 | Start of thinking block |
+| `</think>` | 151668 | End of thinking block |
+
+**Input format** (single-turn, no system prompt):
+```
+<|im_start|>user
+What is 1+1?<|im_end|>
+<|im_start|>assistant
+```
+
+The `sample_input` field in `nntr_config.json` uses this format. When building
+the prompt string for `nntr_causallm`, make sure to include these special tokens
+exactly as shown — the tokenizer will encode them as single token IDs.
+
+## FP32 vs Q4_0 Inference Comparison
+
+Both models were tested with the same prompt using greedy decoding (`do_sample=false`).
+
+**Prompt**: `<|im_start|>user\nWhat is 1+1?<|im_end|>\n<|im_start|>assistant\n`
+
+### Test 1: Short prompt (31 tokens)
+
+| Metric | FP32 | Q4_0 | Ratio |
+|---|---|---|---|
+| Model size | 3,201 MB | 367 MB | **8.7x smaller** |
+| Memory (RSS) | 3,082 MB | 750 MB | **4.1x smaller** |
+| Prefill TPS | 42.5 | 72.1 | **1.7x faster** |
+| Generation TPS | 5.5 | 5.6 | ~same |
+| E2E time | 8,934 ms | 6,657 ms | **1.3x faster** |
+
+### Test 2: Longer prompt (61 tokens)
+
+**Prompt**: `<|im_start|>user\nExplain quantum computing in one sentence.<|im_end|>\n<|im_start|>assistant\n`
+
+| Metric | FP32 | Q4_0 | Ratio |
+|---|---|---|---|
+| Memory (RSS) | 3,084 MB | 775 MB | **4.0x smaller** |
+| Prefill TPS | 69.6 | 95.8 | **1.4x faster** |
+| Generation TPS | 5.5 | 6.6 | **1.2x faster** |
+| E2E time | 8,906 ms | 6,063 ms | **1.5x faster** |
+
+> **Note**: These results use dummy (random) weights for pipeline verification.
+> The output tokens are not meaningful text, but the performance characteristics
+> (memory, throughput, latency) are representative of real models. With real
+> Qwen3-0.6B weights, both FP32 and Q4_0 models will produce coherent text,
+> and the Q4_0 model should show minimal quality degradation compared to FP32.
+
 ## Notes
 
 - **Qwen3-0.6B uses `tie_word_embeddings=true`**: The embedding and LM head
