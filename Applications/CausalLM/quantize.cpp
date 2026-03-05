@@ -30,25 +30,33 @@
  *                           nntr_config.json, and the .bin weight file.
  *
  *   Options:
- *     --output, -o <path> Output directory (default: <model_path>)
- *     --fc_dtype <type>   Target dtype for FC layers (default: Q4_0)
- *     --embd_dtype <type> Target dtype for embedding layer (default: FP32)
- *     --lmhead_dtype <type> Target dtype for LM head layer (default: FP32)
- *     --output_bin <name> Output bin filename (auto-generated if omitted)
+ *     --model_tensor_type <W-A>  Target model tensor type (default: Q4_0-FP32)
+ *                                This determines the default dtype for all
+ *                                FC (weight-bearing) layers.
+ *                                Format: <weight_dtype>-<activation_dtype>
+ *     --embedding_dtype <type>   Override dtype for embedding (default: FP32)
+ *     --lmhead_dtype <type>      Override dtype for LM head (default: FP32)
+ *     --output, -o <path>        Output directory (default: <model_path>)
+ *     --output_bin <name>        Output bin filename (auto-generated if omitted)
+ *     --config <path>            Use a target nntr_config.json directly
  *
- *   Supported data types: FP32, FP16, Q4_0, Q6_K
+ *   Supported model_tensor_type values:
+ *     FP32-FP32, FP16-FP32, FP16-FP16, Q4_0-FP32, Q4_0-FP16, Q4_K-FP32
  *
- *   Example:
- *     # Quantize Qwen3-4B to Q4_0 FC layers (embedding stays FP32):
- *     nntr_quantize /path/to/qwen3-4b --fc_dtype Q4_0
+ *   Supported per-layer dtype values: FP32, FP16, Q4_0, Q6_K, Q4_K
  *
- *     # Quantize with Q6_K embedding and Q4_0 FC layers:
- *     nntr_quantize /path/to/qwen3-4b --fc_dtype Q4_0 --embd_dtype Q6_K
+ *   Examples:
+ *     # Quantize to Q4_0 weights with FP32 activations (default):
+ *     nntr_quantize /path/to/qwen3-4b
  *
- *     # Quantize to a different output directory:
- *     nntr_quantize /path/to/qwen3-4b -o /output/qwen3-4b-q4
+ *     # Quantize with specific model_tensor_type:
+ *     nntr_quantize /path/to/qwen3-4b --model_tensor_type Q4_0-FP16
  *
- *     # Use a target nntr_config.json directly:
+ *     # Override embedding to stay FP32 while FC uses Q4_0:
+ *     nntr_quantize /path/to/qwen3-4b --model_tensor_type Q4_0-FP32 \
+ *                                      --embedding_dtype FP32
+ *
+ *     # Use a target nntr_config.json:
  *     nntr_quantize /path/to/qwen3-4b --config /path/to/target_nntr_config.json
  */
 
@@ -120,31 +128,38 @@ std::string dataTypeToStr(DataType dt) {
 }
 
 /**
- * @brief Build model_tensor_type string from fc_dtype and activation dtype
- *        Format: "<weight_type>-<activation_type>"
+ * @brief Parse model_tensor_type string "W-A" into weight and activation dtypes
+ *        e.g. "Q4_0-FP32" -> (Q4_0, FP32)
  */
-std::string buildModelTensorType(const std::string &fc_dtype) {
-  return fc_dtype + "-FP32";
+std::pair<DataType, DataType>
+parseModelTensorType(const std::string &tensor_type) {
+  auto dash_pos = tensor_type.find('-');
+  if (dash_pos == std::string::npos) {
+    throw std::invalid_argument(
+      "Invalid model_tensor_type format: '" + tensor_type +
+      "'. Expected format: <weight_dtype>-<activation_dtype> (e.g. Q4_0-FP32)");
+  }
+  std::string w_str = tensor_type.substr(0, dash_pos);
+  std::string a_str = tensor_type.substr(dash_pos + 1);
+  return {strToDataType(w_str), strToDataType(a_str)};
 }
 
 /**
- * @brief Generate a descriptive output bin filename
+ * @brief Generate a descriptive output bin filename from model_tensor_type
  */
 std::string generateOutputBinName(const std::string &original_bin,
-                                  const std::string &fc_dtype,
-                                  const std::string &embd_dtype) {
-  // Extract model name from original (e.g., "nntr_qwen3_4b_fp32.bin" ->
-  // "nntr_qwen3_4b")
+                                  const std::string &model_tensor_type) {
   std::string base = original_bin;
   // Remove .bin extension
   auto dot_pos = base.rfind(".bin");
   if (dot_pos != std::string::npos)
     base = base.substr(0, dot_pos);
 
-  // Remove old dtype suffix patterns (e.g., _fp32, _q40_fp32)
-  // Common patterns: _fp32, _fp16, _q40, _q6k, _q4k, etc.
-  std::vector<std::string> dtype_suffixes = {"_fp32", "_fp16", "_q40", "_q4_0",
-                                             "_q6k",  "_q6_k", "_q4k", "_q4_k"};
+  // Remove old dtype suffix patterns
+  std::vector<std::string> dtype_suffixes = {
+    "_fp32",      "_fp16",    "_q40",      "_q4_0",
+    "_q6k",       "_q6_k",   "_q4k",      "_q4_k",
+    "_q40-fp32",  "_q40-fp16", "_fp32-fp32"};
   for (const auto &suffix : dtype_suffixes) {
     auto pos = base.rfind(suffix);
     if (pos != std::string::npos && pos + suffix.size() == base.size()) {
@@ -153,26 +168,14 @@ std::string generateOutputBinName(const std::string &original_bin,
     }
   }
 
-  // Build new dtype suffix
-  std::string fc_lower = fc_dtype;
-  std::transform(fc_lower.begin(), fc_lower.end(), fc_lower.begin(),
+  // Build new suffix from model_tensor_type (e.g. "Q4_0-FP32" -> "q40-fp32")
+  std::string suffix = model_tensor_type;
+  std::transform(suffix.begin(), suffix.end(), suffix.begin(),
                  [](unsigned char c) { return std::tolower(c); });
-  // Replace _ for cleaner naming
-  std::string fc_clean = fc_lower;
-  fc_clean.erase(std::remove(fc_clean.begin(), fc_clean.end(), '_'),
-                 fc_clean.end());
+  // Remove underscores for cleaner naming
+  suffix.erase(std::remove(suffix.begin(), suffix.end(), '_'), suffix.end());
 
-  std::string embd_lower = embd_dtype;
-  std::transform(embd_lower.begin(), embd_lower.end(), embd_lower.begin(),
-                 [](unsigned char c) { return std::tolower(c); });
-  std::string embd_clean = embd_lower;
-  embd_clean.erase(std::remove(embd_clean.begin(), embd_clean.end(), '_'),
-                   embd_clean.end());
-
-  if (embd_clean == fc_clean) {
-    return base + "_" + fc_clean + ".bin";
-  }
-  return base + "_" + fc_clean + "_embd" + embd_clean + ".bin";
+  return base + "_" + suffix + ".bin";
 }
 
 /**
@@ -279,35 +282,37 @@ void printUsage(const char *prog) {
     << "Quantize a CausalLM model from FP32 to a target data type.\n"
     << "\n"
     << "Required:\n"
-    << "  <model_path>          Path to model directory containing:\n"
-    << "                          config.json, generation_config.json,\n"
-    << "                          nntr_config.json, and .bin weight file\n"
+    << "  <model_path>                 Path to model directory containing:\n"
+    << "                                 config.json, generation_config.json,\n"
+    << "                                 nntr_config.json, and .bin weight file\n"
     << "\n"
     << "Options:\n"
-    << "  --output, -o <path>   Output directory (default: <model_path>)\n"
-    << "  --fc_dtype <type>     Target dtype for FC layers (default: Q4_0)\n"
-    << "  --embd_dtype <type>   Target dtype for embedding (default: FP32)\n"
-    << "  --lmhead_dtype <type> Target dtype for LM head (default: same as "
-       "embd_dtype)\n"
-    << "  --output_bin <name>   Output .bin filename (auto-generated if "
-       "omitted)\n"
-    << "  --config <path>       Use a target nntr_config.json instead of\n"
-    << "                        individual dtype options. The fc_layer_dtype,\n"
-    << "                        embedding_dtype, and lmhead_dtype fields\n"
-    << "                        from this config will be used.\n"
-    << "  --help, -h            Show this help message\n"
+    << "  --model_tensor_type <W-A>    Target tensor type (default: Q4_0-FP32)\n"
+    << "                               Determines default dtype for all FC layers.\n"
+    << "                               Format: <weight_dtype>-<activation_dtype>\n"
+    << "  --embedding_dtype <type>     Override dtype for embedding (default: FP32)\n"
+    << "  --lmhead_dtype <type>        Override dtype for LM head (default: FP32)\n"
+    << "  --output, -o <path>          Output directory (default: <model_path>)\n"
+    << "  --output_bin <name>          Output .bin filename (auto-generated if omitted)\n"
+    << "  --config <path>              Use a target nntr_config.json directly.\n"
+    << "                               Reads model_tensor_type, embedding_dtype,\n"
+    << "                               lmhead_dtype from the target config.\n"
+    << "  --help, -h                   Show this help message\n"
     << "\n"
-    << "Supported data types: FP32, FP16, Q4_0, Q6_K, Q4_K\n"
+    << "Supported model_tensor_type values:\n"
+    << "  FP32-FP32, FP16-FP32, FP16-FP16, Q4_0-FP32, Q4_0-FP16, Q4_K-FP32\n"
+    << "\n"
+    << "Supported per-layer dtype values: FP32, FP16, Q4_0, Q6_K, Q4_K\n"
     << "\n"
     << "Examples:\n"
-    << "  # Quantize FC layers to Q4_0 (default):\n"
+    << "  # Quantize to Q4_0 weights / FP32 activations (default):\n"
     << "  " << prog << " /path/to/qwen3-4b\n"
     << "\n"
-    << "  # Quantize FC layers to Q4_0 and embedding to Q6_K:\n"
-    << "  " << prog << " /path/to/qwen3-4b --fc_dtype Q4_0 --embd_dtype Q6_K\n"
+    << "  # Quantize with Q4_0-FP16:\n"
+    << "  " << prog << " /path/to/qwen3-4b --model_tensor_type Q4_0-FP16\n"
     << "\n"
-    << "  # Quantize to a different output directory:\n"
-    << "  " << prog << " /path/to/qwen3-4b -o /output/qwen3-4b-q4\n"
+    << "  # Q4_0-FP32 but keep embedding as FP32:\n"
+    << "  " << prog << " /path/to/qwen3-4b --embedding_dtype FP32\n"
     << "\n"
     << "  # Use a target nntr_config.json:\n"
     << "  " << prog
@@ -317,54 +322,50 @@ void printUsage(const char *prog) {
 /**
  * @brief Build the layer_dtype_map for the model based on target dtypes.
  *
+ * The model_tensor_type (e.g. "Q4_0-FP32") determines the default weight dtype
+ * for all FC layers via nntrainer's model property. However, for save-with-dtype
+ * we need to explicitly map each layer.
+ *
  * Layer naming convention in Transformer:
- *   - embedding0          : embedding layer
- *   - layer{i}_wq/wk/wv  : attention Q/K/V projections (FC layers)
- *   - layer{i}_attention_out : attention output projection (FC layer)
+ *   - embedding0              : embedding layer
+ *   - layer{i}_wq/wk/wv      : attention Q/K/V projections (FC layers)
+ *   - layer{i}_attention_out  : attention output projection (FC layer)
  *   - layer{i}_ffn_up/gate/down : FFN layers (FC layers)
- *   - layer{i}_attention_norm, layer{i}_ffn_norm : RMSNorm layers
- *   - output_norm          : final RMSNorm
- *   - output_of_causallm   : LM head (FC layer)
+ *   - output_of_causallm      : LM head (FC layer)
+ *   - RMSNorm / other layers  : not quantized (no weights or small)
  *
  * The dtype map assigns:
- *   - embedding0             -> embd_dtype
- *   - All FC layers (wq, wk, wv, attention_out, ffn_*) -> fc_dtype
- *   - output_of_causallm     -> lmhead_dtype
- *   - RMSNorm / other layers -> FP32 (not quantized)
+ *   - FC layers               -> weight_dtype (from model_tensor_type)
+ *   - embedding0              -> embedding_dtype (override)
+ *   - output_of_causallm      -> lmhead_dtype (override)
  */
 std::map<std::string, DataType>
-buildLayerDtypeMap(int num_layers, DataType fc_dtype, DataType embd_dtype,
-                   DataType lmhead_dtype, bool tie_word_embeddings) {
+buildLayerDtypeMap(int num_layers, DataType weight_dtype,
+                   DataType embd_dtype, DataType lmhead_dtype) {
 
   std::map<std::string, DataType> dtype_map;
 
-  // Embedding layer
-  if (embd_dtype != DataType::FP32 && embd_dtype != DataType::NONE) {
-    dtype_map["embedding0"] = embd_dtype;
-  }
+  // Embedding layer - override from default weight_dtype
+  dtype_map["embedding0"] = embd_dtype;
 
-  // Transformer decoder layers
+  // Transformer decoder layers - all FC layers get weight_dtype
   for (int i = 0; i < num_layers; ++i) {
     std::string prefix = "layer" + std::to_string(i);
 
     // Attention FC layers
-    if (fc_dtype != DataType::FP32 && fc_dtype != DataType::NONE) {
-      dtype_map[prefix + "_wq"] = fc_dtype;
-      dtype_map[prefix + "_wk"] = fc_dtype;
-      dtype_map[prefix + "_wv"] = fc_dtype;
-      dtype_map[prefix + "_attention_out"] = fc_dtype;
+    dtype_map[prefix + "_wq"] = weight_dtype;
+    dtype_map[prefix + "_wk"] = weight_dtype;
+    dtype_map[prefix + "_wv"] = weight_dtype;
+    dtype_map[prefix + "_attention_out"] = weight_dtype;
 
-      // FFN FC layers
-      dtype_map[prefix + "_ffn_up"] = fc_dtype;
-      dtype_map[prefix + "_ffn_gate"] = fc_dtype;
-      dtype_map[prefix + "_ffn_down"] = fc_dtype;
-    }
+    // FFN FC layers
+    dtype_map[prefix + "_ffn_up"] = weight_dtype;
+    dtype_map[prefix + "_ffn_gate"] = weight_dtype;
+    dtype_map[prefix + "_ffn_down"] = weight_dtype;
   }
 
-  // LM Head layer
-  if (lmhead_dtype != DataType::FP32 && lmhead_dtype != DataType::NONE) {
-    dtype_map["output_of_causallm"] = lmhead_dtype;
-  }
+  // LM Head layer - override from default weight_dtype
+  dtype_map["output_of_causallm"] = lmhead_dtype;
 
   return dtype_map;
 }
@@ -386,9 +387,9 @@ int main(int argc, char *argv[]) {
   // Parse arguments
   std::string model_path = argv[1];
   std::string output_dir = "";
-  std::string fc_dtype_str = "Q4_0";
+  std::string model_tensor_type_str = "Q4_0-FP32";
   std::string embd_dtype_str = "FP32";
-  std::string lmhead_dtype_str = "";
+  std::string lmhead_dtype_str = "FP32";
   std::string output_bin_name = "";
   std::string target_config_path = "";
 
@@ -396,9 +397,9 @@ int main(int argc, char *argv[]) {
     std::string arg = argv[i];
     if ((arg == "--output" || arg == "-o") && i + 1 < argc) {
       output_dir = argv[++i];
-    } else if (arg == "--fc_dtype" && i + 1 < argc) {
-      fc_dtype_str = argv[++i];
-    } else if (arg == "--embd_dtype" && i + 1 < argc) {
+    } else if (arg == "--model_tensor_type" && i + 1 < argc) {
+      model_tensor_type_str = argv[++i];
+    } else if (arg == "--embedding_dtype" && i + 1 < argc) {
       embd_dtype_str = argv[++i];
     } else if (arg == "--lmhead_dtype" && i + 1 < argc) {
       lmhead_dtype_str = argv[++i];
@@ -434,28 +435,33 @@ int main(int argc, char *argv[]) {
     if (!target_config_path.empty()) {
       std::cout << "  Using target config: " << target_config_path << "\n";
       json target_cfg = causallm::LoadJsonFile(target_config_path);
-      if (target_cfg.contains("fc_layer_dtype"))
-        fc_dtype_str = target_cfg["fc_layer_dtype"].get<std::string>();
-      if (target_cfg.contains("embedding_dtype"))
+      if (target_cfg.contains("model_tensor_type") &&
+          !target_cfg["model_tensor_type"].is_null())
+        model_tensor_type_str =
+          target_cfg["model_tensor_type"].get<std::string>();
+      if (target_cfg.contains("embedding_dtype") &&
+          !target_cfg["embedding_dtype"].is_null())
         embd_dtype_str = target_cfg["embedding_dtype"].get<std::string>();
-      if (target_cfg.contains("lmhead_dtype"))
+      if (target_cfg.contains("lmhead_dtype") &&
+          !target_cfg["lmhead_dtype"].is_null())
         lmhead_dtype_str = target_cfg["lmhead_dtype"].get<std::string>();
-      if (target_cfg.contains("model_file_name") && output_bin_name.empty())
+      if (target_cfg.contains("model_file_name") &&
+          !target_cfg["model_file_name"].is_null() && output_bin_name.empty())
         output_bin_name = target_cfg["model_file_name"].get<std::string>();
     }
 
-    // Default lmhead_dtype to embd_dtype if not specified
-    if (lmhead_dtype_str.empty())
-      lmhead_dtype_str = embd_dtype_str;
-
-    // Parse target data types
-    DataType fc_dtype = strToDataType(fc_dtype_str);
+    // Parse model_tensor_type -> (weight_dtype, activation_dtype)
+    auto [weight_dtype, activation_dtype] =
+      parseModelTensorType(model_tensor_type_str);
     DataType embd_dtype = strToDataType(embd_dtype_str);
     DataType lmhead_dtype = strToDataType(lmhead_dtype_str);
 
     // Validate source model is FP32
-    std::string src_tensor_type =
-      nntr_cfg["model_tensor_type"].get<std::string>();
+    std::string src_tensor_type = "FP32-FP32";
+    if (nntr_cfg.contains("model_tensor_type") &&
+        !nntr_cfg["model_tensor_type"].is_null()) {
+      src_tensor_type = nntr_cfg["model_tensor_type"].get<std::string>();
+    }
     if (src_tensor_type != "FP32-FP32") {
       std::cerr << "[WARNING] Source model_tensor_type is '" << src_tensor_type
                 << "', not 'FP32-FP32'.\n"
@@ -472,24 +478,27 @@ int main(int argc, char *argv[]) {
     std::string original_bin =
       nntr_cfg["model_file_name"].get<std::string>();
     if (output_bin_name.empty()) {
-      output_bin_name = generateOutputBinName(
-        original_bin, dataTypeToStr(fc_dtype), dataTypeToStr(embd_dtype));
+      output_bin_name =
+        generateOutputBinName(original_bin, model_tensor_type_str);
     }
 
     std::string src_weight_path = model_path + "/" + original_bin;
     std::string dst_weight_path = output_dir + "/" + output_bin_name;
 
     int num_layers = cfg["num_hidden_layers"].get<int>();
-    bool tie_word_embeddings = cfg["tie_word_embeddings"].get<bool>();
 
-    std::cout << "  Architecture: "
-              << cfg["architectures"].get<std::vector<std::string>>()[0] << "\n";
-    std::cout << "  Num layers:   " << num_layers << "\n";
-    std::cout << "  Source:       " << src_weight_path << "\n";
-    std::cout << "  Target:       " << dst_weight_path << "\n";
-    std::cout << "  FC dtype:     " << dataTypeToStr(fc_dtype) << "\n";
-    std::cout << "  Embed dtype:  " << dataTypeToStr(embd_dtype) << "\n";
-    std::cout << "  LMHead dtype: " << dataTypeToStr(lmhead_dtype) << "\n";
+    std::cout << "  Architecture:      "
+              << cfg["architectures"].get<std::vector<std::string>>()[0]
+              << "\n";
+    std::cout << "  Num layers:        " << num_layers << "\n";
+    std::cout << "  Source:            " << src_weight_path << "\n";
+    std::cout << "  Target:            " << dst_weight_path << "\n";
+    std::cout << "  model_tensor_type: " << model_tensor_type_str << "\n";
+    std::cout << "    weight dtype:    " << dataTypeToStr(weight_dtype) << "\n";
+    std::cout << "    activation dtype:" << dataTypeToStr(activation_dtype)
+              << "\n";
+    std::cout << "  embedding_dtype:   " << dataTypeToStr(embd_dtype) << "\n";
+    std::cout << "  lmhead_dtype:      " << dataTypeToStr(lmhead_dtype) << "\n";
     std::cout << "\n";
 
     // =========================================================================
@@ -501,7 +510,8 @@ int main(int argc, char *argv[]) {
 
     std::string architecture =
       cfg["architectures"].get<std::vector<std::string>>()[0];
-    if (nntr_cfg.contains("model_type")) {
+    if (nntr_cfg.contains("model_type") &&
+        !nntr_cfg["model_type"].is_null()) {
       std::string model_type = nntr_cfg["model_type"].get<std::string>();
       architecture = resolve_architecture(model_type, architecture);
     }
@@ -529,11 +539,11 @@ int main(int argc, char *argv[]) {
     std::cout << "[4/5] Quantizing and saving weights to: " << dst_weight_path
               << "\n";
 
-    auto layer_dtype_map = buildLayerDtypeMap(num_layers, fc_dtype, embd_dtype,
-                                              lmhead_dtype, tie_word_embeddings);
+    auto layer_dtype_map =
+      buildLayerDtypeMap(num_layers, weight_dtype, embd_dtype, lmhead_dtype);
 
     std::cout << "  Layer dtype mapping (" << layer_dtype_map.size()
-              << " layers targeted):\n";
+              << " layers):\n";
     for (const auto &[name, dt] : layer_dtype_map) {
       std::cout << "    " << name << " -> " << dataTypeToStr(dt) << "\n";
     }
@@ -557,11 +567,9 @@ int main(int argc, char *argv[]) {
 
     json new_nntr_cfg = nntr_cfg;
     new_nntr_cfg["model_file_name"] = output_bin_name;
-    new_nntr_cfg["fc_layer_dtype"] = dataTypeToStr(fc_dtype);
+    new_nntr_cfg["model_tensor_type"] = model_tensor_type_str;
     new_nntr_cfg["embedding_dtype"] = dataTypeToStr(embd_dtype);
     new_nntr_cfg["lmhead_dtype"] = dataTypeToStr(lmhead_dtype);
-    new_nntr_cfg["model_tensor_type"] = buildModelTensorType(
-      dataTypeToStr(fc_dtype));
 
     std::string output_config_path = output_dir + "/nntr_config.json";
 
