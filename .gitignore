@@ -71,6 +71,9 @@ nntrainer_for_android.tar.gz
 # gtest
 test/jni/googletest/
 
+# meson wrap lock file
+subprojects/.wraplock
+
 # encoder related files (download from resource repo)
 ctre-unicode.hpp
 encoder.hpp
