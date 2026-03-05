@@ -58,9 +58,15 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
   BAD_WORD_IDS = nntr_cfg["bad_word_ids"].get<std::vector<unsigned int>>();
   NUM_BADWORDS = BAD_WORD_IDS.size();
 
-  LMHEAD_DTYPE = nntr_cfg.contains("lmhead_dtype")
-                   ? nntr_cfg["lmhead_dtype"]
-                   : nntr_cfg["embedding_dtype"];
+  if (nntr_cfg.contains("lmhead_dtype") &&
+      !nntr_cfg["lmhead_dtype"].is_null()) {
+    LMHEAD_DTYPE = nntr_cfg["lmhead_dtype"].get<std::string>();
+  } else if (nntr_cfg.contains("embedding_dtype") &&
+             !nntr_cfg["embedding_dtype"].is_null()) {
+    LMHEAD_DTYPE = nntr_cfg["embedding_dtype"].get<std::string>();
+  } else {
+    LMHEAD_DTYPE = "FP32";
+  }
 
   USE_KVCACHE = false;
   PRE_COMPUTED_CACHE_PATH = "";

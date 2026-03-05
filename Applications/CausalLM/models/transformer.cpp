@@ -83,8 +83,14 @@ Transformer::Transformer(json &cfg, json &generation_cfg, json &nntr_cfg,
   setupParameters(cfg, generation_cfg, nntr_cfg);
 
   // prep tokenizer
-  tokenizer = tokenizers::Tokenizer::FromBlobJSON(
-    LoadBytesFromFile(nntr_cfg["tokenizer_file"]));
+  if (nntr_cfg.contains("tokenizer_file") &&
+      !nntr_cfg["tokenizer_file"].is_null()) {
+    std::string tok_path = nntr_cfg["tokenizer_file"].get<std::string>();
+    if (!tok_path.empty()) {
+      tokenizer = tokenizers::Tokenizer::FromBlobJSON(
+        LoadBytesFromFile(tok_path));
+    }
+  }
 };
 
 void Transformer::setupParameters(json &cfg, json &generation_cfg,
@@ -101,8 +107,16 @@ void Transformer::setupParameters(json &cfg, json &generation_cfg,
   FSU_LOOKAHEAD = nntr_cfg.contains("fsu_lookahead")
                     ? nntr_cfg["fsu_lookahead"].get<unsigned int>()
                     : 1;
-  EMBEDDING_DTYPE = nntr_cfg["embedding_dtype"];
-  FC_LAYER_DTYPE = nntr_cfg["fc_layer_dtype"];
+  EMBEDDING_DTYPE =
+    (nntr_cfg.contains("embedding_dtype") &&
+     !nntr_cfg["embedding_dtype"].is_null())
+      ? nntr_cfg["embedding_dtype"].get<std::string>()
+      : "FP32";
+  FC_LAYER_DTYPE =
+    (nntr_cfg.contains("fc_layer_dtype") &&
+     !nntr_cfg["fc_layer_dtype"].is_null())
+      ? nntr_cfg["fc_layer_dtype"].get<std::string>()
+      : "FP32";
 
   if (cfg.contains("is_causal")) {
     IS_CAUSAL = cfg["is_causal"].get<bool>();
@@ -128,10 +142,24 @@ void Transformer::setupParameters(json &cfg, json &generation_cfg,
   SLIDING_WINDOW_PATTERN = cfg.contains("sliding_window_pattern")
                              ? cfg["sliding_window_pattern"].get<unsigned int>()
                              : 1;
-  MAX_POSITION_EMBEDDINGS = cfg["max_position_embeddings"].get<unsigned int>();
-  ROPE_THETA = cfg["rope_theta"].get<unsigned int>();
-  TIE_WORD_EMBEDDINGS = cfg["tie_word_embeddings"].get<bool>();
-  NORM_EPS = cfg["rms_norm_eps"];
+  MAX_POSITION_EMBEDDINGS =
+    (cfg.contains("max_position_embeddings") &&
+     !cfg["max_position_embeddings"].is_null())
+      ? cfg["max_position_embeddings"].get<unsigned int>()
+      : 2048;
+  ROPE_THETA =
+    (cfg.contains("rope_theta") && !cfg["rope_theta"].is_null())
+      ? cfg["rope_theta"].get<unsigned int>()
+      : 10000;
+  TIE_WORD_EMBEDDINGS =
+    (cfg.contains("tie_word_embeddings") &&
+     !cfg["tie_word_embeddings"].is_null())
+      ? cfg["tie_word_embeddings"].get<bool>()
+      : false;
+  NORM_EPS =
+    (cfg.contains("rms_norm_eps") && !cfg["rms_norm_eps"].is_null())
+      ? cfg["rms_norm_eps"].get<float>()
+      : 1e-5;
   GQA_SIZE = NUM_HEADS / NUM_KEY_VALUE_HEADS;
 
   return;
