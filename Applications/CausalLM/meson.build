@@ -36,8 +36,13 @@ elif get_option('platform') != 'tizen'
     run_command([meson.source_root() / 'jni' / 'prepare_encoder.sh', meson.build_root(), '0.2'], check: true)
 endif
 
-tokenizer_dependencies = []
 tokenizer_path = meson.current_source_dir() / 'lib' / 'libtokenizers_c.a'
+
+# libtokenizers_c.a is a Rust-built static library that depends on oniguruma
+onig_dep = dependency('oniguruma', required: true)
+thread_dep = dependency('threads')
+dl_dep = meson.get_compiler('cpp').find_library('dl', required: false)
+tokenizer_dependencies = [onig_dep, thread_dep, dl_dep]
 
 cpp_args = []
 
