@@ -81,4 +81,6 @@ e_quantize = executable('nntr_quantize',
     quantize_src,
     include_directories: causallm_inc,
     dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
+    install: true,
+    install_dir: application_install_dir,
 )
