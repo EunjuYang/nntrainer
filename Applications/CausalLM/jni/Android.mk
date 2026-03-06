@@ -146,6 +146,7 @@ LOCAL_SRC_FILES := ../quantize.cpp \
     ../models/gemma3/embedding_gemma.cpp \
 
 LOCAL_SHARED_LIBRARIES := nntrainer ccapi-nntrainer
+LOCAL_STATIC_LIBRARIES := tokenizers_c
 
 LOCAL_C_INCLUDES += $(NNTRAINER_INCLUDES) \
     $(LOCAL_PATH)/.. \
