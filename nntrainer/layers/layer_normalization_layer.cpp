@@ -220,7 +220,7 @@ void LayerNormalizationLayer::incremental_forwarding(RunLayerContext &context,
     for (unsigned int j = 0; j < axis_dim; ++j) {
       sum += powf(static_cast<float>(data[j]), 2.0f);
     }
-    inv_std_dev.setValue(0, 0, i, 0, 1.0 / sqrt(sum / axis_dim - epsilon));
+    inv_std_dev.setValue(0, 0, i, 0, 1.0 / sqrt(sum / axis_dim + epsilon));
   }
 #endif
 
