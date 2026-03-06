@@ -361,21 +361,169 @@ sharedConstTensors incremental_forwarding(
 void propagateIncrementalInfo(const std::shared_ptr<LayerNode> &node);
 ```
 
-#### 2.3.5 NeuralNetwork Changes (neuralnet.h/cpp)
+#### 2.3.5 NeuralNetwork Changes (neuralnet.h/cpp) — Internal API
 
 ```cpp
-// Existing retained (backward compat wrapper)
+// Existing retained (backward compat wrapper → internally converts to IncrementalInfo::uniform)
 sharedConstTensors incremental_forwarding(unsigned int from, unsigned int to, ...);
 sharedConstTensors incremental_inference(sharedConstTensors X, ...,
                                           unsigned int from, unsigned int to);
 
-// New addition — IncrementalInfo-based
+// New addition — IncrementalInfo-based (internal only, NOT exposed in model.h)
 sharedConstTensors incremental_forwarding(
   const std::vector<IncrementalInfo> &input_incremental_info,
   bool training = true, ...);
 sharedConstTensors incremental_inference(
   sharedConstTensors X,
   const std::vector<IncrementalInfo> &input_incremental_info, ...);
+```
+
+**Key point:** `IncrementalInfo` is used only within the `nntrainer` namespace. It is NOT exposed in the external API (`model.h`).
+
+#### 2.3.6 Public API Changes (model.h) — Externally Visible API
+
+**Design principles:**
+- External users do not know about `IncrementalInfo`. They pass simple `from`/`to` values.
+- Multi-batch support: per-batch from/to via `std::vector<unsigned int>`.
+- Existing scalar `from`/`to` API is retained (for uniform batch, backward compatible).
+
+```cpp
+class Model {
+public:
+  // ────── Existing API retained (backward compatible, uniform from/to) ──────
+
+  /**
+   * @brief     Run the incremental inference of the model (uniform from/to)
+   * @param[in] batch batch size of current input
+   * @param[in] input inputs as a list of each input data
+   * @param[in] label labels as a list of each label data
+   * @param[in] init_seq_len initial sequence length
+   * @param[in] from current working step index (same for all batches)
+   * @param[in] to next working step index (same for all batches)
+   * @param[in] output_hidden_state return last hidden state if true
+   * @retval list of output as float *
+   */
+  virtual std::vector<float *>
+  incremental_inference(unsigned int batch, const std::vector<float *> &input,
+                        const std::vector<float *> &label,
+                        unsigned int init_seq_len, unsigned int from,
+                        unsigned int to, bool output_hidden_state = false) = 0;
+
+  // ────── New API: per-batch from/to support ──────
+
+  /**
+   * @brief     Run the incremental inference with per-batch from/to
+   * @param[in] batch batch size of current input
+   * @param[in] input inputs as a list of each input data
+   * @param[in] label labels as a list of each label data
+   * @param[in] init_seq_len initial sequence length
+   * @param[in] from per-batch start indices (size == batch)
+   * @param[in] to per-batch end indices (size == batch)
+   * @param[in] output_hidden_state return last hidden state if true
+   * @retval list of output as float *
+   * @note from[b], to[b] represent the sequence position for batch b.
+   *       e.g., if batch 0 is at step 10 and batch 1 is at step 5:
+   *           from = {10, 5}, to = {11, 6}
+   */
+  virtual std::vector<float *>
+  incremental_inference(unsigned int batch, const std::vector<float *> &input,
+                        const std::vector<float *> &label,
+                        unsigned int init_seq_len,
+                        const std::vector<unsigned int> &from,
+                        const std::vector<unsigned int> &to,
+                        bool output_hidden_state = false) = 0;
+};
+```
+
+#### 2.3.7 NeuralNetwork Public API Implementation (neuralnet.h/cpp)
+
+```cpp
+class NeuralNetwork : public ml::train::Model {
+public:
+  // ────── Existing scalar API → converts to uniform IncrementalInfo ──────
+
+  std::vector<float *>
+  incremental_inference(unsigned int batch, const std::vector<float *> &input,
+                        const std::vector<float *> &label,
+                        unsigned int init_seq_len, unsigned int from,
+                        unsigned int to,
+                        bool output_hidden_state = false) override;
+
+  // ────── New per-batch API → converts to IncrementalInfo::perBatch ──────
+
+  std::vector<float *>
+  incremental_inference(unsigned int batch, const std::vector<float *> &input,
+                        const std::vector<float *> &label,
+                        unsigned int init_seq_len,
+                        const std::vector<unsigned int> &from,
+                        const std::vector<unsigned int> &to,
+                        bool output_hidden_state = false) override;
+};
+```
+
+**Implementation flow:**
+
+```cpp
+// neuralnet.cpp — existing scalar API (backward compat)
+std::vector<float *>
+NeuralNetwork::incremental_inference(
+    unsigned int batch, const std::vector<float *> &input,
+    const std::vector<float *> &label,
+    unsigned int init_seq_len, unsigned int from, unsigned int to,
+    bool output_hidden_state) {
+  // Convert uniform → per-batch vector, then call new API
+  std::vector<unsigned int> from_vec(batch, from);
+  std::vector<unsigned int> to_vec(batch, to);
+  return incremental_inference(batch, input, label, init_seq_len,
+                               from_vec, to_vec, output_hidden_state);
+}
+
+// neuralnet.cpp — new per-batch API
+std::vector<float *>
+NeuralNetwork::incremental_inference(
+    unsigned int batch, const std::vector<float *> &input,
+    const std::vector<float *> &label,
+    unsigned int init_seq_len,
+    const std::vector<unsigned int> &from,
+    const std::vector<unsigned int> &to,
+    bool output_hidden_state) {
+  NNTR_THROW_IF(from.size() != batch || to.size() != batch,
+                std::invalid_argument)
+    << "from/to vector size must match batch size";
+
+  // Convert external from/to → internal IncrementalInfo
+  // (IncrementalInfo is an internal type not exposed externally)
+  auto info = IncrementalInfo::perBatch(from, to);
+  std::vector<IncrementalInfo> input_infos(getNumInputs(), info);
+
+  // Set up input tensors (existing logic)
+  sharedConstTensors input_tensors = convertToTensors(batch, input);
+  sharedConstTensors label_tensors = convertToTensors(batch, label);
+
+  // Call internal IncrementalInfo-based inference
+  sharedConstTensors output = incremental_inference(input_tensors,
+                                                     input_infos);
+
+  return convertToFloatPtrs(output, output_hidden_state);
+}
+```
+
+**Core data flow (external → internal):**
+
+```
+External call (model.h):
+  model->incremental_inference(batch=2, input, label, init_seq_len,
+                               from={10, 5}, to={11, 6})
+                               ↓
+NeuralNetwork (neuralnet.h):
+  IncrementalInfo info = IncrementalInfo::perBatch({10,5}, {11,6})
+                               ↓
+NetworkGraph (network_graph.h):
+  Set info on first layer's inputs → propagateIncrementalInfo() across graph
+                               ↓
+Each Layer (layer_devel.h):
+  context.getInputIncrementalInfo(0).getFrom(b)  // query from per batch
+  context.setOutputIncrementalInfo(0, ...)        // set transformed output range
 ```
 
 ---
@@ -673,7 +821,7 @@ for (unsigned int b = 0; b < batch_size; ++b) {
 #### Phase 1 (Infrastructure)
 | File | Change Description |
 |------|-------------------|
-| `nntrainer/layers/incremental_info.h` (new) | Define `IncrementalInfo` struct |
+| `nntrainer/layers/incremental_info.h` (new) | Define `IncrementalInfo` struct (internal only) |
 | `nntrainer/layers/layer_context.h` | Add IncrementalInfo members/methods to `RunLayerContext` |
 | `nntrainer/layers/layer_context.cpp` | Implement IncrementalInfo-related logic |
 | `nntrainer/layers/layer_devel.h` | Add new virtual `incremental_forwarding(context, training)` |
@@ -681,8 +829,9 @@ for (unsigned int b = 0; b < batch_size; ++b) {
 | `nntrainer/layers/layer_node.cpp` | Implement new method, convert existing method to wrapper |
 | `nntrainer/graph/network_graph.h` | Declare `propagateIncrementalInfo()`, new `incremental_forwarding()` |
 | `nntrainer/graph/network_graph.cpp` | Implement propagation logic + new forwarding loop |
-| `nntrainer/models/neuralnet.h` | Declare new overloads |
-| `nntrainer/models/neuralnet.cpp` | Implement new overloads, convert existing methods to wrappers |
+| `api/ccapi/include/model.h` | Add per-batch `incremental_inference()` overload (public API) |
+| `nntrainer/models/neuralnet.h` | Declare new overloads (internal IncrementalInfo-based + public API impl) |
+| `nntrainer/models/neuralnet.cpp` | Implement new overloads, existing scalar API delegates to per-batch |
 
 #### Phase 2 (Core Layers)
 | File | Change Description |
