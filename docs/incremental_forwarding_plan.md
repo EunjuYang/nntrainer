@@ -361,21 +361,169 @@ sharedConstTensors incremental_forwarding(
 void propagateIncrementalInfo(const std::shared_ptr<LayerNode> &node);
 ```
 
-#### 2.3.5 NeuralNetwork 변경 (neuralnet.h/cpp)
+#### 2.3.5 NeuralNetwork 변경 (neuralnet.h/cpp) — 내부 API
 
 ```cpp
-// 기존 유지 (backward compat wrapper)
+// 기존 유지 (backward compat wrapper → 내부에서 IncrementalInfo::uniform으로 변환)
 sharedConstTensors incremental_forwarding(unsigned int from, unsigned int to, ...);
 sharedConstTensors incremental_inference(sharedConstTensors X, ...,
                                           unsigned int from, unsigned int to);
 
-// 신규 추가 - IncrementalInfo 기반
+// 신규 추가 - IncrementalInfo 기반 (내부 전용, model.h에 노출하지 않음)
 sharedConstTensors incremental_forwarding(
   const std::vector<IncrementalInfo> &input_incremental_info,
   bool training = true, ...);
 sharedConstTensors incremental_inference(
   sharedConstTensors X,
   const std::vector<IncrementalInfo> &input_incremental_info, ...);
+```
+
+**핵심:** `IncrementalInfo`는 `nntrainer` 네임스페이스 내부에서만 사용. 외부 API(`model.h`)에는 노출하지 않음.
+
+#### 2.3.6 Public API 변경 (model.h) — 외부에 노출되는 API
+
+**설계 원칙:**
+- 외부 사용자는 `IncrementalInfo`를 모름. 단순한 `from`/`to` 값만 전달.
+- Multi-batch 지원: `std::vector<unsigned int>`로 per-batch from/to 전달.
+- 기존 scalar `from`/`to` API도 유지 (uniform batch용, backward compatible).
+
+```cpp
+class Model {
+public:
+  // ────── 기존 API 유지 (backward compatible, uniform from/to) ──────
+
+  /**
+   * @brief     Run the incremental inference of the model (uniform from/to)
+   * @param[in] batch batch size of current input
+   * @param[in] input inputs as a list of each input data
+   * @param[in] label labels as a list of each label data
+   * @param[in] init_seq_len initial sequence length
+   * @param[in] from current working step index (모든 batch 동일)
+   * @param[in] to next working step index (모든 batch 동일)
+   * @param[in] output_hidden_state return last hidden state if true
+   * @retval list of output as float *
+   */
+  virtual std::vector<float *>
+  incremental_inference(unsigned int batch, const std::vector<float *> &input,
+                        const std::vector<float *> &label,
+                        unsigned int init_seq_len, unsigned int from,
+                        unsigned int to, bool output_hidden_state = false) = 0;
+
+  // ────── 신규 API: per-batch from/to 지원 ──────
+
+  /**
+   * @brief     Run the incremental inference with per-batch from/to
+   * @param[in] batch batch size of current input
+   * @param[in] input inputs as a list of each input data
+   * @param[in] label labels as a list of each label data
+   * @param[in] init_seq_len initial sequence length
+   * @param[in] from per-batch start indices (size == batch)
+   * @param[in] to per-batch end indices (size == batch)
+   * @param[in] output_hidden_state return last hidden state if true
+   * @retval list of output as float *
+   * @note from[b], to[b]는 batch b의 시퀀스 위치를 나타냄.
+   *       예) batch 0이 step 10, batch 1이 step 5인 경우:
+   *           from = {10, 5}, to = {11, 6}
+   */
+  virtual std::vector<float *>
+  incremental_inference(unsigned int batch, const std::vector<float *> &input,
+                        const std::vector<float *> &label,
+                        unsigned int init_seq_len,
+                        const std::vector<unsigned int> &from,
+                        const std::vector<unsigned int> &to,
+                        bool output_hidden_state = false) = 0;
+};
+```
+
+#### 2.3.7 NeuralNetwork에서 Public API 구현 (neuralnet.h/cpp)
+
+```cpp
+class NeuralNetwork : public ml::train::Model {
+public:
+  // ────── 기존 scalar API → uniform IncrementalInfo로 변환 ──────
+
+  std::vector<float *>
+  incremental_inference(unsigned int batch, const std::vector<float *> &input,
+                        const std::vector<float *> &label,
+                        unsigned int init_seq_len, unsigned int from,
+                        unsigned int to,
+                        bool output_hidden_state = false) override;
+
+  // ────── 신규 per-batch API → IncrementalInfo::perBatch로 변환 ──────
+
+  std::vector<float *>
+  incremental_inference(unsigned int batch, const std::vector<float *> &input,
+                        const std::vector<float *> &label,
+                        unsigned int init_seq_len,
+                        const std::vector<unsigned int> &from,
+                        const std::vector<unsigned int> &to,
+                        bool output_hidden_state = false) override;
+};
+```
+
+**구현 흐름:**
+
+```cpp
+// neuralnet.cpp - 기존 scalar API (backward compat)
+std::vector<float *>
+NeuralNetwork::incremental_inference(
+    unsigned int batch, const std::vector<float *> &input,
+    const std::vector<float *> &label,
+    unsigned int init_seq_len, unsigned int from, unsigned int to,
+    bool output_hidden_state) {
+  // uniform → per-batch 벡터로 변환 후 새 API 호출
+  std::vector<unsigned int> from_vec(batch, from);
+  std::vector<unsigned int> to_vec(batch, to);
+  return incremental_inference(batch, input, label, init_seq_len,
+                               from_vec, to_vec, output_hidden_state);
+}
+
+// neuralnet.cpp - 신규 per-batch API
+std::vector<float *>
+NeuralNetwork::incremental_inference(
+    unsigned int batch, const std::vector<float *> &input,
+    const std::vector<float *> &label,
+    unsigned int init_seq_len,
+    const std::vector<unsigned int> &from,
+    const std::vector<unsigned int> &to,
+    bool output_hidden_state) {
+  NNTR_THROW_IF(from.size() != batch || to.size() != batch,
+                std::invalid_argument)
+    << "from/to vector size must match batch size";
+
+  // 외부 from/to → 내부 IncrementalInfo로 변환
+  // (IncrementalInfo는 외부에 노출되지 않는 내부 타입)
+  auto info = IncrementalInfo::perBatch(from, to);
+  std::vector<IncrementalInfo> input_infos(getNumInputs(), info);
+
+  // 입력 텐서 설정 (기존 로직)
+  sharedConstTensors input_tensors = convertToTensors(batch, input);
+  sharedConstTensors label_tensors = convertToTensors(batch, label);
+
+  // 내부 IncrementalInfo 기반 inference 호출
+  sharedConstTensors output = incremental_inference(input_tensors,
+                                                     input_infos);
+
+  return convertToFloatPtrs(output, output_hidden_state);
+}
+```
+
+**핵심 데이터 흐름 (외부→내부):**
+
+```
+외부 호출 (model.h):
+  model->incremental_inference(batch=2, input, label, init_seq_len,
+                               from={10, 5}, to={11, 6})
+                               ↓
+NeuralNetwork (neuralnet.h):
+  IncrementalInfo info = IncrementalInfo::perBatch({10,5}, {11,6})
+                               ↓
+NetworkGraph (network_graph.h):
+  첫 레이어 입력에 info 설정 → propagateIncrementalInfo()로 그래프 전파
+                               ↓
+각 Layer (layer_devel.h):
+  context.getInputIncrementalInfo(0).getFrom(b)  // batch별 from 조회
+  context.setOutputIncrementalInfo(0, ...)        // 변환된 범위 출력
 ```
 
 ---
@@ -673,7 +821,7 @@ for (unsigned int b = 0; b < batch_size; ++b) {
 #### Phase 1 (인프라)
 | 파일 | 변경 내용 |
 |------|----------|
-| `nntrainer/layers/incremental_info.h` (신규) | `IncrementalInfo` 구조체 정의 |
+| `nntrainer/layers/incremental_info.h` (신규) | `IncrementalInfo` 구조체 정의 (내부 전용) |
 | `nntrainer/layers/layer_context.h` | `RunLayerContext`에 IncrementalInfo 멤버/메서드 추가 |
 | `nntrainer/layers/layer_context.cpp` | IncrementalInfo 관련 구현 |
 | `nntrainer/layers/layer_devel.h` | 새 virtual `incremental_forwarding(context, training)` 추가 |
@@ -681,8 +829,9 @@ for (unsigned int b = 0; b < batch_size; ++b) {
 | `nntrainer/layers/layer_node.cpp` | 새 메서드 구현, 기존 메서드를 wrapper로 변환 |
 | `nntrainer/graph/network_graph.h` | `propagateIncrementalInfo()`, 새 `incremental_forwarding()` 선언 |
 | `nntrainer/graph/network_graph.cpp` | 전파 로직 + 새 forwarding 루프 구현 |
-| `nntrainer/models/neuralnet.h` | 새 오버로드 선언 |
-| `nntrainer/models/neuralnet.cpp` | 새 오버로드 구현, 기존 메서드를 wrapper로 변환 |
+| `api/ccapi/include/model.h` | per-batch `incremental_inference()` 오버로드 추가 (public API) |
+| `nntrainer/models/neuralnet.h` | 새 오버로드 선언 (내부 IncrementalInfo 기반 + public API 구현) |
+| `nntrainer/models/neuralnet.cpp` | 새 오버로드 구현, 기존 scalar API → per-batch 변환 |
 
 #### Phase 2 (코어 레이어)
 | 파일 | 변경 내용 |
