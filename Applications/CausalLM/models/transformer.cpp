@@ -252,6 +252,34 @@ void Transformer::save_weight(const std::string &weight_path) {
   }
 };
 
+std::vector<float *>
+Transformer::run_prefill(std::vector<float *> &input,
+                         std::vector<float *> &label,
+                         unsigned int init_seq_len, unsigned int from,
+                         unsigned int to) {
+  if (!is_initialized) {
+    throw std::runtime_error(
+      "Transformer model is not initialized. Please call "
+      "initialize() before run_prefill().");
+  }
+  return model->incremental_inference(BATCH_SIZE, input, label, init_seq_len,
+                                      from, to, false);
+}
+
+std::vector<float *>
+Transformer::run_generation(std::vector<float *> &input,
+                            std::vector<float *> &label,
+                            unsigned int init_seq_len, unsigned int from,
+                            unsigned int to) {
+  if (!is_initialized) {
+    throw std::runtime_error(
+      "Transformer model is not initialized. Please call "
+      "initialize() before run_generation().");
+  }
+  return model->incremental_inference(BATCH_SIZE, input, label, init_seq_len,
+                                      from, to, false);
+}
+
 void Transformer::run(const WSTR prompt, bool do_sample,
                       const WSTR system_prompt, const WSTR tail_prompt) {
   if (!is_initialized) {

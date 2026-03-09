@@ -100,6 +100,35 @@ public:
   virtual void run(const WSTR prompt, bool do_sample = false,
                    const WSTR system_prompt = "", const WSTR tail_prompt = "");
 
+  /**
+   * @brief Run prefill (prompt processing) inference on random/given tokens
+   * @param input Input buffer (float *) with token IDs
+   * @param init_seq_len Number of prompt tokens
+   * @param from Start position in KV cache
+   * @param to End position in KV cache
+   * @return Output logits
+   */
+  std::vector<float *>
+  run_prefill(std::vector<float *> &input, std::vector<float *> &label,
+              unsigned int init_seq_len, unsigned int from, unsigned int to);
+
+  /**
+   * @brief Run single-step token generation inference
+   * @param input Input buffer (float *) with token ID
+   * @param init_seq_len Original prompt length (for KV cache sizing)
+   * @param from Current position in KV cache
+   * @param to Next position in KV cache
+   * @return Output logits
+   */
+  std::vector<float *>
+  run_generation(std::vector<float *> &input, std::vector<float *> &label,
+                 unsigned int init_seq_len, unsigned int from, unsigned int to);
+
+  /**
+   * @brief Get the vocabulary size
+   */
+  unsigned int get_vocab_size() const { return NUM_VOCAB; }
+
 protected:
   /**
    * @brief Setup the parameters for the Transformer model
