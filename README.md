@@ -85,6 +85,8 @@ NNTrainer provides a quantization utility (`nntr_quantize`) that converts FP32 C
 | `Q4_K`    | 4-bit K-quant quantization |
 | `Q6_K`    | 6-bit K-quant quantization |
 
+> **Note (Q4_0 platform dependency):** `Q4_0` quantization produces platform-specific binary formats — the output generated on x86 is **not compatible** with ARM, and vice versa. You must run `nntr_quantize` on the **same platform architecture** where the quantized model will be used for inference. Cross-platform quantization is not yet supported.
+
 #### Prerequisites
 
 The model directory must contain the following files:
