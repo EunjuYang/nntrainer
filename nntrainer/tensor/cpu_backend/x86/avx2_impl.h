@@ -203,6 +203,26 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         int head_start = 0, int head_end = -1);
 
 /**
+ * @brief Compute value cache attention with FP32 cache (no FP16 conversion)
+ * @param[in] row_num current row number (timestep)
+ * @param[in] in attention weight input
+ * @param[in] vcache FP32 value cache
+ * @param[out] output FP32 output
+ * @param[in] num_cache_head number of KV heads
+ * @param[in] gqa_size GQA group size
+ * @param[in] head_dim head dimension
+ * @param[in] local_window_size local attention window size
+ * @param[in] head_start start index of KV heads to process
+ * @param[in] head_end end index of KV heads to process (exclusive)
+ */
+void compute_fp32vcache_fp32_transposed(int row_num, const float *in,
+                                        const float *vcache, float *output,
+                                        int num_cache_head, int gqa_size,
+                                        int head_dim,
+                                        size_t local_window_size = UINT_MAX,
+                                        int head_start = 0, int head_end = -1);
+
+/**
  * @brief Compute kcaches
  * @tparam BType type of B vector element
  * @param[in] in float* input vector

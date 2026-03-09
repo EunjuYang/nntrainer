@@ -118,6 +118,20 @@ foreach target: test_target
   )
 endforeach
 
+unittest_mha_core_exe = executable(
+  'unittest_mha_core',
+  ['unittest_mha_core.cpp', meson.source_root() / 'Applications' / 'CausalLM' / 'layers' / 'mha_core.cpp'],
+  include_directories: [include_directories('.'), include_directories('../../Applications/CausalLM/layers')],
+  dependencies: [unittest_nntrainer_deps, openmp_dep],
+  install: get_option('enable-test'),
+  install_dir: application_install_dir
+)
+test('unittest_mha_core', unittest_mha_core_exe,
+  args: ['--gtest_output=xml:@0@/@1@.xml'.format(meson.build_root(), 'unittest_mha_core')],
+  timeout: test_timeout,
+  suite: 'unittests'
+)
+
 unittest_inc = include_directories('.')
 
 # subdir('memory')

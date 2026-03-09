@@ -584,6 +584,71 @@ void __fallback_compute_kcaches(const float *in, const uint16_t *kcache,
   throw std::runtime_error("NYI : __fallback_compute_kcaches");
 }
 
+template <>
+void __fallback_compute_kcaches(const float *in, const float *kcache,
+                                float *output, int num_rows, int num_cache_head,
+                                int head_dim, int gqa_size, int tile_size,
+                                size_t local_window_size, int head_start,
+                                int head_end) {
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int start_row =
+    (size_t)num_rows < local_window_size ? 0 : num_rows - (int)local_window_size;
+  int row_cnt =
+    (size_t)num_rows < local_window_size ? num_rows : (int)local_window_size;
+  const int tile_count = (row_cnt + tile_size - 1) / tile_size;
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    for (int t = 0; t < tile_count; ++t) {
+      int row_tile_start = t * tile_size;
+      int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
+      for (int g = 0; g < gqa_size; ++g) {
+        const float *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
+        for (int t_row = 0; t_row < tile_rows; ++t_row) {
+          int row = start_row + row_tile_start + t_row;
+          const float *k_row = kcache + (row * num_cache_head + n) * head_dim;
+          float sum = 0.0f;
+          for (int i = 0; i < head_dim; ++i)
+            sum += in_ptr[i] * k_row[i];
+          output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
+                 g] = sum / sqrt((float)head_dim);
+        }
+      }
+    }
+  }
+}
+
+void __fallback_compute_fp32vcache_fp32_transposed(
+  int row_num, const float *in, const float *vcache, float *output,
+  int num_cache_head, int gqa_size, int head_dim, size_t local_window_size,
+  int head_start, int head_end) {
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int start_j = (size_t)row_num < local_window_size
+                  ? 0
+                  : row_num + 1 - (int)local_window_size;
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    for (int h = 0; h < gqa_size; ++h) {
+      float *out_ptr = output + (n * gqa_size + h) * head_dim;
+      for (int d = 0; d < head_dim; ++d)
+        out_ptr[d] = 0.0f;
+
+      for (int j = start_j;
+           j <= row_num && (unsigned long)j <= start_j + local_window_size;
+           ++j) {
+        const float *vptr = vcache + (j * num_cache_head + n) * head_dim;
+        float a_val =
+          in[((size_t)row_num < local_window_size
+                ? j
+                : (unsigned long)(j - (row_num + 1 - local_window_size))) *
+               (unsigned long)(gqa_size * num_cache_head) +
+             (unsigned long)(n * gqa_size) + h];
+        for (int d = 0; d < head_dim; ++d)
+          out_ptr[d] += a_val * vptr[d];
+      }
+    }
+  }
+}
+
 void __fallback_compute_rotary_emb_value(unsigned int width, unsigned int dim,
                                          unsigned int half_, float *inout,
                                          void *output, const float *cos_,

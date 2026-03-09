@@ -52,7 +52,7 @@ MHACoreLayer::MHACoreLayer() :
     props::SlidingWindow(), props::MaxNewTokens(), props::RopeTheta(),
     props::MaxPositionEmbeddings(), props::UseSink(), props::RopeScalingType(),
     props::RopeScalingFactor(), props::RopeScalingMaxPositionEmbeddings(),
-    props::AttnLogitSoftcapping(), props::IsCausal()),
+    props::AttnLogitSoftcapping(), props::IsCausal(), props::ForceFP32()),
   sm(nntrainer::ActivationType::ACT_SOFTMAX),
   epsilon(1e-3),
   cache_index(0),
@@ -149,22 +149,27 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
   /** Is Causal */
   is_causal = std::get<props::IsCausal>(mha_core_props).get();
 
+  /** Force FP32 */
+  force_fp32 = std::get<props::ForceFP32>(mha_core_props).get();
+
   /** Tensor for KV-Cache */
+  ml::train::TensorDim::DataType cache_dtype;
+  if (force_fp32) {
+    cache_dtype = ml::train::TensorDim::DataType::FP32;
+  } else {
 #ifdef ENABLE_FP16
-  ml::train::TensorDim cache_key_dim(
-    {batch_size, 1, max_timestep, num_heads_KV * head_dim},
-    {context.getFormat(), ml::train::TensorDim::DataType::FP16});
-  ml::train::TensorDim cache_value_dim(
-    {batch_size, 1, max_timestep, num_heads_KV * head_dim},
-    {context.getFormat(), ml::train::TensorDim::DataType::FP16});
+    cache_dtype = ml::train::TensorDim::DataType::FP16;
 #else
+    cache_dtype = ml::train::TensorDim::DataType::UINT16;
+#endif
+  }
+
   ml::train::TensorDim cache_key_dim(
     {batch_size, 1, max_timestep, num_heads_KV * head_dim},
-    {context.getFormat(), ml::train::TensorDim::DataType::UINT16});
+    {context.getFormat(), cache_dtype});
   ml::train::TensorDim cache_value_dim(
     {batch_size, 1, max_timestep, num_heads_KV * head_dim},
-    {context.getFormat(), ml::train::TensorDim::DataType::UINT16});
-#endif
+    {context.getFormat(), cache_dtype});
 
   tensor_idx[AttentionParams::cache_key] = context.requestTensor(
     cache_key_dim, "cache_key", nntrainer::Initializer::NONE, false,
@@ -386,6 +391,9 @@ void MHACoreLayer::compute_kcaches(
 
   // Dispatch based on data type (FP32 or FP16)
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
+    bool cache_is_fp32 =
+      (cache.getDataType() == ml::train::TensorDim::DataType::FP32);
+
     if (sequence_len == 1) {
       // Single token processing (common during generation)
       // Parallelize over KV heads for decoding since Q direction is always 1
@@ -394,15 +402,26 @@ void MHACoreLayer::compute_kcaches(
 
       // Use OpenMP for lower overhead parallelization during decoding
       const float *in_data = in.getData<float>();
-      const uint16_t *cache_data = cache.getData<uint16_t>();
       float *out_data = out.getData<float>();
 
+      if (cache_is_fp32) {
+        const float *cache_data = cache.getData<float>();
 #pragma omp parallel for schedule(static)
-      for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        nntrainer::compute_kcaches<uint16_t>(
-          in_data, cache_data, out_data, row_to_compute, num_cache_head,
-          head_dim, group_size, tile_size, local_window_size, head_kv,
-          head_kv + 1);
+        for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+          nntrainer::compute_kcaches<float>(
+            in_data, cache_data, out_data, row_to_compute, num_cache_head,
+            head_dim, group_size, tile_size, local_window_size, head_kv,
+            head_kv + 1);
+        }
+      } else {
+        const uint16_t *cache_data = cache.getData<uint16_t>();
+#pragma omp parallel for schedule(static)
+        for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+          nntrainer::compute_kcaches<uint16_t>(
+            in_data, cache_data, out_data, row_to_compute, num_cache_head,
+            head_dim, group_size, tile_size, local_window_size, head_kv,
+            head_kv + 1);
+        }
       }
 
     } else {
@@ -414,7 +433,6 @@ void MHACoreLayer::compute_kcaches(
 
       for (int i = 0; i < seq; ++i) {
         float *input_addr = in.getData<float>() + num_head * head_dim * i;
-        uint16_t *cache_addr = cache.getData<uint16_t>();
         int row_to_compute = is_causal ? from + i + 1 : from + sequence_len;
         // Calculate dynamic offset for the output (triangle optimization)
         size_t out_start_row =
@@ -422,12 +440,23 @@ void MHACoreLayer::compute_kcaches(
                     : i * (from + sequence_len);
         float *output_addr = out.getData<float>() + out_start_row * num_head;
 
-        futures.emplace_back(pool.submit_task([=]() {
-          nntrainer::compute_kcaches<uint16_t>(
-            input_addr, cache_addr, output_addr, row_to_compute,
-            num_head / group_size, head_dim, group_size, tile_size,
-            local_window_size);
-        }));
+        if (cache_is_fp32) {
+          float *cache_addr = cache.getData<float>();
+          futures.emplace_back(pool.submit_task([=]() {
+            nntrainer::compute_kcaches<float>(
+              input_addr, cache_addr, output_addr, row_to_compute,
+              num_head / group_size, head_dim, group_size, tile_size,
+              local_window_size);
+          }));
+        } else {
+          uint16_t *cache_addr = cache.getData<uint16_t>();
+          futures.emplace_back(pool.submit_task([=]() {
+            nntrainer::compute_kcaches<uint16_t>(
+              input_addr, cache_addr, output_addr, row_to_compute,
+              num_head / group_size, head_dim, group_size, tile_size,
+              local_window_size);
+          }));
+        }
       }
       for (auto &fut : futures)
         fut.get();
@@ -878,10 +907,28 @@ void MHACoreLayer::apply_rotary_emb_tensor_v2(nntrainer::Tensor &in,
                           c * in.height() * in.width() + h * in.width();
 
           if (out.getDataType() == ml::train::TensorDim::DataType::FP32) {
+            float *out_ptr = out.getData<float>() +
+                             b * out.channel() * out.height() * out.width() +
+                             c * out.height() * out.width() + h * out.width();
 
-            nntrainer::compute_rotary_emb_value(in.width(), dim, half_, in_ptr,
-                                                nullptr, cos_->data(),
-                                                sin_->data(), convert_only);
+            if (in_ptr != out_ptr) {
+              // Different tensors: copy data first
+              memcpy(out_ptr, in_ptr, in.width() * sizeof(float));
+              if (!convert_only) {
+                // Apply RoPE in-place on the copied data
+                nntrainer::compute_rotary_emb_value(in.width(), dim, half_,
+                                                    out_ptr, nullptr,
+                                                    cos_->data(), sin_->data(),
+                                                    false);
+              }
+              // When convert_only=true, memcpy is sufficient for FP32→FP32
+            } else {
+              // Same tensor: apply RoPE in-place
+              nntrainer::compute_rotary_emb_value(in.width(), dim, half_,
+                                                  in_ptr, nullptr,
+                                                  cos_->data(), sin_->data(),
+                                                  convert_only);
+            }
           } else if (out.getDataType() ==
                        ml::train::TensorDim::DataType::UINT16 ||
                      out.getDataType() ==
@@ -1146,6 +1193,9 @@ void MHACoreLayer::compute_fp16vcache_transposed(
   BS::thread_pool<> &pool) {
 
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
+    bool vcache_is_fp32 =
+      (vcache.getDataType() == ml::train::TensorDim::DataType::FP32);
+
     if ((to - from) != 1) {
       std::vector<std::future<void>> futures;
 
@@ -1156,24 +1206,45 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       futures.reserve(seq);
 
       for (int i = 0; i < seq; ++i) {
-        futures.push_back(pool.submit_task([=]() {
-          size_t start_idx;
-          if (is_causal) {
-            start_idx =
-              calc_attn_index(to - seq + i) - calc_attn_index(to - seq);
-          } else {
-            start_idx = i * to; // linear index
-          }
-          const float *input =
-            in.getData<float>() + start_idx * num_cache_head * gqa_size;
-          float *out = output.getData<float>() +
-                       i * (num_cache_head * gqa_size * head_dim);
+        if (vcache_is_fp32) {
+          futures.push_back(pool.submit_task([=]() {
+            size_t start_idx;
+            if (is_causal) {
+              start_idx =
+                calc_attn_index(to - seq + i) - calc_attn_index(to - seq);
+            } else {
+              start_idx = i * to;
+            }
+            const float *input =
+              in.getData<float>() + start_idx * num_cache_head * gqa_size;
+            float *out = output.getData<float>() +
+                         i * (num_cache_head * gqa_size * head_dim);
 
-          int row_num = is_causal ? (to - seq + i) : to;
-          nntrainer::compute_fp16vcache_fp32_transposed(
-            row_num, input, vcache.getData<uint16_t>(), out, num_cache_head,
-            gqa_size, head_dim, local_window_size);
-        }));
+            int row_num = is_causal ? (to - seq + i) : to;
+            nntrainer::compute_fp32vcache_fp32_transposed(
+              row_num, input, vcache.getData<float>(), out, num_cache_head,
+              gqa_size, head_dim, local_window_size);
+          }));
+        } else {
+          futures.push_back(pool.submit_task([=]() {
+            size_t start_idx;
+            if (is_causal) {
+              start_idx =
+                calc_attn_index(to - seq + i) - calc_attn_index(to - seq);
+            } else {
+              start_idx = i * to;
+            }
+            const float *input =
+              in.getData<float>() + start_idx * num_cache_head * gqa_size;
+            float *out = output.getData<float>() +
+                         i * (num_cache_head * gqa_size * head_dim);
+
+            int row_num = is_causal ? (to - seq + i) : to;
+            nntrainer::compute_fp16vcache_fp32_transposed(
+              row_num, input, vcache.getData<uint16_t>(), out, num_cache_head,
+              gqa_size, head_dim, local_window_size);
+          }));
+        }
       }
       for (auto &fut : futures)
         fut.get();
@@ -1184,14 +1255,24 @@ void MHACoreLayer::compute_fp16vcache_transposed(
 
       // Use OpenMP for lower overhead parallelization during decoding
       const float *in_data = in.getData<float>();
-      const uint16_t *vcache_data = vcache.getData<uint16_t>();
       float *output_data = output.getData<float>();
 
+      if (vcache_is_fp32) {
+        const float *vcache_data = vcache.getData<float>();
 #pragma omp parallel for schedule(static)
-      for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
-        nntrainer::compute_fp16vcache_fp32_transposed(
-          row_num, in_data, vcache_data, output_data, num_cache_head, gqa_size,
-          head_dim, local_window_size, head_kv, head_kv + 1);
+        for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+          nntrainer::compute_fp32vcache_fp32_transposed(
+            row_num, in_data, vcache_data, output_data, num_cache_head,
+            gqa_size, head_dim, local_window_size, head_kv, head_kv + 1);
+        }
+      } else {
+        const uint16_t *vcache_data = vcache.getData<uint16_t>();
+#pragma omp parallel for schedule(static)
+        for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+          nntrainer::compute_fp16vcache_fp32_transposed(
+            row_num, in_data, vcache_data, output_data, num_cache_head,
+            gqa_size, head_dim, local_window_size, head_kv, head_kv + 1);
+        }
       }
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
@@ -1276,11 +1357,15 @@ void MHACoreLayer::updateTensorsByInputDimensions(
   kv_dim.width(kv_dim.width() / (num_heads_Q / num_heads_KV));
 
   ml::train::TensorDim kv_cache_dim = kv_dim;
+  if (force_fp32) {
+    kv_cache_dim.setDataType(ml::train::TensorDim::DataType::FP32);
+  } else {
 #ifdef ENABLE_FP16
-  kv_cache_dim.setDataType(ml::train::TensorDim::DataType::FP16);
+    kv_cache_dim.setDataType(ml::train::TensorDim::DataType::FP16);
 #else
-  kv_cache_dim.setDataType(ml::train::TensorDim::DataType::UINT16);
+    kv_cache_dim.setDataType(ml::train::TensorDim::DataType::UINT16);
 #endif
+  }
   kv_cache_dim.height(max_timestep);
 
   context.updateInput(INOUT_INDEX::QUERY, input_dimensions[0]);

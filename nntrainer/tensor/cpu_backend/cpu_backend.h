@@ -1330,6 +1330,14 @@ extern void compute_fp16vcache_fp32_transposed(
   size_t local_window_size = UINT_MAX, int head_start = 0, int head_end = -1);
 
 /**
+ * @brief Compute value cache attention with FP32 cache (no FP16 conversion)
+ */
+extern void compute_fp32vcache_fp32_transposed(
+  int row_num, const float *in, const float *vcache, float *output,
+  int num_cache_head, int gqa_size, int head_dim,
+  size_t local_window_size = UINT_MAX, int head_start = 0, int head_end = -1);
+
+/**
  * @brief Compute kcaches
  * @tparam BType type of B vector element
  * @param[in] in float* input vector

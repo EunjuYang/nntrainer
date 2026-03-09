@@ -1613,6 +1613,129 @@ void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
   }
 }
 
+template <>
+void compute_kcaches(const float *in, const float *kcache, float *output,
+                     int num_rows, int num_cache_head, int head_dim,
+                     int gqa_size, int tile_size, size_t local_window_size,
+                     int head_start, int head_end) {
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
+    << "head_start (" << head_start << ") must be less than head_end ("
+    << actual_head_end << ")";
+
+  int start_row =
+    (size_t)num_rows < local_window_size ? 0 : num_rows - (int)local_window_size;
+  int row_cnt =
+    (size_t)num_rows < local_window_size ? num_rows : (int)local_window_size;
+  const int tile_count = (row_cnt + tile_size - 1) / tile_size;
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    for (int t = 0; t < tile_count; ++t) {
+      int row_tile_start = t * tile_size;
+      int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
+
+      for (int g = 0; g < gqa_size; ++g) {
+        const float *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
+        for (int t_row = 0; t_row < tile_rows; ++t_row) {
+          int row = start_row + row_tile_start + t_row;
+          const float *k_row = kcache + (row * num_cache_head + n) * head_dim;
+
+          float sum = 0.0f;
+          int i = 0;
+          __m256 acc = _mm256_setzero_ps();
+          for (; i + 8 <= head_dim; i += 8) {
+            __m256 va = _mm256_loadu_ps(in_ptr + i);
+            __m256 vb = _mm256_loadu_ps(k_row + i);
+            acc = _mm256_fmadd_ps(va, vb, acc);
+          }
+
+          __m128 low = _mm256_castps256_ps128(acc);
+          __m128 high = _mm256_extractf128_ps(acc, 1);
+          __m128 sum128 = _mm_add_ps(low, high);
+          sum128 = _mm_hadd_ps(sum128, sum128);
+          sum128 = _mm_hadd_ps(sum128, sum128);
+          sum += _mm_cvtss_f32(sum128);
+
+          for (; i < head_dim; ++i)
+            sum += in_ptr[i] * k_row[i];
+
+          output[(row - start_row) * num_cache_head * gqa_size + n * gqa_size +
+                 g] = sum / sqrt((float)head_dim);
+        }
+      }
+    }
+  }
+}
+
+void compute_fp32vcache_fp32_transposed(int row_num, const float *in,
+                                        const float *vcache, float *output,
+                                        int num_cache_head, int gqa_size,
+                                        int head_dim, size_t local_window_size,
+                                        int head_start, int head_end) {
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+
+  int start_j = (size_t)row_num < local_window_size
+                  ? 0
+                  : row_num + 1 - (int)local_window_size;
+
+  const int num_blocks = (head_dim + 7) / 8;
+  std::vector<__m256> sumVec(gqa_size * num_blocks, _mm256_setzero_ps());
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    for (auto &v : sumVec)
+      v = _mm256_setzero_ps();
+
+    for (int j = start_j;
+         j <= row_num && (unsigned long)j <= start_j + local_window_size;
+         ++j) {
+      const float *vptr = vcache + (j * num_cache_head + n) * head_dim;
+
+      for (int h = 0; h < gqa_size; ++h) {
+        float a_val =
+          in[((size_t)row_num < local_window_size
+                ? j
+                : (unsigned long)(j - (row_num + 1 - local_window_size))) *
+               (unsigned long)(gqa_size * num_cache_head) +
+             (unsigned long)(n * gqa_size) + h];
+
+        __m256 inVec = _mm256_set1_ps(a_val);
+
+        for (int b = 0; b < num_blocks; ++b) {
+          int offset = b * 8;
+          int remaining = std::min(8, head_dim - offset);
+          __m256 bVec;
+          if (remaining == 8) {
+            bVec = _mm256_loadu_ps(&vptr[offset]);
+          } else {
+            float tmp[8] = {0};
+            memcpy(tmp, &vptr[offset], remaining * sizeof(float));
+            bVec = _mm256_loadu_ps(tmp);
+          }
+          sumVec[h * num_blocks + b] =
+            _mm256_fmadd_ps(inVec, bVec, sumVec[h * num_blocks + b]);
+        }
+      }
+    }
+
+    for (int h = 0; h < gqa_size; ++h) {
+      float *out_ptr =
+        output + (n * gqa_size + h) * head_dim;
+      for (int b = 0; b < num_blocks; ++b) {
+        int offset = b * 8;
+        int remaining = std::min(8, head_dim - offset);
+        if (remaining == 8) {
+          _mm256_storeu_ps(&out_ptr[offset], sumVec[h * num_blocks + b]);
+        } else {
+          float tmp[8];
+          _mm256_storeu_ps(tmp, sumVec[h * num_blocks + b]);
+          memcpy(&out_ptr[offset], tmp, remaining * sizeof(float));
+        }
+      }
+    }
+  }
+}
+
 void compute_rotary_emb_value(unsigned int width, unsigned int dim,
                               unsigned int half_, float *inout, void *output,
                               const float *cos_, const float *sin_,

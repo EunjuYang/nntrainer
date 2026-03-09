@@ -171,6 +171,21 @@ public:
   using prop_tag = nntrainer::uint_prop_tag; /**< property type */
 };
 
+/**
+ * @brief ForceFP32 property
+ * @note  When set to true, all internal computations including KV cache
+ *        are performed in FP32 instead of UINT16/FP16.
+ *        This is useful for verifying model correctness without
+ *        precision loss from half-precision storage.
+ */
+class ForceFP32 : public nntrainer::Property<bool> {
+public:
+  ForceFP32(bool value = false) { set(value); };
+  static constexpr const char *key =
+    "force_fp32";                            /**< unique key to access */
+  using prop_tag = nntrainer::bool_prop_tag; /**< property type */
+};
+
 }; // namespace props
 
 /**
@@ -308,7 +323,7 @@ private:
     props::SlidingWindow, props::MaxNewTokens, props::RopeTheta,
     props::MaxPositionEmbeddings, props::UseSink, props::RopeScalingType,
     props::RopeScalingFactor, props::RopeScalingMaxPositionEmbeddings,
-    props::AttnLogitSoftcapping, props::IsCausal>
+    props::AttnLogitSoftcapping, props::IsCausal, props::ForceFP32>
     mha_core_props; /**< mha_core layer properties */
 
   /** softmax activation operation */
@@ -327,6 +342,7 @@ private:
   bool use_sink = false;
   float attn_logit_softcapping = 0.0f;
   bool is_causal;
+  bool force_fp32 = false;
 
   enum INOUT_INDEX {
     /** input index */
