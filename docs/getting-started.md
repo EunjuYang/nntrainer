@@ -150,6 +150,59 @@ ninja -C build install
 * Installs libraries to ```{prefix}/{libdir}```
 * Installs common header files to ```{prefix}/{includedir}```
 
+## Build with Transformer (LLM) Support
+
+NNTrainer supports transformer-based LLM inference (LLaMA, PicoGPT, CausalLM) via the `enable-transformer` option.
+
+### Prerequisites
+
+In addition to the base prerequisites, the following packages are required:
+
+```bash
+sudo apt install meson ninja-build gcc g++ pkg-config cmake
+sudo apt install libopenblas-dev flatbuffers-compiler libjsoncpp-dev libcurl4-openssl-dev
+```
+
+### Initialize submodules
+
+Submodules (OpenBLAS, iniparser, googletest, etc.) must be initialized before building:
+
+```bash
+git submodule sync && git submodule update --init --depth 1
+```
+
+### Build (core library only)
+
+To build just the core nntrainer library with transformer support:
+
+```bash
+meson setup build -Denable-transformer=true -Denable-tflite-backbone=false -Denable-tflite-interpreter=false -Denable-app=false -Denable-test=false
+ninja -C build
+```
+
+### Build (with transformer applications)
+
+To include transformer applications (LLaMA, PicoGPT, CausalLM):
+
+```bash
+meson setup build -Denable-transformer=true -Denable-tflite-backbone=false -Denable-tflite-interpreter=false -Denable-test=false
+ninja -C build
+```
+
+### Build (recommended for PC testing with FP16)
+
+```bash
+meson setup build -Denable-transformer=true -Denable-fp16=true -Dthread-backend=omp -Domp-num-threads=4 -Denable-tflite-backbone=false -Denable-tflite-interpreter=false
+ninja -C build
+```
+
+### Important notes
+
+* `enable-transformer=true` automatically disables `mmap-read` (they are incompatible).
+* If `libopenblas-dev` is not installed as a system package, the build system will attempt to compile OpenBLAS from the subproject source. This may fail on environments without AVX512 support. Installing the system package (`sudo apt install libopenblas-dev`) is recommended.
+* TFLite backbone/interpreter can be disabled if `tensorflow2-lite` is not available in your environment.
+* For CausalLM application details, see [Applications/CausalLM/README.md](../Applications/CausalLM/README.md).
+
 ## Build on Tizen
 
 Get GBS from <https://docs.tizen.org/platform/developing/building/>
