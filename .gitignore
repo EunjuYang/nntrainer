@@ -4,8 +4,12 @@
 # ignore build directory
 /build
 /builddir
+/builddir_*
 .cache/
 .idea/
+
+# meson lock file
+subprojects/.wraplock
 
 # jni build files
 libs/
