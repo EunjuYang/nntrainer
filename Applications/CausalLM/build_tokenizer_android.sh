@@ -77,7 +77,7 @@ cd "$BUILD_DIR/tokenizers-cpp"
 
 # Update submodules
 echo "Updating submodules..."
-git submodule update --init --recursive
+git submodule update --init --recursive --depth 1
 
 # Create build directory for specific ABI
 mkdir -p "build-android-$TARGET_ABI"
@@ -133,6 +133,8 @@ cmake .. \
     -DBUILD_SHARED_LIBS=OFF \
     -DTOKENIZERS_CPP_BUILD_TESTS=OFF \
     -DTOKENIZERS_CPP_BUILD_EXAMPLES=OFF \
+    -DMSGPACK_BUILD_TESTS=OFF \
+    -DMSGPACK_BUILD_EXAMPLES=OFF \
     -DCMAKE_VERBOSE_MAKEFILE=ON
 
 # Build the library
