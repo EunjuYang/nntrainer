@@ -382,7 +382,7 @@ void MHACoreLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
 void MHACoreLayer::compute_kcaches(
   nntrainer::Tensor &in, nntrainer::Tensor &cache, nntrainer::Tensor &out,
   unsigned int from, size_t sequence_len, unsigned int num_head,
-  unsigned int group_size, unsigned int head_dim, BS::thread_pool<> &pool) {
+  unsigned int group_size, unsigned int head_dim, BS::thread_pool<BS::tp::pause> &pool) {
 
   // Dispatch based on data type (FP32 or FP16)
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
@@ -505,8 +505,8 @@ void MHACoreLayer::one_batch_incremental_forwarding(
 
   /** 1. Load Input Tensors of this batch : b_ denotes a Tensor for this batch
    * **/
-  auto &pool =
-    nntrainer::Engine::Global().getThreadPoolManager()->getThreadPool();
+  auto *pool_mgr = nntrainer::Engine::Global().getThreadPoolManager();
+  auto &pool = pool_mgr->getThreadPool();
 
   nntrainer::Tensor b_cache_key_step = cache_key.getSharedDataTensor(
     cache_key_step_dim,
@@ -551,14 +551,19 @@ void MHACoreLayer::one_batch_incremental_forwarding(
 
   unsigned int gqa_size = num_heads_Q / num_heads_KV;
 
-  compute_kcaches(query_step, b_cached_key, out_, _from, to - from, num_heads_Q,
-                  gqa_size, head_dim, pool);
+  {
+    // RAII guard: unpause BS pool for attention, auto-pause when done
+    auto pool_guard = pool_mgr->scopedUnpause();
 
-  softmax_triangle(out_, to - from, num_heads_Q, from, pool);
+    compute_kcaches(query_step, b_cached_key, out_, _from, to - from,
+                    num_heads_Q, gqa_size, head_dim, pool);
 
-  compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
-                                from, num_heads_KV, gqa_size, head_dim, to,
-                                pool);
+    softmax_triangle(out_, to - from, num_heads_Q, from, pool);
+
+    compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
+                                  from, num_heads_KV, gqa_size, head_dim, to,
+                                  pool);
+  }
 }
 
 void MHACoreLayer::one_batch_incremental_forwarding(
@@ -585,8 +590,8 @@ void MHACoreLayer::one_batch_incremental_forwarding(
 
   /** 1. Load Input Tensors of this batch : b_ denotes a Tensor for this batch
    * **/
-  auto &pool =
-    nntrainer::Engine::Global().getThreadPoolManager()->getThreadPool();
+  auto *pool_mgr = nntrainer::Engine::Global().getThreadPoolManager();
+  auto &pool = pool_mgr->getThreadPool();
 
   nntrainer::Tensor b_cache_key_step = cache_key.getSharedDataTensor(
     cache_key_step_dim,
@@ -631,14 +636,19 @@ void MHACoreLayer::one_batch_incremental_forwarding(
 
   unsigned int gqa_size = num_heads_Q / num_heads_KV;
 
-  compute_kcaches(query_step, b_cached_key, out_, _from, to - from, num_heads_Q,
-                  gqa_size, head_dim, pool);
+  {
+    // RAII guard: unpause BS pool for attention, auto-pause when done
+    auto pool_guard = pool_mgr->scopedUnpause();
 
-  softmax_triangle(out_, to - from, num_heads_Q, from, pool, sink_step);
+    compute_kcaches(query_step, b_cached_key, out_, _from, to - from,
+                    num_heads_Q, gqa_size, head_dim, pool);
 
-  compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
-                                from, num_heads_KV, gqa_size, head_dim, to,
-                                pool);
+    softmax_triangle(out_, to - from, num_heads_Q, from, pool, sink_step);
+
+    compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
+                                  from, num_heads_KV, gqa_size, head_dim, to,
+                                  pool);
+  }
 }
 
 /************************************************************** */
@@ -993,7 +1003,7 @@ void MHACoreLayer::apply_rotary_emb_tensor_v2(nntrainer::Tensor &in,
 
 void MHACoreLayer::softmax_triangle(nntrainer::Tensor &qk_out, size_t row,
                                     size_t num_head, unsigned int from,
-                                    BS::thread_pool<> &pool) {
+                                    BS::thread_pool<BS::tp::pause> &pool) {
   if (qk_out.getDataType() == ml::train::TensorDim::DataType::FP32) {
     float *qk_out_ = qk_out.getData<float>();
 
@@ -1095,7 +1105,7 @@ void MHACoreLayer::softmax_triangle(nntrainer::Tensor &qk_out, size_t row,
 
 void MHACoreLayer::softmax_triangle(nntrainer::Tensor &qk_out, size_t row,
                                     size_t num_head, unsigned int from,
-                                    BS::thread_pool<> &pool,
+                                    BS::thread_pool<BS::tp::pause> &pool,
                                     nntrainer::Tensor &sink_step) {
   if (qk_out.getDataType() == ml::train::TensorDim::DataType::FP32) {
     float *qk_out_ = qk_out.getData<float>();
@@ -1199,7 +1209,7 @@ void MHACoreLayer::softmax_triangle(nntrainer::Tensor &qk_out, size_t row,
 void MHACoreLayer::compute_fp16vcache_transposed(
   nntrainer::Tensor &in, nntrainer::Tensor &vcache, nntrainer::Tensor &output,
   int from, int num_cache_head, int gqa_size, int head_dim, int to,
-  BS::thread_pool<> &pool) {
+  BS::thread_pool<BS::tp::pause> &pool) {
 
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
     if ((to - from) != 1) {

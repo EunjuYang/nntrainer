@@ -55,13 +55,59 @@ public:
   std::size_t select_k_quant_thread_count(unsigned int M, unsigned int N,
                                           unsigned int K);
 
-  BS::thread_pool<> &getThreadPool() { return pool_; }
+  BS::thread_pool<BS::tp::pause> &getThreadPool() { return pool_; }
 
   /**
-   * @brief Construct a new Thread Pool Manager object
-   *
+   * @brief Pause the thread pool so idle threads don't compete with OMP.
+   * Call this after BS pool work is done, before OMP-heavy work begins.
    */
-  ThreadPoolManager() : pool_(get_bs_pool_thread_count()) {}
+  void pause() { pool_.pause(); }
+
+  /**
+   * @brief Unpause the thread pool so it can accept new tasks.
+   * Call this before submitting tasks to the pool.
+   */
+  void unpause() { pool_.unpause(); }
+
+  /**
+   * @brief RAII guard that unpauses the pool on construction and pauses it on
+   * destruction. Use this to ensure the pool is always paused when not in use,
+   * preventing thread oversubscription with OMP.
+   *
+   * Usage:
+   *   {
+   *     auto guard = pool_mgr->scopedUnpause();
+   *     auto &pool = pool_mgr->getThreadPool();
+   *     pool.submit_task(...);
+   *   } // pool is automatically paused here
+   */
+  class ScopedUnpause {
+  public:
+    explicit ScopedUnpause(ThreadPoolManager *mgr) : mgr_(mgr) {
+      mgr_->unpause();
+    }
+    ~ScopedUnpause() { mgr_->pause(); }
+    ScopedUnpause(const ScopedUnpause &) = delete;
+    ScopedUnpause &operator=(const ScopedUnpause &) = delete;
+    ScopedUnpause(ScopedUnpause &&other) noexcept : mgr_(other.mgr_) {
+      other.mgr_ = nullptr;
+    }
+
+  private:
+    ThreadPoolManager *mgr_;
+  };
+
+  /**
+   * @brief Create an RAII guard that unpauses the pool and pauses it when
+   * the guard goes out of scope.
+   */
+  ScopedUnpause scopedUnpause() { return ScopedUnpause(this); }
+
+  /**
+   * @brief Construct a new Thread Pool Manager object.
+   * Pool starts paused to avoid oversubscription until explicitly needed.
+   */
+  ThreadPoolManager() : pool_(get_bs_pool_thread_count()) { pool_.pause(); }
   /**
    * @brief Destroy the Thread Pool Manager object
    *
@@ -69,7 +115,7 @@ public:
   ~ThreadPoolManager() = default;
 
 private:
-  BS::thread_pool<> pool_;
+  BS::thread_pool<BS::tp::pause> pool_;
 };
 } // namespace nntrainer
 
