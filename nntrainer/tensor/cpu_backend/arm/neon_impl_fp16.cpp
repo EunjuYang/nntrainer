@@ -67,12 +67,9 @@ bool is_valid(const unsigned int N, const __fp16 *input) {
 
 void hgemv(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M, uint32_t N,
            float alpha, float beta) {
-  const unsigned int batch = 0;
-  const __fp16 *__restrict x;
   float *Y32 = new float[M];
 
   unsigned int idx = 0;
-
   for (; M - idx >= 8; idx += 8) {
     float32x4_t y0_3 = vcvt_f32_f16(vld1_f16(&Y[idx]));
     float32x4_t y4_7 = vcvt_f32_f16(vld1_f16(&Y[idx + 4]));
@@ -92,244 +89,48 @@ void hgemv(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M, uint32_t N,
     Y32[idx] = beta * Y[idx];
   }
 
-  idx = 0;
-  if (N / 120 >= batch) {
-    for (; N - idx >= 120; idx += 120) {
-      float16x8_t x0_7 = vld1q_f16(&X[idx]);
-      float16x8_t x8_15 = vld1q_f16(&X[idx + 8]);
-      float16x8_t x16_23 = vld1q_f16(&X[idx + 16]);
-      float16x8_t x24_31 = vld1q_f16(&X[idx + 24]);
+  size_t num_threads = select_gemv_num_threads(M, N);
 
-      float16x8_t x32_39 = vld1q_f16(&X[idx + 32]);
-      float16x8_t x40_47 = vld1q_f16(&X[idx + 40]);
-      float16x8_t x48_55 = vld1q_f16(&X[idx + 48]);
-      float16x8_t x56_63 = vld1q_f16(&X[idx + 56]);
+#pragma omp parallel for schedule(static) num_threads(num_threads)
+  for (unsigned int j = 0; j < M; ++j) {
+    const __fp16 *__restrict w = &A[j * N];
+    float sum = 0.0f;
+    unsigned int n = 0;
 
-      float16x8_t x64_71 = vld1q_f16(&X[idx + 64]);
-      float16x8_t x72_79 = vld1q_f16(&X[idx + 72]);
-      float16x8_t x80_87 = vld1q_f16(&X[idx + 80]);
-
-      float16x8_t x88_95 = vld1q_f16(&X[idx + 88]);
-      float16x8_t x96_103 = vld1q_f16(&X[idx + 96]);
-      float16x8_t x104_111 = vld1q_f16(&X[idx + 104]);
-      float16x8_t x112_120 = vld1q_f16(&X[idx + 112]);
-
-      if (std::fpclassify(alpha - 1.F) != FP_ZERO) {
-        x0_7 = vmulq_n_f16(x0_7, alpha);
-        x8_15 = vmulq_n_f16(x8_15, alpha);
-        x16_23 = vmulq_n_f16(x16_23, alpha);
-        x24_31 = vmulq_n_f16(x24_31, alpha);
-        x32_39 = vmulq_n_f16(x32_39, alpha);
-        x40_47 = vmulq_n_f16(x40_47, alpha);
-        x48_55 = vmulq_n_f16(x48_55, alpha);
-        x56_63 = vmulq_n_f16(x56_63, alpha);
-
-        x64_71 = vmulq_n_f16(x64_71, alpha);
-        x72_79 = vmulq_n_f16(x72_79, alpha);
-        x80_87 = vmulq_n_f16(x80_87, alpha);
-        x88_95 = vmulq_n_f16(x88_95, alpha);
-        x96_103 = vmulq_n_f16(x96_103, alpha);
-        x104_111 = vmulq_n_f16(x104_111, alpha);
-        x112_120 = vmulq_n_f16(x112_120, alpha);
-      }
-
-      const __fp16 *__restrict w;
-
-      for (unsigned int j = 0; j < M; ++j) {
-        w = &A[j * N + idx];
-        float16x8_t y = vmulq_f16(vld1q_f16(&w[0]), x0_7);
-        y = vfmaq_f16(y, vld1q_f16(&w[8]), x8_15);
-        y = vfmaq_f16(y, vld1q_f16(&w[16]), x16_23);
-        y = vfmaq_f16(y, vld1q_f16(&w[24]), x24_31);
-
-        y = vfmaq_f16(y, vld1q_f16(&w[32]), x32_39);
-        y = vfmaq_f16(y, vld1q_f16(&w[40]), x40_47);
-        y = vfmaq_f16(y, vld1q_f16(&w[48]), x48_55);
-        y = vfmaq_f16(y, vld1q_f16(&w[56]), x56_63);
-
-        y = vfmaq_f16(y, vld1q_f16(&w[64]), x64_71);
-        y = vfmaq_f16(y, vld1q_f16(&w[72]), x72_79);
-        y = vfmaq_f16(y, vld1q_f16(&w[80]), x80_87);
-
-        y = vfmaq_f16(y, vld1q_f16(&w[88]), x88_95);
-        y = vfmaq_f16(y, vld1q_f16(&w[96]), x96_103);
-        y = vfmaq_f16(y, vld1q_f16(&w[104]), x104_111);
-        y = vfmaq_f16(y, vld1q_f16(&w[112]), x112_120);
-
-        Y32[j] += vaddvq_f32(vcvt_f32_f16(vget_low_f16(y))) +
-                  vaddvq_f32(vcvt_f32_f16(vget_high_f16(y)));
-      }
-    }
-  }
-  if (N / 64 >= batch) {
-    for (; N - idx >= 64; idx += 64) {
-      float16x8_t x0_7 = vld1q_f16(&X[idx]);
-      float16x8_t x8_15 = vld1q_f16(&X[idx + 8]);
-      float16x8_t x16_23 = vld1q_f16(&X[idx + 16]);
-      float16x8_t x24_31 = vld1q_f16(&X[idx + 24]);
-
-      float16x8_t x32_39 = vld1q_f16(&X[idx + 32]);
-      float16x8_t x40_47 = vld1q_f16(&X[idx + 40]);
-      float16x8_t x48_55 = vld1q_f16(&X[idx + 48]);
-      float16x8_t x56_63 = vld1q_f16(&X[idx + 56]);
-
-      if (std::fpclassify(alpha - 1.F) != FP_ZERO) {
-        x0_7 = vmulq_n_f16(x0_7, alpha);
-        x8_15 = vmulq_n_f16(x8_15, alpha);
-        x16_23 = vmulq_n_f16(x16_23, alpha);
-        x24_31 = vmulq_n_f16(x24_31, alpha);
-        x32_39 = vmulq_n_f16(x32_39, alpha);
-        x40_47 = vmulq_n_f16(x40_47, alpha);
-        x48_55 = vmulq_n_f16(x48_55, alpha);
-        x56_63 = vmulq_n_f16(x56_63, alpha);
-      }
-
-      const __fp16 *__restrict w;
-
-      for (unsigned int j = 0; j < M; ++j) {
-        w = &A[j * N + idx];
-        float16x8_t y = vmulq_f16(vld1q_f16(&w[0]), x0_7);
-        y = vfmaq_f16(y, vld1q_f16(&w[8]), x8_15);
-        y = vfmaq_f16(y, vld1q_f16(&w[16]), x16_23);
-        y = vfmaq_f16(y, vld1q_f16(&w[24]), x24_31);
-
-        y = vfmaq_f16(y, vld1q_f16(&w[32]), x32_39);
-        y = vfmaq_f16(y, vld1q_f16(&w[40]), x40_47);
-        y = vfmaq_f16(y, vld1q_f16(&w[48]), x48_55);
-        y = vfmaq_f16(y, vld1q_f16(&w[56]), x56_63);
-
-        Y32[j] += vaddvq_f32(vcvt_f32_f16(vget_low_f16(y))) +
-                  vaddvq_f32(vcvt_f32_f16(vget_high_f16(y)));
-      }
-    }
-  }
-  if (N / 32 >= batch) {
-    for (; N - idx >= 32; idx += 32) {
-      float16x8_t x0_7 = vld1q_f16(&X[idx]);
-      float16x8_t x8_15 = vld1q_f16(&X[idx + 8]);
-      float16x8_t x16_23 = vld1q_f16(&X[idx + 16]);
-      float16x8_t x24_31 = vld1q_f16(&X[idx + 24]);
-
-      if (std::fpclassify(alpha - 1.F) != FP_ZERO) {
-        x0_7 = vmulq_n_f16(x0_7, alpha);
-        x8_15 = vmulq_n_f16(x8_15, alpha);
-        x16_23 = vmulq_n_f16(x16_23, alpha);
-        x24_31 = vmulq_n_f16(x24_31, alpha);
-      }
-
-      const __fp16 *__restrict w;
-
-      for (unsigned int j = 0; j < M; ++j) {
-        w = &A[j * N + idx];
-        float16x8_t y = vmulq_f16(vld1q_f16(&w[0]), x0_7);
-        y = vfmaq_f16(y, vld1q_f16(&w[8]), x8_15);
-        y = vfmaq_f16(y, vld1q_f16(&w[16]), x16_23);
-        y = vfmaq_f16(y, vld1q_f16(&w[24]), x24_31);
-
-        Y32[j] += vaddvq_f32(vcvt_f32_f16(vget_low_f16(y))) +
-                  vaddvq_f32(vcvt_f32_f16(vget_high_f16(y)));
-      }
-    }
-  }
-  if (N / 16 >= batch) {
-    for (; N - idx >= 16; idx += 16) {
-      float16x8_t x0_7 = vld1q_f16(&X[idx]);
-      float16x8_t x8_15 = vld1q_f16(&X[idx + 8]);
-
-      if (std::fpclassify(alpha - 1.F) != FP_ZERO) {
-        x0_7 = vmulq_n_f16(x0_7, alpha);
-        x8_15 = vmulq_n_f16(x8_15, alpha);
-      }
-
-      const __fp16 *__restrict w;
-      for (unsigned int j = 0; j < M; ++j) {
-        w = &A[j * N + idx];
-        float16x8_t y = vmulq_f16(vld1q_f16(&w[0]), x0_7);
-        y = vfmaq_f16(y, vld1q_f16(&w[8]), x8_15);
-
-        Y32[j] += vaddvq_f32(vcvt_f32_f16(vget_low_f16(y))) +
-                  vaddvq_f32(vcvt_f32_f16(vget_high_f16(y)));
-      }
-    }
-  }
-  for (; N - idx >= 8; idx += 8) {
-    float16x8_t x0_7 = vld1q_f16(&X[idx]);
-
-    if (std::fpclassify(alpha - 1.F) != FP_ZERO) {
-      x0_7 = vmulq_n_f16(x0_7, alpha);
+    // Process 32 elements at a time (4x8 unroll for ILP)
+    for (; N - n >= 32; n += 32) {
+      float16x8_t p0 = vmulq_f16(vld1q_f16(&w[n]), vld1q_f16(&X[n]));
+      p0 = vfmaq_f16(p0, vld1q_f16(&w[n + 8]), vld1q_f16(&X[n + 8]));
+      float16x8_t p1 =
+        vmulq_f16(vld1q_f16(&w[n + 16]), vld1q_f16(&X[n + 16]));
+      p1 = vfmaq_f16(p1, vld1q_f16(&w[n + 24]), vld1q_f16(&X[n + 24]));
+      p0 = vaddq_f16(p0, p1);
+      sum += vaddvq_f32(vcvt_f32_f16(vget_low_f16(p0))) +
+             vaddvq_f32(vcvt_f32_f16(vget_high_f16(p0)));
     }
 
-    const __fp16 *__restrict w;
-
-    for (unsigned int j = 0; j < M; ++j) {
-      w = &A[j * N + idx];
-      float16x8_t wvec0_7 = vld1q_f16(&w[0]);
-      float16x8_t y = vmulq_f16(wvec0_7, x0_7);
-
-      Y32[j] += vaddvq_f32(vcvt_f32_f16(vget_low_f16(y))) +
-                vaddvq_f32(vcvt_f32_f16(vget_high_f16(y)));
-    }
-  }
-  for (; N - idx >= 4; idx += 4) {
-    float32x4_t x0_3 = vcvt_f32_f16(vld1_f16(&X[idx]));
-
-    if (std::fpclassify(alpha - 1.F) != FP_ZERO) {
-      x0_3 = vmulq_n_f32(x0_3, alpha);
+    // Process 8 elements at a time
+    for (; N - n >= 8; n += 8) {
+      float16x8_t p = vmulq_f16(vld1q_f16(&w[n]), vld1q_f16(&X[n]));
+      sum += vaddvq_f32(vcvt_f32_f16(vget_low_f16(p))) +
+             vaddvq_f32(vcvt_f32_f16(vget_high_f16(p)));
     }
 
-    const __fp16 *__restrict w;
-
-    for (unsigned int j = 0; j < M; ++j) {
-      w = &A[j * N + idx];
-      float32x4_t wvec0_3 = vcvt_f32_f16(vld1_f16(&w[0]));
-      float32x4_t y0 = vmulq_f32(wvec0_3, x0_3);
-
-      Y32[j] += vaddvq_f32(y0);
-    }
-  }
-
-  // now, N - idx is under 4 : 0 1 2 3 = N - idx
-  if (N != idx) {
-    float32x4_t x0_3 = vcvt_f32_f16(vld1_f16(&X[idx]));
-    for (unsigned int j = N - idx; j < 4; ++j) {
-      x0_3[j] = 0;
+    // Process remaining elements
+    for (; n < N; ++n) {
+      sum += (float)w[n] * (float)X[n];
     }
 
-    if (std::fpclassify(alpha - 1.F) != FP_ZERO) {
-      x0_3 = vmulq_n_f32(x0_3, alpha);
-    }
-
-    const __fp16 *__restrict w;
-
-    __fp16 yVal;
-
-    for (unsigned int j = 0; j < M; ++j) {
-      w = &A[j * N + idx];
-      float32x4_t wvec0_3 = vcvt_f32_f16(vld1_f16(&w[0]));
-
-      for (unsigned int n = N - idx; n < 4; ++n) {
-        wvec0_3[n] = 0;
-      }
-
-      float32x4_t y0 = vmulq_f32(wvec0_3, x0_3);
-
-      for (unsigned int n = 0; n < N - idx; ++n) {
-        Y32[j] += y0[n];
-      }
-    }
+    Y32[j] += alpha * sum;
   }
 
   copy_fp32_to_fp16(M, Y32, Y);
   delete[] Y32;
-  return;
 }
 
 void hgemv_transpose(const __fp16 *A, const __fp16 *X, __fp16 *Y, uint32_t M,
                      uint32_t N, float alpha, float beta) {
-#ifdef OMP_NUM_THREADS
-  set_gemv_num_threads(OMP_NUM_THREADS);
-#endif
-  size_t GEMV_NUM_THREADS = get_gemv_num_threads();
+  size_t GEMV_NUM_THREADS = select_gemv_num_threads(M, N);
 
   float *Y32 = new float[N];
   unsigned int idx = 0;

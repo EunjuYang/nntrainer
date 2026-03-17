@@ -12,6 +12,7 @@
  *
  */
 
+#include <algorithm>
 #include <omp.h>
 
 /// @note This variable should be optimized by user
@@ -60,3 +61,23 @@ inline void set_gemv_num_threads(size_t n) { GEMV_NUM_THREADS() = n; }
  * @return size_t num_threads
  */
 inline size_t get_gemv_num_threads() { return GEMV_NUM_THREADS(); }
+/**
+ * @brief Select optimal thread count for GEMV based on matrix dimensions.
+ * Uses compile-time OMP_NUM_THREADS if defined, otherwise applies a
+ * work-size based heuristic suitable for mobile/ARM targets.
+ *
+ * @param M number of rows
+ * @param N number of columns
+ * @return size_t optimal thread count
+ */
+inline size_t select_gemv_num_threads(uint32_t M, uint32_t N) {
+#ifdef OMP_NUM_THREADS
+  return OMP_NUM_THREADS;
+#endif
+  size_t work_size = static_cast<size_t>(M) * N;
+  if (work_size < 256 * 1024)
+    return 1;
+  if (work_size < 1024 * 1024)
+    return 2;
+  return 4;
+}
