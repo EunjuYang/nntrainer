@@ -102,6 +102,7 @@ def run_benchmark(run_id, model_path, omp_threads=None, taskset_mask=None):
     p2 = parse_output(out2)
 
     generation_tps = p2.get("gen_tps", 0.0)
+    generation_tokens = p2.get("gen_tokens", 0)
 
     end_temp = get_thermal_temp()
     end_procs = get_process_count()
@@ -118,6 +119,7 @@ def run_benchmark(run_id, model_path, omp_threads=None, taskset_mask=None):
         "e2e_tokens": total_tokens,
         "e2e_ms": total_ms,
         "generation_tps": generation_tps,
+        "generation_tokens": generation_tokens,
         "start_temp": start_temp,
         "end_temp": end_temp,
         "start_procs": start_procs,
@@ -185,22 +187,28 @@ def main():
     e2es = [r["e2e_tps"] for r in results if r["e2e_tps"] > 0]
     gens = [r["generation_tps"] for r in results if r["generation_tps"] > 0]
 
-    # --- llama-bench style summary table ---
-    # Compute stat strings first to determine column widths
-    s_prefill = fmt_stat(prefills, 0)
-    s_gen = fmt_stat(gens, 0)
-    s_e2e = fmt_stat(e2es, 0)
+    # Token counts from the first valid run (constant across runs)
+    first = results[0]
+    pp_tok = first.get("prefill_tokens", 0)
+    gen_tok = first.get("generation_tokens", 0)
+    e2e_tok = first.get("e2e_tokens", 0)
 
-    h1 = "Prefill (t/s)"
-    h2 = "Generation (t/s)"
-    h3 = "Prefill + Generation (t/s)"
+    # --- llama-bench style summary table ---
+    s_prefill = fmt_stat(prefills)
+    s_gen = fmt_stat(gens)
+    s_e2e = fmt_stat(e2es)
+
+    h1 = f"Prefill ({pp_tok} tok, t/s)"
+    h2 = f"Generation ({gen_tok} tok, t/s)"
+    h3 = f"Prefill + Generation ({e2e_tok} tok, t/s)"
     h_row = "metric"
+    row_label = "mean ± sd (min/max)"
 
     # Each column width = max(header, value) + 2 padding
+    c0 = max(len(h_row), len(row_label)) + 2
     c1 = max(len(h1), len(s_prefill)) + 2
     c2 = max(len(h2), len(s_gen)) + 2
     c3 = max(len(h3), len(s_e2e)) + 2
-    c0 = max(len(h_row), len("mean ± sd (min/max)")) + 2
 
     sep = f"+{'-' * c0}+{'-' * c1}+{'-' * c2}+{'-' * c3}+"
 
@@ -209,10 +217,10 @@ def main():
     print(sep)
     print(f"|{h_row:^{c0}}|{h1:^{c1}}|{h2:^{c2}}|{h3:^{c3}}|")
     print(sep)
-    print(f"|{'mean ± sd (min/max)':^{c0}}"
-          f"|{fmt_stat(prefills, c1):^{c1}}"
-          f"|{fmt_stat(gens, c2):^{c2}}"
-          f"|{fmt_stat(e2es, c3):^{c3}}|")
+    print(f"|{row_label:^{c0}}"
+          f"|{fmt_stat(prefills, c1)}"
+          f"|{fmt_stat(gens, c2)}"
+          f"|{fmt_stat(e2es, c3)}|")
     print(sep)
 
     # --- Per-run detail ---
