@@ -57,6 +57,7 @@ void ParallelBatch::run() {
 
   std::for_each(workers.begin(), workers.end(),
                 std::mem_fn(&std::thread::join));
+  workers.clear();
 }
 
 void ParallelBatch::setCallback(threaded_cb threaded_cb_, void *user_data_) {
