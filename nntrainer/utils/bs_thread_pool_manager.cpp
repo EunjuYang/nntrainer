@@ -16,6 +16,7 @@
 #include "bs_thread_pool_manager.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 namespace nntrainer {
 /**
  * @brief Instantiate thread pool with the number of hardware concurrency.
@@ -26,7 +27,13 @@ namespace nntrainer {
 std::size_t ThreadPoolManager::select_k_quant_thread_count(unsigned int M,
                                                            unsigned int N,
                                                            unsigned int K) {
-  const std::size_t max_threads = std::thread::hardware_concurrency();
+  std::size_t max_threads = std::thread::hardware_concurrency();
+  const char *env = std::getenv("OMP_NUM_THREADS");
+  if (env != nullptr) {
+    int val = std::atoi(env);
+    if (val > 0)
+      max_threads = static_cast<std::size_t>(val);
+  }
 
   const std::size_t work_size = static_cast<std::size_t>(M * N * K);
   std::size_t est_threads;

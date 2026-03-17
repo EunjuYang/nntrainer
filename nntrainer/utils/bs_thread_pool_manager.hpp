@@ -16,6 +16,8 @@
 #pragma once
 #include "bs_thread_pool.h"
 #include "singleton.h"
+#include <cstdlib>
+#include <thread>
 
 namespace nntrainer {
 /**
@@ -41,7 +43,20 @@ public:
    * @brief Construct a new Thread Pool Manager object
    *
    */
-  ThreadPoolManager() : pool_(std::thread::hardware_concurrency()) {}
+  ThreadPoolManager() : pool_(getEnvThreadCount()) {}
+
+private:
+  static unsigned int getEnvThreadCount() {
+    const char *env = std::getenv("OMP_NUM_THREADS");
+    if (env != nullptr) {
+      int val = std::atoi(env);
+      if (val > 0)
+        return static_cast<unsigned int>(val);
+    }
+    return std::thread::hardware_concurrency();
+  }
+
+public:
   /**
    * @brief Destroy the Thread Pool Manager object
    *

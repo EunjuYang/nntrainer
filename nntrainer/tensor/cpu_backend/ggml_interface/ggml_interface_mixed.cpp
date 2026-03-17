@@ -17,6 +17,7 @@
 #include <cmath>
 #include <engine.h>
 #include <ggml_interface.h>
+#include <neon_setting.h>
 #include <nntr_ggml_impl.h>
 #include <nntr_ggml_impl_utils.h>
 #include <string>
@@ -211,7 +212,7 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M,
       loop_future.wait();
     }
   } else {
-    int n_threads = std::thread::hardware_concurrency() / 2;
+    int n_threads = get_runtime_omp_num_threads();
     unsigned int qa_4_rows_size = sizeof(block_q8_0x4) * blocks_per_4_rows;
     const size_t qa_row_size = (sizeof(block_q8_0) * K) / QK8_0;
 
@@ -463,7 +464,7 @@ void __ggml_q4_0_8x8_q8_0_GEMM(const unsigned int M,
       });
     loop_future.wait();
   } else {
-    int n_threads = std::thread::hardware_concurrency() / 2;
+    int n_threads = get_runtime_omp_num_threads();
     unsigned int qa_4_rows_size = sizeof(block_q8_0x4) * blocks_per_4_rows;
     const size_t qa_row_size = (sizeof(block_q8_0) * K) / QK8_0;
 
@@ -710,7 +711,7 @@ void __ggml_q4_K_8x8_q8_K_GEMM(const unsigned int M,
     }
   } else {
 
-    int n_threads = std::thread::hardware_concurrency() / 2;
+    int n_threads = get_runtime_omp_num_threads();
     unsigned int qa_4_rows_size = sizeof(block_q8_Kx4) * blocks_per_4_rows;
     const size_t qa_row_size = (sizeof(block_q8_K) * K) / QK_K;
 
