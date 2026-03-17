@@ -17,7 +17,27 @@
 #include "bs_thread_pool.h"
 #include "singleton.h"
 
+#include <cstdlib>
+#include <thread>
+
 namespace nntrainer {
+
+/**
+ * @brief Get the thread pool size, respecting OMP_NUM_THREADS to avoid
+ * oversubscription when both BS thread pool and OMP coexist.
+ *
+ * @return unsigned int thread count for the BS thread pool
+ */
+inline unsigned int get_bs_pool_thread_count() {
+  const char *env = std::getenv("OMP_NUM_THREADS");
+  if (env != nullptr) {
+    int val = std::atoi(env);
+    if (val > 0)
+      return static_cast<unsigned int>(val);
+  }
+  unsigned int hw = std::thread::hardware_concurrency();
+  return (hw > 1) ? hw / 2 : 1;
+}
 /**
  * @brief ThreadPoolManager is a singleton class that manages a thread pool
  *
@@ -41,7 +61,7 @@ public:
    * @brief Construct a new Thread Pool Manager object
    *
    */
-  ThreadPoolManager() : pool_(std::thread::hardware_concurrency()) {}
+  ThreadPoolManager() : pool_(get_bs_pool_thread_count()) {}
   /**
    * @brief Destroy the Thread Pool Manager object
    *
