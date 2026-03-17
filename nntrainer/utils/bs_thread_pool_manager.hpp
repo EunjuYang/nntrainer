@@ -17,6 +17,7 @@
 #include "bs_thread_pool.h"
 #include "singleton.h"
 
+#include <atomic>
 #include <cstdlib>
 #include <thread>
 
@@ -71,22 +72,29 @@ public:
 
   /**
    * @brief RAII guard that unpauses the pool on construction and pauses it on
-   * destruction. Use this to ensure the pool is always paused when not in use,
-   * preventing thread oversubscription with OMP.
+   * destruction. Supports nesting: only the outermost guard actually
+   * pauses/unpauses the pool. Inner guards are no-ops.
    *
    * Usage:
    *   {
    *     auto guard = pool_mgr->scopedUnpause();
    *     auto &pool = pool_mgr->getThreadPool();
    *     pool.submit_task(...);
-   *   } // pool is automatically paused here
+   *     // Inner scopedUnpause() calls are safe and free
+   *   } // pool is automatically paused here (only if outermost)
    */
   class ScopedUnpause {
   public:
     explicit ScopedUnpause(ThreadPoolManager *mgr) : mgr_(mgr) {
-      mgr_->unpause();
+      if (mgr_ && mgr_->unpause_depth_.fetch_add(1) == 0) {
+        mgr_->unpause();
+      }
     }
-    ~ScopedUnpause() { mgr_->pause(); }
+    ~ScopedUnpause() {
+      if (mgr_ && mgr_->unpause_depth_.fetch_sub(1) == 1) {
+        mgr_->pause();
+      }
+    }
     ScopedUnpause(const ScopedUnpause &) = delete;
     ScopedUnpause &operator=(const ScopedUnpause &) = delete;
     ScopedUnpause(ScopedUnpause &&other) noexcept : mgr_(other.mgr_) {
@@ -99,7 +107,7 @@ public:
 
   /**
    * @brief Create an RAII guard that unpauses the pool and pauses it when
-   * the guard goes out of scope.
+   * the guard goes out of scope. Nestable: inner guards are free no-ops.
    */
   ScopedUnpause scopedUnpause() { return ScopedUnpause(this); }
 
@@ -116,6 +124,7 @@ public:
 
 private:
   BS::thread_pool<BS::tp::pause> pool_;
+  std::atomic<int> unpause_depth_{0};
 };
 } // namespace nntrainer
 

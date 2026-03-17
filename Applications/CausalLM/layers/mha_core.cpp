@@ -550,15 +550,26 @@ void MHACoreLayer::one_batch_incremental_forwarding(
     num_heads_Q, query_step.getTensorType());
 
   unsigned int gqa_size = num_heads_Q / num_heads_KV;
+  size_t sequence_len = to - from;
 
-  {
-    // RAII guard: unpause BS pool for attention, auto-pause when done
+  // Decode (single token): all three functions use OMP only, no BS pool needed
+  // Prefill (multi token): functions submit tasks to BS pool
+  if (sequence_len > 1) {
     auto pool_guard = pool_mgr->scopedUnpause();
 
-    compute_kcaches(query_step, b_cached_key, out_, _from, to - from,
+    compute_kcaches(query_step, b_cached_key, out_, _from, sequence_len,
                     num_heads_Q, gqa_size, head_dim, pool);
 
-    softmax_triangle(out_, to - from, num_heads_Q, from, pool);
+    softmax_triangle(out_, sequence_len, num_heads_Q, from, pool);
+
+    compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
+                                  from, num_heads_KV, gqa_size, head_dim, to,
+                                  pool);
+  } else {
+    compute_kcaches(query_step, b_cached_key, out_, _from, sequence_len,
+                    num_heads_Q, gqa_size, head_dim, pool);
+
+    softmax_triangle(out_, sequence_len, num_heads_Q, from, pool);
 
     compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
                                   from, num_heads_KV, gqa_size, head_dim, to,
@@ -635,15 +646,26 @@ void MHACoreLayer::one_batch_incremental_forwarding(
     num_heads_Q, query_step.getTensorType());
 
   unsigned int gqa_size = num_heads_Q / num_heads_KV;
+  size_t sequence_len = to - from;
 
-  {
-    // RAII guard: unpause BS pool for attention, auto-pause when done
+  // Decode (single token): all three functions use OMP only, no BS pool needed
+  // Prefill (multi token): functions submit tasks to BS pool
+  if (sequence_len > 1) {
     auto pool_guard = pool_mgr->scopedUnpause();
 
-    compute_kcaches(query_step, b_cached_key, out_, _from, to - from,
+    compute_kcaches(query_step, b_cached_key, out_, _from, sequence_len,
                     num_heads_Q, gqa_size, head_dim, pool);
 
-    softmax_triangle(out_, to - from, num_heads_Q, from, pool, sink_step);
+    softmax_triangle(out_, sequence_len, num_heads_Q, from, pool, sink_step);
+
+    compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
+                                  from, num_heads_KV, gqa_size, head_dim, to,
+                                  pool);
+  } else {
+    compute_kcaches(query_step, b_cached_key, out_, _from, sequence_len,
+                    num_heads_Q, gqa_size, head_dim, pool);
+
+    softmax_triangle(out_, sequence_len, num_heads_Q, from, pool, sink_step);
 
     compute_fp16vcache_transposed(out_, b_cached_value, attention_output_step,
                                   from, num_heads_KV, gqa_size, head_dim, to,

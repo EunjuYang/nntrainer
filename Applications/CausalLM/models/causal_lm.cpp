@@ -481,6 +481,12 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   // Use fewer OMP threads for decode (small GEMV, less overhead)
   nntrainer::Engine::Global().applyDecodeThreads();
 
+  // Keep BS pool unpaused for the entire decode loop to avoid per-GEMV
+  // unpause/pause overhead. During decode, GEMV and attention run
+  // sequentially so there's no oversubscription between BS pool and OMP.
+  auto *pool_mgr = nntrainer::Engine::Global().getThreadPoolManager();
+  auto decode_pool_guard = pool_mgr->scopedUnpause();
+
   for (token_generation_idx = input_len + 1;
        token_generation_idx < input_len + 1 + NUM_TO_GENERATE;
        ++token_generation_idx) {
