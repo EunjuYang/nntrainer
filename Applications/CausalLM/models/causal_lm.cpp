@@ -240,26 +240,28 @@ std::vector<unsigned int> CausalLM::generate(float *logits, bool do_sample,
         std::distance(logits, std::max_element(logits, logits + NUM_VOCAB));
       outputs.push_back(argmax_idx);
     } else {
-      // apply temperature & top-k & top-p to logits
+      // apply temperature & top-k filtering to logits
       float max_logits = applyTKP(logits, NUM_VOCAB, TEMPERATURE, TOP_K, TOP_P);
-      // transform logits to softmax
-      float sum_exp_logits = 0;
+
+      // compute softmax only over top-k candidates (rest are -INFINITY)
+      std::vector<std::pair<unsigned int, float>> candidates;
+      candidates.reserve(TOP_K);
+      float sum_exp = 0.0f;
       for (unsigned int i = 0; i < NUM_VOCAB; i++) {
-        float exp_x = exp(logits[i] - max_logits);
-        sum_exp_logits += exp_x;
-        logits[i] = exp_x;
+        if (logits[i] > -INFINITY) {
+          float exp_x = expf(logits[i] - max_logits);
+          sum_exp += exp_x;
+          candidates.push_back({i, exp_x});
+        }
       }
 
-      for (unsigned int i = 0; i < NUM_VOCAB; ++i) {
-        logits[i] /= sum_exp_logits;
-      }
+      // sample from top-k candidates only
+      std::vector<float> probs(candidates.size());
+      for (size_t i = 0; i < candidates.size(); ++i)
+        probs[i] = candidates[i].second / sum_exp;
 
-      // sample from final logits
-      std::discrete_distribution<int> dist(logits, logits + NUM_VOCAB);
-      unsigned int sampled_idx = dist(rng);
-
-      // add sampled word
-      outputs.push_back(sampled_idx);
+      std::discrete_distribution<int> dist(probs.begin(), probs.end());
+      outputs.push_back(candidates[dist(rng)].first);
     }
 
     // set batch offset

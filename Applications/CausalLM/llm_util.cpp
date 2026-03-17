@@ -11,6 +11,7 @@
  * @bug    No known bugs except for NYI items
  */
 
+#include <functional>
 #include <llm_util.hpp>
 
 std::vector<unsigned int> generate_multi_tokens(
@@ -68,23 +69,37 @@ void applyBadWordsPenalty(float *logits, unsigned int *bad_words_ids,
 }
 
 /**
- * @brief Apply temperature & top-k & top-p to logits
- * @return Max logit for softmax
+ * @brief Apply temperature & top-k filtering to logits.
+ * After this call, only the top-k logits remain; the rest are set to
+ * -INFINITY so that subsequent softmax and sampling can skip them.
+ * @return Max logit value (for numerically stable softmax)
  */
 float applyTKP(float *logits, int len, float temperature, unsigned int top_k,
                float top_p) {
 
-  // Apply temperature & Sort logits
-  std::vector<std::pair<int, float>> top_indices_and_logits;
-  for (int i = 0; i < len; ++i) {
-    if (temperature > 1e-5)
-      logits[i] = logits[i] / temperature;
-    top_indices_and_logits.push_back({i, logits[i]});
+  // Apply temperature
+  if (temperature > 1e-5f) {
+    for (int i = 0; i < len; ++i)
+      logits[i] /= temperature;
   }
-  std::partial_sort(top_indices_and_logits.begin(),
-                    top_indices_and_logits.begin() + 1,
-                    top_indices_and_logits.end(),
-                    [](auto &a, auto &b) { return a.second > b.second; });
 
-  return top_indices_and_logits[0].second;
+  // Find top-k threshold via nth_element (average O(n))
+  unsigned int k = std::min(top_k, static_cast<unsigned int>(len));
+  std::vector<float> vals(logits, logits + len);
+  std::nth_element(vals.begin(), vals.begin() + (k - 1), vals.end(),
+                   std::greater<float>());
+  float threshold = vals[k - 1];
+
+  // Mask non-top-k logits to -INFINITY and find max
+  float max_logit = -INFINITY;
+  for (int i = 0; i < len; ++i) {
+    if (logits[i] >= threshold) {
+      if (logits[i] > max_logit)
+        max_logit = logits[i];
+    } else {
+      logits[i] = -INFINITY;
+    }
+  }
+
+  return max_logit;
 }
