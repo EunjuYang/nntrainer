@@ -34,7 +34,7 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M, const unsigned int N,
                                const unsigned int ldc) {
   int NB_COLS = 4;
   if (M == 1) { // GEMV
-    int n_threads = 4;
+    int n_threads = get_runtime_omp_num_threads();
     unsigned int B_step = sizeof(block_q4_0) * (K / QK4_0);
     unsigned int blocks_per_row = (K + QK8_0 - 1) / QK8_0;
     unsigned int qa_size = sizeof(block_q8_0) * blocks_per_row;
@@ -58,7 +58,7 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M, const unsigned int N,
                               QA.data(), M, M_step_end - M_step_start);
     }
   } else if (M % 4 != 0) {
-    int n_threads = 8;
+    int n_threads = get_runtime_omp_num_threads();
     unsigned int blocks_per_4_rows = (K + QK8_0 - 1) / QK8_0;
     unsigned int qa_4_rows_size = sizeof(block_q8_0x4) * blocks_per_4_rows;
     const size_t qa_row_size = (sizeof(block_q8_0) * K) / QK8_0;
@@ -99,7 +99,7 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M, const unsigned int N,
     }
 
     // Compute leftover 1 ~ 3 rows with multithreaded GEMV
-    n_threads = 4;
+    n_threads = get_runtime_omp_num_threads();
     for (unsigned int pb = M4 * 4; pb < M; pb++) {
 #pragma omp parallel for num_threads(n_threads)
       for (int thread_idx = 0; thread_idx < n_threads; ++thread_idx) {
@@ -222,7 +222,7 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M,
       }
     }
   } else {
-    int n_threads = 4;
+    int n_threads = get_runtime_omp_num_threads();
     unsigned int qa_4_rows_size = sizeof(block_q8_0x4) * blocks_per_4_rows;
     const size_t qa_row_size = (sizeof(block_q8_0) * K) / QK8_0;
 
@@ -268,7 +268,7 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M,
       }
     }
     if (M4 * 4 != M) {
-      n_threads = 4;
+      n_threads = get_runtime_omp_num_threads();
 #pragma omp parallel for schedule(guided) num_threads(n_threads)
       for (int thread_idx = 0; thread_idx < n_threads; ++thread_idx) {
         for (unsigned int num_w = 0; num_w < Ns.size(); ++num_w) {
@@ -307,7 +307,7 @@ void __ggml_q4_0_8x8_q8_0_GEMM(const unsigned int M, const unsigned int N,
                                const unsigned int ldb, float *C,
                                const unsigned int ldc) {
   if (M == 1) { // GEMV
-    int n_threads = 4;
+    int n_threads = get_runtime_omp_num_threads();
     unsigned int B_step = sizeof(block_q4_0) * (K / QK4_0);
     unsigned int blocks_per_row = (K + QK8_0 - 1) / QK8_0;
     unsigned int qa_size = sizeof(block_q8_0) * blocks_per_row;
@@ -367,7 +367,7 @@ void __ggml_q4_0_8x8_q8_0_GEMM(const unsigned int M, const unsigned int N,
     }
 
     // Compute leftover 1 ~ 3 rows with multithreaded GEMV
-    n_threads = 4;
+    n_threads = get_runtime_omp_num_threads();
     for (unsigned int pb = M4 * 4; pb < M; pb++) {
 #pragma omp parallel for num_threads(n_threads)
       for (int thread_idx = 0; thread_idx < n_threads; ++thread_idx) {
@@ -408,7 +408,7 @@ void __ggml_q4_K_8x8_q8_K_GEMM(const unsigned int M, const unsigned int N,
                                const unsigned int ldb, float *C,
                                const unsigned int ldc) {
   if (M == 1) { // GEMV
-    int n_threads = 4;
+    int n_threads = get_runtime_omp_num_threads();
     unsigned int blocks_per_row = (K + QK_K - 1) / QK_K;
     unsigned int qa_size = sizeof(block_q8_K) * blocks_per_row;
     unsigned int B_step = sizeof(block_q4_K) * (K / QK_K);
@@ -470,7 +470,7 @@ void __ggml_q4_K_8x8_q8_K_GEMM(const unsigned int M, const unsigned int N,
     }
 
     // Compute leftover 1 ~ 3 rows with multithreaded GEMV
-    n_threads = 4;
+    n_threads = get_runtime_omp_num_threads();
     for (unsigned int pb = M4 * 4; pb < M; pb++) {
 #pragma omp parallel for num_threads(n_threads)
       for (int thread_idx = 0; thread_idx < n_threads; ++thread_idx) {
@@ -523,7 +523,7 @@ void __ggml_gemm_q6_K(const unsigned int M, const unsigned int N,
 
   // GEMV
   if (M == 1) {
-    thread_count = 4;
+    thread_count = get_runtime_omp_num_threads();
     std::vector<char> quantized_A(A_row_size);
     nntr_quantize_row_q8_K(A, quantized_A.data(), K);
 
