@@ -21,7 +21,7 @@ namespace nntrainer {
 /**
  * @brief Instantiate thread pool with the number of hardware concurrency.
  *
- * @return BS::thread_pool<BS::tp::pause>
+ * @return BS::thread_pool<>
  */
 
 std::size_t ThreadPoolManager::select_k_quant_thread_count(unsigned int M,

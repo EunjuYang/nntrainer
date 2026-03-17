@@ -17,7 +17,6 @@
 #include "bs_thread_pool.h"
 #include "singleton.h"
 
-#include <atomic>
 #include <cstdlib>
 #include <thread>
 
@@ -56,66 +55,13 @@ public:
   std::size_t select_k_quant_thread_count(unsigned int M, unsigned int N,
                                           unsigned int K);
 
-  BS::thread_pool<BS::tp::pause> &getThreadPool() { return pool_; }
+  BS::thread_pool<> &getThreadPool() { return pool_; }
 
   /**
-   * @brief Pause the thread pool so idle threads don't compete with OMP.
-   * Call this after BS pool work is done, before OMP-heavy work begins.
-   */
-  void pause() { pool_.pause(); }
-
-  /**
-   * @brief Unpause the thread pool so it can accept new tasks.
-   * Call this before submitting tasks to the pool.
-   */
-  void unpause() { pool_.unpause(); }
-
-  /**
-   * @brief RAII guard that unpauses the pool on construction and pauses it on
-   * destruction. Supports nesting: only the outermost guard actually
-   * pauses/unpauses the pool. Inner guards are no-ops.
+   * @brief Construct a new Thread Pool Manager object
    *
-   * Usage:
-   *   {
-   *     auto guard = pool_mgr->scopedUnpause();
-   *     auto &pool = pool_mgr->getThreadPool();
-   *     pool.submit_task(...);
-   *     // Inner scopedUnpause() calls are safe and free
-   *   } // pool is automatically paused here (only if outermost)
    */
-  class ScopedUnpause {
-  public:
-    explicit ScopedUnpause(ThreadPoolManager *mgr) : mgr_(mgr) {
-      if (mgr_ && mgr_->unpause_depth_.fetch_add(1) == 0) {
-        mgr_->unpause();
-      }
-    }
-    ~ScopedUnpause() {
-      if (mgr_ && mgr_->unpause_depth_.fetch_sub(1) == 1) {
-        mgr_->pause();
-      }
-    }
-    ScopedUnpause(const ScopedUnpause &) = delete;
-    ScopedUnpause &operator=(const ScopedUnpause &) = delete;
-    ScopedUnpause(ScopedUnpause &&other) noexcept : mgr_(other.mgr_) {
-      other.mgr_ = nullptr;
-    }
-
-  private:
-    ThreadPoolManager *mgr_;
-  };
-
-  /**
-   * @brief Create an RAII guard that unpauses the pool and pauses it when
-   * the guard goes out of scope. Nestable: inner guards are free no-ops.
-   */
-  ScopedUnpause scopedUnpause() { return ScopedUnpause(this); }
-
-  /**
-   * @brief Construct a new Thread Pool Manager object.
-   * Pool starts paused to avoid oversubscription until explicitly needed.
-   */
-  ThreadPoolManager() : pool_(get_bs_pool_thread_count()) { pool_.pause(); }
+  ThreadPoolManager() : pool_(get_bs_pool_thread_count()) {}
   /**
    * @brief Destroy the Thread Pool Manager object
    *
@@ -123,8 +69,7 @@ public:
   ~ThreadPoolManager() = default;
 
 private:
-  BS::thread_pool<BS::tp::pause> pool_;
-  std::atomic<int> unpause_depth_{0};
+  BS::thread_pool<> pool_;
 };
 } // namespace nntrainer
 

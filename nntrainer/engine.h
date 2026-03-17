@@ -22,14 +22,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
-
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 #include <context.h>
 #include <mem_allocator.h>
@@ -106,39 +101,6 @@ public:
    *
    */
   void release();
-
-  /**
-   * @brief Set OMP thread count for prefill phase (large GEMM, benefits from
-   * more threads). Default: hardware_concurrency.
-   */
-  void setPrefillThreads(unsigned int n) { prefill_threads_ = n; }
-
-  /**
-   * @brief Set OMP thread count for decode/generation phase (small GEMV,
-   * fewer threads reduces overhead). Default: hardware_concurrency / 2.
-   */
-  void setDecodeThreads(unsigned int n) { decode_threads_ = n; }
-
-  /**
-   * @brief Apply OMP thread count for the prefill phase.
-   */
-  void applyPrefillThreads() {
-#ifdef _OPENMP
-    omp_set_num_threads(static_cast<int>(prefill_threads_));
-#endif
-  }
-
-  /**
-   * @brief Apply OMP thread count for the decode/generation phase.
-   */
-  void applyDecodeThreads() {
-#ifdef _OPENMP
-    omp_set_num_threads(static_cast<int>(decode_threads_));
-#endif
-  }
-
-  unsigned int getPrefillThreads() const { return prefill_threads_; }
-  unsigned int getDecodeThreads() const { return decode_threads_; }
 
   /**
    * @brief register a Context from a shared library
@@ -326,10 +288,6 @@ private:
 
   std::mutex thread_pool_manager_mutex_ = {};
   std::unique_ptr<ThreadPoolManager> thread_pool_manager_ = {};
-
-  unsigned int prefill_threads_ = std::thread::hardware_concurrency();
-  unsigned int decode_threads_ =
-    std::max(1u, std::thread::hardware_concurrency() / 2);
 };
 
 namespace plugin {}

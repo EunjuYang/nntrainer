@@ -40,9 +40,8 @@ static inline void __ggml_q4_0_4x8_q8_0_GEMM_GEMV(
   nntr_quantize_row_q8_0(A, qa_data, K);
   int B_step = sizeof(block_q4_0) * (K / QK4_0);
 
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   int thread_num = bs_thread_pool.get_thread_count();
   BS::multi_future<void> loop_future =
     bs_thread_pool.submit_loop(0, thread_num, [=](int i) {
@@ -68,9 +67,8 @@ static inline void __ggml_q4_0_4x8_q8_0_GEMM_GEMM(
   const float *A, const unsigned int lda, const void *B, const unsigned int ldb,
   float *C, const unsigned int ldc) {
   int NB_COLS = 4;
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   unsigned int blocks_per_4_rows = (K + QK8_0 - 1) / QK8_0;
   unsigned int qa_4_rows_size = sizeof(block_q8_0x4) * blocks_per_4_rows;
   const size_t qa_row_size = (sizeof(block_q8_0) * K) / QK8_0;
@@ -156,9 +154,8 @@ void __ggml_q4_0_4x8_q8_0_GEMM(const unsigned int M,
                                std::vector<unsigned int> ldbs,
                                std::vector<float *> Cs,
                                std::vector<unsigned int> ldcs) {
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   int thread_num = bs_thread_pool.get_thread_count();
 
   int NB_COLS = 4;
@@ -305,9 +302,8 @@ static inline void __ggml_q4_0_8x8_q8_0_GEMM_GEMV(
   nntr_quantize_row_q8_0(A, qa_data, K);
   int B_step = sizeof(block_q4_0) * (K / QK4_0);
 
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   int thread_num = bs_thread_pool.get_thread_count();
   BS::multi_future<void> loop_future =
     bs_thread_pool.submit_loop(0, thread_num, [=](int i) {
@@ -330,9 +326,8 @@ static inline void __ggml_q4_0_8x8_q8_0_GEMM_GEMM(
   const unsigned int M, const unsigned int N, const unsigned int K,
   const float *A, const unsigned int lda, const void *B, const unsigned int ldb,
   float *C, const unsigned int ldc) {
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   unsigned int blocks_per_4_rows = (K + QK8_0 - 1) / QK8_0;
   unsigned int qa_4_rows_size = sizeof(block_q8_0x4) * blocks_per_4_rows;
   const size_t qa_row_size = (sizeof(block_q8_0) * K) / QK8_0;
@@ -414,9 +409,8 @@ void __ggml_q4_0_8x8_q8_0_GEMM(const unsigned int M,
                                std::vector<unsigned int> ldbs,
                                std::vector<float *> Cs,
                                std::vector<unsigned int> ldcs) {
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   int thread_num = bs_thread_pool.get_thread_count();
 
   int B_step = sizeof(block_q4_0) * (K / QK4_0);
@@ -554,9 +548,8 @@ static inline void __ggml_q4_K_8x8_q8_K_GEMM_GEMV(
   auto qa_data = QA.data();
   nntr_quantize_row_q8_K(A, qa_data, K);
 
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   int thread_num = bs_thread_pool.get_thread_count();
   BS::multi_future<void> loop_future =
     bs_thread_pool.submit_loop(0, thread_num, [=](int i) {
@@ -579,9 +572,8 @@ static inline void __ggml_q4_K_8x8_q8_K_GEMM_GEMM(
   const unsigned int M, const unsigned int N, const unsigned int K,
   const float *A, const unsigned int lda, const void *B, const unsigned int ldb,
   float *C, const unsigned int ldc) {
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   unsigned int blocks_per_4_rows = (K + QK_K - 1) / QK_K;
   unsigned int qa_4_rows_size = sizeof(block_q8_Kx4) * blocks_per_4_rows;
   const size_t qa_row_size = (sizeof(block_q8_K) * K) / QK_K;
@@ -663,9 +655,8 @@ void __ggml_q4_K_8x8_q8_K_GEMM(const unsigned int M,
                                std::vector<float *> Cs,
                                std::vector<unsigned int> ldcs) {
 
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &bs_thread_pool = pool_mgr_->getThreadPool();
+  auto &bs_thread_pool =
+    Engine::Global().getThreadPoolManager()->getThreadPool();
   int thread_num = bs_thread_pool.get_thread_count();
 
   int B_step = sizeof(block_q4_K) * (K / QK_K);
@@ -808,9 +799,7 @@ void __ggml_gemm_q6_K(const unsigned int M, const unsigned int N,
   const int32_t A_row_size = sizeof(block_q8_K) * blocks_per_row;
   const int32_t B_row_size = sizeof(block_q6_K) * blocks_per_row;
 
-  auto *pool_mgr_ = Engine::Global().getThreadPoolManager();
-  auto pool_guard_ = pool_mgr_->scopedUnpause();
-  auto &tp = pool_mgr_->getThreadPool();
+  auto &tp = Engine::Global().getThreadPoolManager()->getThreadPool();
   if (M == 1) {
     std::vector<char> quantized_A(A_row_size);
     nntr_quantize_row_q8_K(A, quantized_A.data(), K);

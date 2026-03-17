@@ -100,15 +100,6 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
                   : 0.7;
   global_token_len = 0;
 
-  // Configure per-phase OMP thread counts from nntr_config.json
-  if (nntr_cfg.contains("prefill_threads")) {
-    nntrainer::Engine::Global().setPrefillThreads(
-      nntr_cfg["prefill_threads"].get<unsigned int>());
-  }
-  if (nntr_cfg.contains("decode_threads")) {
-    nntrainer::Engine::Global().setDecodeThreads(
-      nntr_cfg["decode_threads"].get<unsigned int>());
-  }
 }
 
 void CausalLM::constructModel() {
@@ -411,9 +402,6 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
   auto start_prefill = std::chrono::high_resolution_clock::now();
 
-  // Use more OMP threads for prefill (large GEMM)
-  nntrainer::Engine::Global().applyPrefillThreads();
-
   std::vector<float *> output;
 
   if (SAVE_KVCACHE) {
@@ -477,15 +465,6 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       static_cast<float>(id_list[b]);
 
   auto start_generation = std::chrono::high_resolution_clock::now();
-
-  // Use fewer OMP threads for decode (small GEMV, less overhead)
-  nntrainer::Engine::Global().applyDecodeThreads();
-
-  // Keep BS pool unpaused for the entire decode loop to avoid per-GEMV
-  // unpause/pause overhead. During decode, GEMV and attention run
-  // sequentially so there's no oversubscription between BS pool and OMP.
-  auto *pool_mgr = nntrainer::Engine::Global().getThreadPoolManager();
-  auto decode_pool_guard = pool_mgr->scopedUnpause();
 
   for (token_generation_idx = input_len + 1;
        token_generation_idx < input_len + 1 + NUM_TO_GENERATE;
