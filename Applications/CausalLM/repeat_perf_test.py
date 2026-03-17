@@ -125,13 +125,15 @@ def run_benchmark(run_id, model_path, omp_threads=None, taskset_mask=None):
         "error": (err1 if rc1 != 0 else "") + (err2 if rc2 != 0 else "")
     }
 
-def fmt_stat(values):
-    """Format as 'mean ± stddev (min / max)' like llama-bench."""
+def fmt_stat(values, width=0):
+    """Format as 'mean ± stddev (min / max)' like llama-bench, centered to width."""
     if not values:
-        return "N/A"
-    mean = statistics.mean(values)
-    std = statistics.stdev(values) if len(values) > 1 else 0.0
-    return f"{mean:8.2f} ± {std:5.2f}  ({min(values):.2f} / {max(values):.2f})"
+        s = "N/A"
+    else:
+        mean = statistics.mean(values)
+        std = statistics.stdev(values) if len(values) > 1 else 0.0
+        s = f"{mean:.2f} ± {std:.2f} ({min(values):.2f} / {max(values):.2f})"
+    return s.center(width) if width else s
 
 def main():
     model_path = "./models/qwen3-0.6b"
@@ -184,26 +186,33 @@ def main():
     gens = [r["generation_tps"] for r in results if r["generation_tps"] > 0]
 
     # --- llama-bench style summary table ---
-    hdr_metric = "metric"
-    hdr_prefill = "Prefill"
-    hdr_gen = "Generation"
-    hdr_e2e = "Prefill + Generation"
+    # Compute stat strings first to determine column widths
+    s_prefill = fmt_stat(prefills, 0)
+    s_gen = fmt_stat(gens, 0)
+    s_e2e = fmt_stat(e2es, 0)
 
-    col_w = 34  # width for value columns
+    h1 = "Prefill (t/s)"
+    h2 = "Generation (t/s)"
+    h3 = "Prefill + Generation (t/s)"
+    h_row = "metric"
+
+    # Each column width = max(header, value) + 2 padding
+    c1 = max(len(h1), len(s_prefill)) + 2
+    c2 = max(len(h2), len(s_gen)) + 2
+    c3 = max(len(h3), len(s_e2e)) + 2
+    c0 = max(len(h_row), len("mean ± sd (min/max)")) + 2
+
+    sep = f"+{'-' * c0}+{'-' * c1}+{'-' * c2}+{'-' * c3}+"
 
     print()
     print(f"model: {model_path}, runs: {len(results)}")
-    sep = "+" + "-" * 22 + "+" + ("-" * col_w + "+") * 3
     print(sep)
-    print(f"| {'metric':>20} "
-          f"| {'Prefill (t/s)':^{col_w-2}} "
-          f"| {'Generation (t/s)':^{col_w-2}} "
-          f"| {'Prefill + Generation (t/s)':^{col_w-2}} |")
+    print(f"|{h_row:^{c0}}|{h1:^{c1}}|{h2:^{c2}}|{h3:^{c3}}|")
     print(sep)
-    print(f"| {'mean ± sd (min/max)':>20} "
-          f"| {fmt_stat(prefills):>{col_w-2}} "
-          f"| {fmt_stat(gens):>{col_w-2}} "
-          f"| {fmt_stat(e2es):>{col_w-2}} |")
+    print(f"|{'mean ± sd (min/max)':^{c0}}"
+          f"|{fmt_stat(prefills, c1):^{c1}}"
+          f"|{fmt_stat(gens, c2):^{c2}}"
+          f"|{fmt_stat(e2es, c3):^{c3}}|")
     print(sep)
 
     # --- Per-run detail ---
