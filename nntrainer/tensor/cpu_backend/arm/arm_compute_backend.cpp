@@ -498,18 +498,19 @@ template <>
 void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
                      int gqa_size, int tile_size, size_t local_window_size,
-                     int head_start, int head_end) {
+                     int head_start, int head_end, int gqa_start,
+                     int gqa_end) {
 #ifdef ENABLE_FP16
   neon::compute_kcaches<_FP16>(in, reinterpret_cast<const _FP16 *>(kcache),
                                output, num_rows, num_cache_head, head_dim,
                                gqa_size, tile_size, local_window_size,
-                               head_start, head_end);
+                               head_start, head_end, gqa_start, gqa_end);
 #else
 /// @note float16x4_t and related FP16 NEON are available
 #if defined(__aarch64__) || defined(_M_ARM64)
   neon::compute_kcaches_uint16(in, kcache, output, num_rows, num_cache_head,
                                head_dim, gqa_size, tile_size, local_window_size,
-                               head_start, head_end);
+                               head_start, head_end, gqa_start, gqa_end);
 #else
   __fallback_compute_kcaches(in, kcache, output, num_rows, num_cache_head,
                              head_dim, gqa_size, tile_size, local_window_size,
@@ -522,18 +523,19 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const uint16_t *vcache, float *output,
                                         int num_cache_head, int gqa_size,
                                         int head_dim, size_t local_window_size,
-                                        int head_start, int head_end) {
+                                        int head_start, int head_end,
+                                        int gqa_start, int gqa_end) {
 #ifdef ENABLE_FP16
   neon::compute_fp16vcache_fp32_transposed(
     row_num, in, reinterpret_cast<const _FP16 *>(vcache), output,
     num_cache_head, gqa_size, head_dim, local_window_size, head_start,
-    head_end);
+    head_end, gqa_start, gqa_end);
 #else
 /// @note float16x4_t and related FP16 NEON are available
 #if defined(__aarch64__) || defined(_M_ARM64)
   neon::compute_fp16vcache_fp32_transposed(
     row_num, in, vcache, output, num_cache_head, gqa_size, head_dim,
-    local_window_size, head_start, head_end);
+    local_window_size, head_start, head_end, gqa_start, gqa_end);
 #else
   __fallback_compute_fp16vcache_fp32_transposed(
     row_num, in, vcache, output, num_cache_head, gqa_size, head_dim,

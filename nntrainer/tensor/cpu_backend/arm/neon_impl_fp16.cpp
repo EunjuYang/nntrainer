@@ -1907,12 +1907,16 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const __fp16 *vcache, float *output,
                                         int num_cache_head, int gqa_size,
                                         int head_dim, size_t local_window_size,
-                                        int head_start, int head_end) {
+                                        int head_start, int head_end,
+                                        int gqa_start, int gqa_end) {
   std::vector<float> tmp_fp32(head_dim);
 
   // If head_end is -1, process all heads from head_start to num_cache_head.
   // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int actual_gqa_start = gqa_start;
+  int actual_gqa_end = (gqa_end < 0) ? gqa_size : gqa_end;
+  int actual_gqa_count = actual_gqa_end - actual_gqa_start;
 
   // Validate head range: head_start must be less than actual_head_end
   NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
@@ -1923,8 +1927,9 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
     int num_blocks = head_dim / 4;
     int rem = head_dim % 4;
 
-    std::vector<float32x4_t> sumVec(num_blocks * gqa_size, vdupq_n_f32(0.0f));
-    std::vector<float> sumRem(gqa_size * rem, 0.0f);
+    std::vector<float32x4_t> sumVec(num_blocks * actual_gqa_count,
+                                    vdupq_n_f32(0.0f));
+    std::vector<float> sumRem(actual_gqa_count * rem, 0.0f);
 
     for (int j = row_num < local_window_size ? 0
                                              : row_num + 1 - local_window_size;
@@ -1933,22 +1938,23 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
 
       load_fp16_4_to_chunk(vptr, tmp_fp32.data(), head_dim);
 
-      for (int h = 0; h < gqa_size; ++h) {
+      for (int h = actual_gqa_start; h < actual_gqa_end; ++h) {
         float a_val = in[(row_num < local_window_size
                             ? j
                             : j - (row_num + 1 - local_window_size)) *
                            gqa_size * num_cache_head +
                          n * gqa_size + h];
 
+        int h_local = h - actual_gqa_start;
         float32x4_t inVec = vdupq_n_f32(a_val);
 
         for (int b = 0; b < num_blocks; ++b) {
           float32x4_t bVec = vld1q_f32(&tmp_fp32[b * 4]);
-          sumVec[h * num_blocks + b] =
-            vfmaq_f32(sumVec[h * num_blocks + b], inVec, bVec);
+          sumVec[h_local * num_blocks + b] =
+            vfmaq_f32(sumVec[h_local * num_blocks + b], inVec, bVec);
         }
 
-        float *remPtr = &sumRem.data()[h * rem];
+        float *remPtr = &sumRem.data()[h_local * rem];
         int base = num_blocks * 4;
         for (int r = 0; r < rem; ++r) {
           remPtr[r] += a_val * tmp_fp32[base + r];
@@ -1956,13 +1962,14 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
       }
     }
 
-    for (int h = 0; h < gqa_size; ++h) {
+    for (int h = actual_gqa_start; h < actual_gqa_end; ++h) {
+      int h_local = h - actual_gqa_start;
       for (int b = 0; b < num_blocks; ++b) {
         int out_base = (n * gqa_size + h) * head_dim + b * 4;
-        vst1q_f32(&output[out_base], sumVec[h * num_blocks + b]);
+        vst1q_f32(&output[out_base], sumVec[h_local * num_blocks + b]);
       }
 
-      float *remPtr = &sumRem.data()[h * rem];
+      float *remPtr = &sumRem.data()[h_local * rem];
       int base = num_blocks * 4;
       for (int r = 0; r < rem; ++r) {
         int out_idx = (n * gqa_size + h) * head_dim + base + r;
@@ -1979,10 +1986,14 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
                                    const __fp16 *vcache, __fp16 *output,
                                    int num_cache_head, int gqa_size,
                                    int head_dim, size_t local_window_size,
-                                   int head_start, int head_end) {
+                                   int head_start, int head_end, int gqa_start,
+                                   int gqa_end) {
   // If head_end is -1, process all heads from head_start to num_cache_head.
   // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int actual_gqa_start = gqa_start;
+  int actual_gqa_end = (gqa_end < 0) ? gqa_size : gqa_end;
+  int actual_gqa_count = actual_gqa_end - actual_gqa_start;
 
   // Validate head range: head_start must be less than actual_head_end
   NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
@@ -1998,8 +2009,9 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
 
     // Initialize accumulators for the dot product results
     // sumVec stores vectorized sums, sumRem stores scalar sums for remainders
-    std::vector<float16x8_t> sumVec(num_blocks * gqa_size, vdupq_n_f16(0.0f));
-    std::vector<__fp16> sumRem(gqa_size * rem, 0.0f);
+    std::vector<float16x8_t> sumVec(num_blocks * actual_gqa_count,
+                                    vdupq_n_f16(0.0f));
+    std::vector<__fp16> sumRem(actual_gqa_count * rem, 0.0f);
 
     // Calculate start row based on local window size (Sliding Window Attention)
     // Only consider tokens within the window
@@ -2012,7 +2024,7 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
 
       // Loop over Grouped Query Attention (GQA) groups
       // Each Key/Value head is shared by 'gqa_size' Query heads
-      for (int h = 0; h < gqa_size; ++h) {
+      for (int h = actual_gqa_start; h < actual_gqa_end; ++h) {
         // Calculate index for the attention probability (score) input 'in'
         // 'in' contains Softmax(QK^T) results
         __fp16 a_val = in[(row_num < local_window_size
@@ -2026,13 +2038,14 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
         // 'val'
         float16x8_t inVec = vdupq_n_f16(a_val);
 
+        int h_local = h - actual_gqa_start;
         for (int b = 0; b < num_blocks; ++b) {
           float16x8_t bVec = vld1q_f16(&vptr[b * 8]);
-          sumVec[h * num_blocks + b] =
-            vfmaq_f16(sumVec[h * num_blocks + b], inVec, bVec);
+          sumVec[h_local * num_blocks + b] =
+            vfmaq_f16(sumVec[h_local * num_blocks + b], inVec, bVec);
         }
 
-        __fp16 *remPtr = &sumRem.data()[h * rem];
+        __fp16 *remPtr = &sumRem.data()[h_local * rem];
         int base = num_blocks * 8;
         for (int r = 0; r < rem; ++r) {
           remPtr[r] += a_val * vptr[base + r];
@@ -2040,13 +2053,14 @@ void compute_fp16vcache_transposed(int row_num, const __fp16 *in,
       }
     }
 
-    for (int h = 0; h < gqa_size; ++h) {
+    for (int h = actual_gqa_start; h < actual_gqa_end; ++h) {
+      int h_local = h - actual_gqa_start;
       for (int b = 0; b < num_blocks; ++b) {
         int out_base = (n * gqa_size + h) * head_dim + b * 8;
-        vst1q_f16(&output[out_base], sumVec[h * num_blocks + b]);
+        vst1q_f16(&output[out_base], sumVec[h_local * num_blocks + b]);
       }
 
-      __fp16 *remPtr = &sumRem.data()[h * rem];
+      __fp16 *remPtr = &sumRem.data()[h_local * rem];
       int base = num_blocks * 8;
       for (int r = 0; r < rem; ++r) {
         int out_idx = (n * gqa_size + h) * head_dim + base + r;
@@ -2060,12 +2074,15 @@ template <>
 void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
                      int gqa_size, int tile_size, size_t local_window_size,
-                     int head_start, int head_end) {
+                     int head_start, int head_end, int gqa_start,
+                     int gqa_end) {
   std::vector<float> tmp_fp32(head_dim);
 
   // If head_end is -1, process all heads from head_start to num_cache_head.
   // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int actual_gqa_start = gqa_start;
+  int actual_gqa_end = (gqa_end < 0) ? gqa_size : gqa_end;
 
   // Validate head range: head_start must be less than actual_head_end
   NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
@@ -2082,7 +2099,7 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
       int row_tile_start = t * tile_size;
       int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
 
-      for (int g = 0; g < gqa_size; ++g) {
+      for (int g = actual_gqa_start; g < actual_gqa_end; ++g) {
         const float *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
         for (int t_row = 0; t_row < tile_rows; ++t_row) {
           int row = start_row + row_tile_start + t_row;
@@ -2128,11 +2145,14 @@ void compute_kcaches(const float *in, const __fp16 *kcache, float *output,
 void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
                      int num_rows, int num_cache_head, int head_dim,
                      int gqa_size, int tile_size, size_t local_window_size,
-                     int head_start, int head_end) {
+                     int head_start, int head_end, int gqa_start,
+                     int gqa_end) {
 
   // If head_end is -1, process all heads from head_start to num_cache_head.
   // No other negative values are accepted for head_end.
   int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int actual_gqa_start = gqa_start;
+  int actual_gqa_end = (gqa_end < 0) ? gqa_size : gqa_end;
 
   // Validate head range: head_start must be less than actual_head_end
   NNTR_THROW_IF(head_start >= actual_head_end, std::invalid_argument)
@@ -2155,7 +2175,7 @@ void compute_kcaches(const __fp16 *in, const __fp16 *kcache, __fp16 *output,
       int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
 
       // Loop over Grouped Query Attention groups
-      for (int g = 0; g < gqa_size; ++g) {
+      for (int g = actual_gqa_start; g < actual_gqa_end; ++g) {
         // Pointer to the current Query vector
         const __fp16 *in_ptr = in + (n * gqa_size + g) * head_dim;
 

@@ -1198,7 +1198,8 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         int num_cache_head, int gqa_size,
                                         int head_dim,
                                         size_t local_window_size = UINT_MAX,
-                                        int head_start = 0, int head_end = -1);
+                                        int head_start = 0, int head_end = -1,
+                                        int gqa_start = 0, int gqa_end = -1);
 
 /**
  * @brief Compute kcaches
@@ -1217,6 +1218,8 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
  *            The range is [head_start, head_end), i.e., head_end is exclusive.
  *            Default -1 means process all heads from head_start to
  *            num_cache_head. No other negative values are accepted.
+ * @param[in] gqa_start start index of GQA groups to process (default 0)
+ * @param[in] gqa_end end index of GQA groups to process (default gqa_size)
  * @note Caller must ensure head_start < head_end when head_end != -1.
  */
 template <typename BType>
@@ -1224,7 +1227,7 @@ void compute_kcaches(const float *in, const BType *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
                      int gqa_size, int tile_size,
                      size_t local_window_size = UINT_MAX, int head_start = 0,
-                     int head_end = -1);
+                     int head_end = -1, int gqa_start = 0, int gqa_end = -1);
 
 /**
  * @brief Compute rotary embedding value

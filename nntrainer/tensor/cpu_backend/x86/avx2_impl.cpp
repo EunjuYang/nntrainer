@@ -1516,7 +1516,8 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
                                         const uint16_t *vcache, float *output,
                                         int num_cache_head, int gqa_size,
                                         int head_dim, size_t local_window_size,
-                                        int head_start, int head_end) {
+                                        int head_start, int head_end,
+                                        int gqa_start, int gqa_end) {
 
   // If head_end is -1, process all heads from head_start to num_cache_head.
   // No other negative values are accepted for head_end.
@@ -1527,9 +1528,13 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
     << "head_start (" << head_start << ") must be less than head_end ("
     << actual_head_end << ")";
 
+  int actual_gqa_start = gqa_start;
+  int actual_gqa_end = (gqa_end < 0) ? gqa_size : gqa_end;
+  int actual_gqa_count = actual_gqa_end - actual_gqa_start;
+
   std::vector<float> tmp_fp32(head_dim);
   int num_blocks = head_dim / 8;
-  __m256 *sumVec = new __m256[std::max(1, num_blocks * gqa_size)];
+  __m256 *sumVec = new __m256[std::max(1, num_blocks * actual_gqa_count)];
 
   for (int n = head_start; n < actual_head_end; ++n) {
     int rem = head_dim % 8;
@@ -1539,10 +1544,10 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
      * argument ‘__m256’ [-Wignored-attributes].
      * So it is implemented that way.
      */
-    for (int i = 0; i < num_blocks * gqa_size; i++) {
+    for (int i = 0; i < num_blocks * actual_gqa_count; i++) {
       sumVec[i] = _mm256_setzero_ps();
     }
-    std::vector<float> sumRem((size_t)gqa_size * rem, 0.0f);
+    std::vector<float> sumRem((size_t)actual_gqa_count * rem, 0.0f);
 
     for (int j = row_num < local_window_size ? 0
                                              : row_num + 1 - local_window_size;
@@ -1550,7 +1555,8 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
       const uint16_t *vptr = vcache + (j * num_cache_head + n) * head_dim;
       load_fp16_8_to_chunk(vptr, tmp_fp32.data(), head_dim);
 
-      for (int h = 0; h < gqa_size; ++h) {
+      for (int h = actual_gqa_start; h < actual_gqa_end; ++h) {
+        int h_local = h - actual_gqa_start;
         float a_val =
           in[(row_num < local_window_size
                 ? j
@@ -1562,11 +1568,11 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
 
         for (int b = 0; b < num_blocks; ++b) {
           __m256 bVec = _mm256_loadu_ps(&tmp_fp32[b * 8]);
-          sumVec[h * num_blocks + b] =
-            _mm256_fmadd_ps(inVec, bVec, sumVec[h * num_blocks + b]);
+          sumVec[h_local * num_blocks + b] =
+            _mm256_fmadd_ps(inVec, bVec, sumVec[h_local * num_blocks + b]);
         }
 
-        float *remPtr = &sumRem.data()[h * rem];
+        float *remPtr = &sumRem.data()[h_local * rem];
         int base = num_blocks * 8;
         for (int r = 0; r < rem; ++r) {
           remPtr[r] += a_val * tmp_fp32[base + r];
@@ -1574,14 +1580,15 @@ void compute_fp16vcache_fp32_transposed(int row_num, const float *in,
       }
     }
 
-    for (int h = 0; h < gqa_size; ++h) {
+    for (int h = actual_gqa_start; h < actual_gqa_end; ++h) {
+      int h_local = h - actual_gqa_start;
       for (int b = 0; b < num_blocks; ++b) {
         int out_base = (n * gqa_size + h) * head_dim + b * 8;
-        _mm256_storeu_ps(&output[out_base], sumVec[h * num_blocks + b]);
+        _mm256_storeu_ps(&output[out_base], sumVec[h_local * num_blocks + b]);
       }
 
-      float *remPtr = &sumRem.data()[h * rem];
-      // float *remPtr = &sumRem[h * rem];
+      float *remPtr = &sumRem.data()[h_local * rem];
+      // float *remPtr = &sumRem[h_local * rem];
       int base = num_blocks * 8;
       for (int r = 0; r < rem; ++r) {
         int out_idx = (n * gqa_size + h) * head_dim + base + r;
@@ -1596,7 +1603,8 @@ template <>
 void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
                      int num_rows, int num_cache_head, int head_dim,
                      int gqa_size, int tile_size, size_t local_window_size,
-                     int head_start, int head_end) {
+                     int head_start, int head_end,
+                     int gqa_start, int gqa_end) {
   std::vector<float> tmp_fp32(head_dim);
 
   // If head_end is -1, process all heads from head_start to num_cache_head.
@@ -1608,6 +1616,9 @@ void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
     << "head_start (" << head_start << ") must be less than head_end ("
     << actual_head_end << ")";
 
+  int actual_gqa_start = gqa_start;
+  int actual_gqa_end = (gqa_end < 0) ? gqa_size : gqa_end;
+
   int start_row =
     num_rows < local_window_size ? 0 : num_rows - local_window_size;
   int row_cnt = num_rows < local_window_size ? num_rows : local_window_size;
@@ -1618,7 +1629,7 @@ void compute_kcaches(const float *in, const uint16_t *kcache, float *output,
       int row_tile_start = t * tile_size;
       int tile_rows = std::min(tile_size, row_cnt - row_tile_start);
 
-      for (int g = 0; g < gqa_size; ++g) {
+      for (int g = actual_gqa_start; g < actual_gqa_end; ++g) {
         const float *in_ptr = in + n * gqa_size * head_dim + g * head_dim;
         for (int t_row = 0; t_row < tile_rows; ++t_row) {
           int row = start_row + row_tile_start + t_row;

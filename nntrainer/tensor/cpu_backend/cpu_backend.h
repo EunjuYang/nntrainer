@@ -411,7 +411,8 @@ extern void
 compute_fp16vcache_transposed(int row_num, const _FP16 *in, const _FP16 *vcache,
                               _FP16 *output, int num_cache_head, int gqa_size,
                               int head_dim, size_t local_window_size = UINT_MAX,
-                              int head_start = 0, int head_end = -1);
+                              int head_start = 0, int head_end = -1,
+                              int gqa_start = 0, int gqa_end = -1);
 
 /**
  * @brief Compute kcaches
@@ -435,7 +436,8 @@ extern void compute_kcaches(const _FP16 *in, const _FP16 *kcache, _FP16 *output,
                             int num_rows, int num_cache_head, int head_dim,
                             int gqa_size, int tile_size,
                             size_t local_window_size = UINT_MAX,
-                            int head_start = 0, int head_end = -1);
+                            int head_start = 0, int head_end = -1,
+                            int gqa_start = 0, int gqa_end = -1);
 
 /**
  * @brief Compute rotary embedding value
@@ -1374,7 +1376,8 @@ extern void softmax_row(_FP16 *qk_out, size_t start_row, size_t end_row,
 extern void compute_fp16vcache_fp32_transposed(
   int row_num, const float *in, const uint16_t *vcache, float *output,
   int num_cache_head, int gqa_size, int head_dim,
-  size_t local_window_size = UINT_MAX, int head_start = 0, int head_end = -1);
+  size_t local_window_size = UINT_MAX, int head_start = 0, int head_end = -1,
+  int gqa_start = 0, int gqa_end = -1);
 
 /**
  * @brief Compute kcaches
@@ -1400,7 +1403,8 @@ extern void compute_kcaches(const float *in, const BType *kcache, float *output,
                             int num_rows, int num_cache_head, int head_dim,
                             int gqa_size, int tile_size,
                             size_t local_window_size = UINT_MAX,
-                            int head_start = 0, int head_end = -1);
+                            int head_start = 0, int head_end = -1,
+                            int gqa_start = 0, int gqa_end = -1);
 
 /**
  * @brief Compute rotary embedding value

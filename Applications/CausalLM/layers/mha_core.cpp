@@ -388,21 +388,24 @@ void MHACoreLayer::compute_kcaches(
   if (in.getDataType() == ml::train::TensorDim::DataType::FP32) {
     if (sequence_len == 1) {
       // Single token processing (common during generation)
-      // Parallelize over KV heads for decoding since Q direction is always 1
+      // Parallelize over Q heads for better load balancing on big.LITTLE
       int row_to_compute = is_causal ? from + 1 : from + sequence_len;
       unsigned int num_cache_head = num_head / group_size;
 
-      // Use OpenMP for lower overhead parallelization during decoding
       const float *in_data = in.getData<float>();
       const uint16_t *cache_data = cache.getData<uint16_t>();
       float *out_data = out.getData<float>();
 
-#pragma omp parallel for schedule(static) num_threads(4)
-      for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+      // Use Q-head level parallelism (num_head items) with dynamic scheduling
+      // for better work distribution across heterogeneous cores (big.LITTLE)
+#pragma omp parallel for schedule(dynamic, 1)
+      for (unsigned int q_head = 0; q_head < num_head; ++q_head) {
+        unsigned int head_kv = q_head / group_size;
+        unsigned int gqa_idx = q_head % group_size;
         nntrainer::compute_kcaches<uint16_t>(
           in_data, cache_data, out_data, row_to_compute, num_cache_head,
           head_dim, group_size, tile_size, local_window_size, head_kv,
-          head_kv + 1);
+          head_kv + 1, gqa_idx, gqa_idx + 1);
       }
 
     } else {
@@ -436,20 +439,24 @@ void MHACoreLayer::compute_kcaches(
 #ifdef ENABLE_FP16
     if (sequence_len == 1) {
       // Single token processing (common during generation)
-      // Parallelize over KV heads for decoding since Q direction is always 1
+      // Parallelize over Q heads for better load balancing on big.LITTLE
       int num_rows = is_causal ? from + 1 : from + sequence_len;
       unsigned int num_cache_head = num_head / group_size;
 
-      // Use OpenMP for lower overhead parallelization during decoding
       const _FP16 *in_data = in.getData<_FP16>();
       const _FP16 *cache_data = cache.getData<_FP16>();
       _FP16 *out_data = out.getData<_FP16>();
 
-#pragma omp parallel for schedule(static)
-      for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+      // Use Q-head level parallelism (num_head items) with dynamic scheduling
+      // for better work distribution across heterogeneous cores (big.LITTLE)
+#pragma omp parallel for schedule(dynamic, 1)
+      for (unsigned int q_head = 0; q_head < num_head; ++q_head) {
+        unsigned int head_kv = q_head / group_size;
+        unsigned int gqa_idx = q_head % group_size;
         nntrainer::compute_kcaches(
           in_data, cache_data, out_data, num_rows, num_cache_head, head_dim,
-          group_size, tile_size, local_window_size, head_kv, head_kv + 1);
+          group_size, tile_size, local_window_size, head_kv, head_kv + 1,
+          gqa_idx, gqa_idx + 1);
       }
     } else {
       std::vector<std::future<void>> futures;
@@ -1235,19 +1242,23 @@ void MHACoreLayer::compute_fp16vcache_transposed(
         fut.get();
     } else {
       // Single token processing (common during generation)
-      // Parallelize over KV heads for decoding since Q direction is always 1
+      // Parallelize over Q heads for better load balancing on big.LITTLE
       int row_num = to - 1;
+      int num_q_heads = num_cache_head * gqa_size;
 
-      // Use OpenMP for lower overhead parallelization during decoding
       const float *in_data = in.getData<float>();
       const uint16_t *vcache_data = vcache.getData<uint16_t>();
       float *output_data = output.getData<float>();
 
-#pragma omp parallel for schedule(static)
-      for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+      // Use Q-head level parallelism with dynamic scheduling
+#pragma omp parallel for schedule(dynamic, 1)
+      for (int q_head = 0; q_head < num_q_heads; ++q_head) {
+        int head_kv = q_head / gqa_size;
+        int gqa_idx = q_head % gqa_size;
         nntrainer::compute_fp16vcache_fp32_transposed(
           row_num, in_data, vcache_data, output_data, num_cache_head, gqa_size,
-          head_dim, local_window_size, head_kv, head_kv + 1);
+          head_dim, local_window_size, head_kv, head_kv + 1, gqa_idx,
+          gqa_idx + 1);
       }
     }
   } else if (in.getDataType() == ml::train::TensorDim::DataType::FP16) {
@@ -1282,19 +1293,23 @@ void MHACoreLayer::compute_fp16vcache_transposed(
         fut.get();
     } else {
       // Single token processing (common during generation)
-      // Parallelize over KV heads for decoding since Q direction is always 1
+      // Parallelize over Q heads for better load balancing on big.LITTLE
       int row_num = to - 1;
+      int num_q_heads = num_cache_head * gqa_size;
 
-      // Use OpenMP for lower overhead parallelization during decoding
       const _FP16 *in_data = in.getData<_FP16>();
       const _FP16 *vcache_data = vcache.getData<_FP16>();
       _FP16 *output_data = output.getData<_FP16>();
 
-#pragma omp parallel for schedule(static)
-      for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
+      // Use Q-head level parallelism with dynamic scheduling
+#pragma omp parallel for schedule(dynamic, 1)
+      for (int q_head = 0; q_head < num_q_heads; ++q_head) {
+        int head_kv = q_head / gqa_size;
+        int gqa_idx = q_head % gqa_size;
         nntrainer::compute_fp16vcache_transposed(
           row_num, in_data, vcache_data, output_data, num_cache_head, gqa_size,
-          head_dim, local_window_size, head_kv, head_kv + 1);
+          head_dim, local_window_size, head_kv, head_kv + 1, gqa_idx,
+          gqa_idx + 1);
       }
     }
 #else
