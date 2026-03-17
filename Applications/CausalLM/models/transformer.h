@@ -173,15 +173,6 @@ protected:
   unsigned int MAX_POSITION_EMBEDDINGS; /**< max_position embeddings */
   bool MEMORY_SWAP;                     /**< memory swap option */
   unsigned int FSU_LOOKAHEAD;
-
-public:
-  /** benchmark result storage */
-  double last_prefill_tps = 0.0;       /**< Last prefill TPS */
-  double last_generation_tps = 0.0;    /**< Last generation TPS */
-  unsigned int last_prefill_tokens = 0; /**< Last prefill token count */
-  unsigned int last_gen_tokens = 0;     /**< Last generation token count */
-  int64_t last_prefill_ms = 0;          /**< Last prefill duration in ms */
-  int64_t last_gen_ms = 0;              /**< Last generation duration in ms */
 };
 /**
  * Loads JSON data from a file with detailed error handling

@@ -502,21 +502,15 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     std::chrono::duration_cast<std::chrono::milliseconds>(finish_generation -
                                                           start_generation);
 
-  last_prefill_tokens = init_len;
-  last_prefill_ms = prefill_duration.count();
-  last_prefill_tps =
-    last_prefill_ms > 0 ? (double)init_len / last_prefill_ms * 1000 : 0;
-  last_gen_tokens = generation_cnt;
-  last_gen_ms = generation_duration.count();
-  last_generation_tps =
-    last_gen_ms > 0 ? (double)generation_cnt / last_gen_ms * 1000 : 0;
-
   std::cout << "\n\n";
   std::cout << "=================[ LLM with NNTrainer ]===================\n";
-  std::cout << "prefill: " << last_prefill_tokens << " tokens, "
-            << last_prefill_ms << " ms, " << last_prefill_tps << " TPS\n";
-  std::cout << "generation: " << last_gen_tokens << " tokens, "
-            << last_gen_ms << " ms, " << last_generation_tps << " TPS\n";
+  std::cout << "prefill: " << init_len << " tokens, "
+            << prefill_duration.count() << " ms, "
+            << ((double)init_len / prefill_duration.count() * 1000) << " TPS\n";
+  std::cout << "generation: " << generation_cnt << " tokens, "
+            << generation_duration.count() << " ms, "
+            << ((double)generation_cnt / generation_duration.count() * 1000)
+            << " TPS\n";
   std::cout << "==========================================================\n";
 };
 
