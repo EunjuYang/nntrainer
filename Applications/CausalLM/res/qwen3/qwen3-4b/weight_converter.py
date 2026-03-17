@@ -24,18 +24,23 @@ def save_qwen3_for_nntrainer(params, n_layers, dtype, file):
         else:  
             save_weight(params[f"{layer_name}{proj_name}.weight"].permute(1, 0))  
 
-    def save_attention(layer_name):  
-        """Save attention layer weights"""  
-        save_weight(params[f"{layer_name}input_layernorm.weight"])  
-          
-        # Save Q/K/V/O projections using helper  
-        for proj in ["q_proj", "k_proj", "v_proj", "o_proj"]:  
-            save_projection(layer_name, f"self_attn.{proj}")  
-            # Qwen3
-            proj_norm_name = f"{layer_name}self_attn.{proj[0]}_norm.weight"
-            if proj_norm_name in params:
-                print(proj_norm_name)
-                save_weight(params[proj_norm_name])
+    def save_attention(layer_name):
+        """Save attention layer weights"""
+        save_weight(params[f"{layer_name}input_layernorm.weight"])
+
+        # Save QKV projections grouped (matches fused QKVLayer weight order)
+        for proj in ["q_proj", "k_proj", "v_proj"]:
+            save_projection(layer_name, f"self_attn.{proj}")
+
+        # Save Q/K norms after projections (matches topological sort order)
+        for norm_prefix in ["q", "k"]:
+            norm_name = f"{layer_name}self_attn.{norm_prefix}_norm.weight"
+            if norm_name in params:
+                print(norm_name)
+                save_weight(params[norm_name])
+
+        # Save O projection
+        save_projection(layer_name, "self_attn.o_proj")
 
     def save_feed_forward(layer_name):  
         """Save feed forward layer weights"""  
