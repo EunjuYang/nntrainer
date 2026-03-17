@@ -94,6 +94,33 @@ void hsgemv(const unsigned int TStorageOrder, bool TransA, const unsigned int M,
   unsigned int lenX = (TransA) ? 1 + (M - 1) * (incX) : 1 + (N - 1) * (incX);
   unsigned int lenY = (TransA) ? 1 + (N - 1) * (incY) : 1 + (M - 1) * (incY);
 
+  // For row-major with unit strides, convert only the input/output vectors
+  // instead of the entire M*N weight matrix. This reduces copy overhead from
+  // O(M*N) to O(M+N), which is critical for GEMV during token generation.
+  if (TStorageOrder == ROW_MAJOR && incX == 1 && incY == 1) {
+    unsigned int numX = TransA ? M : N;
+    unsigned int numY = TransA ? N : M;
+
+    _FP16 *X_fp16 = new _FP16[numX];
+    _FP16 *Y_fp16 = new _FP16[numY];
+
+    nntrainer::neon::copy_fp32_to_fp16(numX, X, X_fp16);
+    nntrainer::neon::copy_fp32_to_fp16(numY, Y, Y_fp16);
+
+    if (TransA) {
+      nntrainer::neon::hgemv_transpose(A, X_fp16, Y_fp16, M, N, alpha, beta);
+    } else {
+      nntrainer::neon::hgemv(A, X_fp16, Y_fp16, M, N, alpha, beta);
+    }
+
+    nntrainer::neon::copy_fp16_to_fp32(numY, Y_fp16, Y);
+
+    delete[] X_fp16;
+    delete[] Y_fp16;
+    return;
+  }
+
+  // Fallback for non-standard layouts: copy entire matrix
   float *A_ = new float[M * N];
 
   scopy(M * N, A, 1, A_, 1);
