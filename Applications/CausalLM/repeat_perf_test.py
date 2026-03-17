@@ -125,14 +125,13 @@ def run_benchmark(run_id, model_path, omp_threads=None, taskset_mask=None):
         "error": (err1 if rc1 != 0 else "") + (err2 if rc2 != 0 else "")
     }
 
-def print_stat(label, values, unit=""):
+def fmt_stat(values):
+    """Format as 'mean ± stddev (min / max)' like llama-bench."""
     if not values:
-        print(f"{label}: No valid data found.")
-        return
+        return "N/A"
     mean = statistics.mean(values)
-    std = statistics.stdev(values) if len(values) > 1 else 0
-    print(f"{label}: Mean={mean:.2f}{unit}, StdDev={std:.2f}{unit}")
-    print(f"{' ' * len(label)}  Min={min(values):.2f}{unit}, Max={max(values):.2f}{unit}")
+    std = statistics.stdev(values) if len(values) > 1 else 0.0
+    return f"{mean:8.2f} ± {std:5.2f}  ({min(values):.2f} / {max(values):.2f})"
 
 def main():
     model_path = "./models/qwen3-0.6b"
@@ -184,20 +183,36 @@ def main():
     e2es = [r["e2e_tps"] for r in results if r["e2e_tps"] > 0]
     gens = [r["generation_tps"] for r in results if r["generation_tps"] > 0]
 
-    print("-" * 60)
-    print("BENCHMARK SUMMARY")
-    print("-" * 60)
-    print(f"Runs captured: {len(results)}")
-    print_stat("Prefill TPS    ", prefills)
-    print_stat("E2E TPS        ", e2es)
-    print_stat("Generation TPS ", gens)
+    # --- llama-bench style summary table ---
+    hdr_metric = "metric"
+    hdr_prefill = "Prefill"
+    hdr_gen = "Generation"
+    hdr_e2e = "Prefill + Generation"
 
-    print(f"\nDetailed Trend:")
-    print("Run\tStartT\tEndT\tPrefill\tE2E\tGeneration")
+    col_w = 34  # width for value columns
+
+    print()
+    print(f"model: {model_path}, runs: {len(results)}")
+    sep = "+" + "-" * 22 + "+" + ("-" * col_w + "+") * 3
+    print(sep)
+    print(f"| {'metric':>20} "
+          f"| {'Prefill (t/s)':^{col_w-2}} "
+          f"| {'Generation (t/s)':^{col_w-2}} "
+          f"| {'Prefill + Generation (t/s)':^{col_w-2}} |")
+    print(sep)
+    print(f"| {'mean ± sd (min/max)':>20} "
+          f"| {fmt_stat(prefills):>{col_w-2}} "
+          f"| {fmt_stat(gens):>{col_w-2}} "
+          f"| {fmt_stat(e2es):>{col_w-2}} |")
+    print(sep)
+
+    # --- Per-run detail ---
+    print(f"\nPer-run detail:")
+    print(f"{'run':>3}  {'startT':>6}  {'endT':>6}  {'Prefill':>10}  {'Generation':>10}  {'P+G':>10}")
     for i, r in enumerate(results):
-        print(f"{i+1}\t{r['start_temp']:.1f}\t{r['end_temp']:.1f}\t"
-              f"{r['prefill_tps']:.2f}\t{r['e2e_tps']:.2f}\t"
-              f"{r['generation_tps']:.2f}")
+        print(f"{i+1:3d}  {r['start_temp']:6.1f}  {r['end_temp']:6.1f}  "
+              f"{r['prefill_tps']:10.2f}  {r['generation_tps']:10.2f}  "
+              f"{r['e2e_tps']:10.2f}")
 
 if __name__ == "__main__":
     """
