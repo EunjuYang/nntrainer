@@ -195,30 +195,95 @@ int main(int argc, char *argv[]) {
     // Construct weight file path
     const std::string weight_file =
       model_path + "/" + nntr_cfg["model_file_name"].get<std::string>();
+    const std::string arch =
+      cfg["architectures"].get<std::vector<std::string>>()[0];
 
     std::cout << weight_file << std::endl;
 
-    // Initialize and run model
-    auto model = causallm::Factory::Instance().create(
-      cfg["architectures"].get<std::vector<std::string>>()[0], cfg,
-      generation_cfg, nntr_cfg);
-    model->initialize();
-    model->load_weight(weight_file);
+    if (nntr_cfg.contains("benchmark")) {
+      unsigned int bench_prefill =
+        nntr_cfg["benchmark"]["prefill_tokens"].get<unsigned int>();
+      unsigned int bench_gen =
+        nntr_cfg["benchmark"]["generation_tokens"].get<unsigned int>();
+
+      std::cout
+        << "\n===============[ Benchmark Mode ]===============\n"
+        << "target prefill_tokens: " << bench_prefill
+        << ", generation_tokens: " << bench_gen << "\n";
+
+      double prefill_tps = 0.0;
+      double generation_tps = 0.0;
+
+      // --- Prefill Benchmark ---
+      {
+        std::cout << "\n--- [1/2] Prefill Benchmark ---\n";
+        json prefill_nntr_cfg = nntr_cfg;
+        prefill_nntr_cfg["num_to_generate"] = 1;
+        if (prefill_nntr_cfg["init_seq_len"].get<unsigned int>() <
+            bench_prefill)
+          prefill_nntr_cfg["init_seq_len"] = bench_prefill;
+        prefill_nntr_cfg["max_seq_len"] =
+          prefill_nntr_cfg["init_seq_len"].get<unsigned int>() + 2;
+
+        auto model = causallm::Factory::Instance().create(
+          arch, cfg, generation_cfg, prefill_nntr_cfg);
+        model->initialize();
+        model->load_weight(weight_file);
+        model->run(input_text, false, system_head_prompt, system_tail_prompt);
+
+        prefill_tps = model->last_prefill_tps;
+      }
+
+      // --- Generation Benchmark ---
+      {
+        std::cout << "\n--- [2/2] Generation Benchmark ---\n";
+        json gen_nntr_cfg = nntr_cfg;
+        gen_nntr_cfg["num_to_generate"] = bench_gen;
+        unsigned int gen_init =
+          gen_nntr_cfg["init_seq_len"].get<unsigned int>();
+        if (gen_nntr_cfg["max_seq_len"].get<unsigned int>() <
+            gen_init + bench_gen)
+          gen_nntr_cfg["max_seq_len"] = gen_init + bench_gen;
+
+        auto model = causallm::Factory::Instance().create(
+          arch, cfg, generation_cfg, gen_nntr_cfg);
+        model->initialize();
+        model->load_weight(weight_file);
+        model->run("test", false, "", "");
+
+        generation_tps = model->last_generation_tps;
+      }
+
+      // --- Benchmark Summary ---
+      std::cout
+        << "\n===============[ Benchmark Summary ]===============\n"
+        << "prefill  TPS: " << prefill_tps << "\n"
+        << "generation TPS: " << generation_tps << "\n"
+        << "===================================================\n";
+
+    } else {
+      // Normal mode
+      auto model = causallm::Factory::Instance().create(arch, cfg,
+                                                        generation_cfg,
+                                                        nntr_cfg);
+      model->initialize();
+      model->load_weight(weight_file);
 
 #ifdef PROFILE
-    start_peak_tracker();
+      start_peak_tracker();
 #endif
 #if defined(_WIN32)
-    model->run(input_text.c_str(), generation_cfg["do_sample"],
-               system_head_prompt.c_str(), system_tail_prompt.c_str());
+      model->run(input_text.c_str(), generation_cfg["do_sample"],
+                 system_head_prompt.c_str(), system_tail_prompt.c_str());
 #else
-    model->run(input_text, generation_cfg["do_sample"], system_head_prompt,
-               system_tail_prompt);
+      model->run(input_text, generation_cfg["do_sample"], system_head_prompt,
+                 system_tail_prompt);
 #endif
 #ifdef PROFILE
-    stop_and_print_peak();
+      stop_and_print_peak();
 #endif
-    printMemoryUsage();
+      printMemoryUsage();
+    }
 
   } catch (const std::exception &e) {
     std::cerr << "\n[!] FATAL ERROR: " << e.what() << "\n";

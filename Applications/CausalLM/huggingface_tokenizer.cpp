@@ -1,8 +1,7 @@
-
-/*!
+/**
  *  Copyright (c) 2023 by Contributors
- * \file huggingface_tokenizer.cc
- * \brief Huggingface tokenizer
+ * @file huggingface_tokenizer.cpp
+ * @brief Huggingface tokenizer
  */
 #include <tokenizers_c.h>
 #include <tokenizers_cpp.h>
@@ -10,7 +9,7 @@
 #include <cassert>
 
 namespace tokenizers {
-/*!
+/**
  * \brief A simple c++ header of tokenizer via C API.
  */
 class HFTokenizer : public Tokenizer {

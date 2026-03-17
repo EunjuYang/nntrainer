@@ -1,3 +1,8 @@
+##
+# @file repeat_perf_test.py
+# @brief Repeated performance test script for CausalLM on Android devices
+# @author Eunju Yang <ej.yang@samsung.com>
+
 import subprocess
 import re
 import time

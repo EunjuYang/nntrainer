@@ -1,7 +1,7 @@
-/*!
+/**
  *  Copyright (c) 2023 by Contributors
- * \file tokenizers_c.h
- * \brief C binding to tokenizers rust library
+ * @file tokenizers_c.h
+ * @brief C binding to tokenizers rust library
  */
 #ifndef TOKENIZERS_C_H_
 #define TOKENIZERS_C_H_
