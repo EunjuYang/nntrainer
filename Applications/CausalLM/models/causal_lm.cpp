@@ -99,6 +99,16 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
                   ? generation_cfg["temperature"].get<float>()
                   : 0.7;
   global_token_len = 0;
+
+  // Configure per-phase OMP thread counts from nntr_config.json
+  if (nntr_cfg.contains("prefill_threads")) {
+    nntrainer::Engine::Global().setPrefillThreads(
+      nntr_cfg["prefill_threads"].get<unsigned int>());
+  }
+  if (nntr_cfg.contains("decode_threads")) {
+    nntrainer::Engine::Global().setDecodeThreads(
+      nntr_cfg["decode_threads"].get<unsigned int>());
+  }
 }
 
 void CausalLM::constructModel() {
@@ -401,6 +411,9 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
   auto start_prefill = std::chrono::high_resolution_clock::now();
 
+  // Use more OMP threads for prefill (large GEMM)
+  nntrainer::Engine::Global().applyPrefillThreads();
+
   std::vector<float *> output;
 
   if (SAVE_KVCACHE) {
@@ -464,6 +477,9 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       static_cast<float>(id_list[b]);
 
   auto start_generation = std::chrono::high_resolution_clock::now();
+
+  // Use fewer OMP threads for decode (small GEMV, less overhead)
+  nntrainer::Engine::Global().applyDecodeThreads();
 
   for (token_generation_idx = input_len + 1;
        token_generation_idx < input_len + 1 + NUM_TO_GENERATE;
