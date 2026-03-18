@@ -318,6 +318,7 @@ void printUsage(const char *prog) {
  * Layer naming convention in Transformer:
  *   - embedding0          : embedding layer
  *   - layer{i}_wq/wk/wv  : attention Q/K/V projections (FC layers)
+ *   - layer{i}_wqkv       : fused QKV projection (e.g., Qwen3)
  *   - layer{i}_attention_out : attention output projection (FC layer)
  *   - layer{i}_ffn_up/gate/down : FFN layers (FC layers)
  *   - layer{i}_attention_norm, layer{i}_ffn_norm : RMSNorm layers
@@ -350,6 +351,7 @@ buildLayerDtypeMap(int num_layers, DataType fc_dtype, DataType embd_dtype,
       dtype_map[prefix + "_wq"] = fc_dtype;
       dtype_map[prefix + "_wk"] = fc_dtype;
       dtype_map[prefix + "_wv"] = fc_dtype;
+      dtype_map[prefix + "_wqkv"] = fc_dtype;
       dtype_map[prefix + "_attention_out"] = fc_dtype;
 
       // FFN FC layers
