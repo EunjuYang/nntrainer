@@ -14,7 +14,7 @@
  */
 
 #include <ggml_interface.h>
-#include <neon_setting.h>
+#include <omp_setting.h>
 #include <nntr_ggml_impl.h>
 #include <nntr_ggml_impl_utils.h>
 
