@@ -26,6 +26,7 @@
 
 #include <app_context.h>
 #include <engine.h>
+#include <qkv_layer.h>
 #include <reshaped_rms_norm.h>
 
 namespace causallm {
@@ -35,47 +36,35 @@ std::vector<LayerHandle> Qwen3Transformer::createAttention(
   std::string query_name, std::string key_name, std::string value_name) {
 
   std::vector<LayerHandle> layers;
-  auto Q = "layer" + std::to_string(layer_id) + "_wq";
+  auto QKV = "layer" + std::to_string(layer_id) + "_wqkv";
   auto Q_norm = "layer" + std::to_string(layer_id) + "_q_norm";
-  auto K = "layer" + std::to_string(layer_id) + "_wk";
   auto K_norm = "layer" + std::to_string(layer_id) + "_k_norm";
-  auto V = "layer" + std::to_string(layer_id) + "_wv";
   auto A = "layer" + std::to_string(layer_id) + "_attention";
   auto O = "layer" + std::to_string(layer_id) + "_attention_out";
 
-  // V layer
-  std::vector<std::string> v_params = {
-    withKey("name", V), withKey("unit", head_dim * n_heads / GQA_SIZE),
-    withKey("disable_bias", "true"), withKey("input_layers", value_name),
+  // Fused QKV layer — single input quantization + multi-weight GEMV
+  std::vector<std::string> qkv_params = {
+    withKey("name", QKV),
+    withKey("q_unit", head_dim * n_heads),
+    withKey("k_unit", head_dim * n_heads / GQA_SIZE),
+    withKey("v_unit", head_dim * n_heads / GQA_SIZE),
+    withKey("disable_bias", "true"),
+    withKey("input_layers", query_name),
     withKey("weight_initializer", "ones")};
-  layers.push_back(createLayer("fully_connected", v_params));
+  layers.push_back(createLayer("qkv_layer", qkv_params));
 
-  // K layer
-  std::vector<std::string> k_params = {
-    withKey("name", K), withKey("unit", head_dim * n_heads / GQA_SIZE),
-    withKey("disable_bias", "true"), withKey("input_layers", key_name),
-    withKey("weight_initializer", "ones")};
-  layers.push_back(createLayer("fully_connected", k_params));
-
-  // K-reshaped-norm layer
-  // k_norm(k_proj.view(hidden_shape))
+  // K-reshaped-norm layer: k_norm(k_proj.view(hidden_shape))
+  // Note: K_norm is created before Q_norm so that the topological sort
+  // produces weight load order: q_proj, k_proj, v_proj, q_norm, k_norm
   std::vector<std::string> k_norm_params = {
-    withKey("name", K_norm), withKey("input_layers", K),
+    withKey("name", K_norm), withKey("input_layers", QKV + "(1)"),
     withKey("packed", "false"), withKey("epsilon", std::to_string(NORM_EPS)),
     withKey("feature_size", std::to_string(head_dim))};
   layers.push_back(createLayer("reshaped_rms_norm", k_norm_params));
 
-  // Q layer
-  std::vector<std::string> q_params = {
-    withKey("name", Q), withKey("unit", head_dim * n_heads),
-    withKey("disable_bias", "true"), withKey("input_layers", query_name),
-    withKey("weight_initializer", "ones")};
-  layers.push_back(createLayer("fully_connected", q_params));
-
-  // Q-reshaped-norm layer
-  // q_norm(q_proj.view(hidden_shape))
+  // Q-reshaped-norm layer: q_norm(q_proj.view(hidden_shape))
   std::vector<std::string> q_norm_params = {
-    withKey("name", Q_norm), withKey("input_layers", Q),
+    withKey("name", Q_norm), withKey("input_layers", QKV + "(0)"),
     withKey("packed", "false"), withKey("epsilon", std::to_string(NORM_EPS)),
     withKey("feature_size", std::to_string(head_dim))};
   layers.push_back(createLayer("reshaped_rms_norm", q_norm_params));
@@ -90,7 +79,7 @@ std::vector<LayerHandle> Qwen3Transformer::createAttention(
     withKey("rope_theta", ROPE_THETA),
     withKey("max_position_embeddings", MAX_POSITION_EMBEDDINGS),
     withKey("max_new_tokens", std::to_string(NUM_TO_GENERATE)),
-    withKey("input_layers", {Q_norm, K_norm, V})};
+    withKey("input_layers", {Q_norm, K_norm, QKV + "(2)"})};
   layers.push_back(createLayer("mha_core", a_params));
 
   // O layer
@@ -111,6 +100,13 @@ void Qwen3Transformer::registerCustomLayers() {
   try {
     app_context->registerFactory(
       nntrainer::createLayer<causallm::ReshapedRMSNormLayer>);
+  } catch (std::invalid_argument &e) {
+    std::cerr << "failed to register factory, reason: " << e.what()
+              << std::endl;
+  }
+
+  try {
+    app_context->registerFactory(nntrainer::createLayer<causallm::QKVLayer>);
   } catch (std::invalid_argument &e) {
     std::cerr << "failed to register factory, reason: " << e.what()
               << std::endl;
