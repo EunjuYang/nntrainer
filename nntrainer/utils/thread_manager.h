@@ -89,14 +89,17 @@ private:
    * @brief return number of compute worker threads
    * priority order:
    *   1. environment variable NNTR_NUM_THREADS
-   *   2. compile flag NNTR_NUM_THREADS
-   *   3. std::thread::hardware_concurrency() / 2
+   *   2. environment variable OMP_NUM_THREADS
+   *   3. compile flag NNTR_NUM_THREADS
+   *   4. std::thread::hardware_concurrency() / 2
    */
   static uint32_t defaultComputeThreads() {
-    auto nntr_num_threads = std::getenv("NNTR_NUM_THREADS");
-    if (nntr_num_threads) {
-      return static_cast<uint32_t>(std::stoul(nntr_num_threads));
-    }
+    uint32_t env_threads = 0;
+    if (readThreadCountFromEnv("NNTR_NUM_THREADS", env_threads))
+      return env_threads;
+
+    if (readThreadCountFromEnv("OMP_NUM_THREADS", env_threads))
+      return env_threads;
 
 #if defined(NNTR_NUM_THREADS) && NNTR_NUM_THREADS > 0
     return NNTR_NUM_THREADS;
@@ -105,6 +108,18 @@ private:
     uint32_t hw = std::thread::hardware_concurrency();
     return hw > 0 ? hw / 2 : 1;
 #endif
+  }
+
+  /**
+   * @brief read thread count from an environment variable
+   */
+  static bool readThreadCountFromEnv(const char *name, uint32_t &thread_count) {
+    const char *value = std::getenv(name);
+    if (!value)
+      return false;
+
+    thread_count = static_cast<uint32_t>(std::stoul(value));
+    return true;
   }
 };
 

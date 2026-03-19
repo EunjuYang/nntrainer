@@ -13,14 +13,67 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <numeric>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
 
 #include <thread_manager.h>
+
+namespace {
+
+/**
+ * @brief Temporarily set or unset an environment variable.
+ */
+class ScopedEnvVar {
+public:
+  ScopedEnvVar(const char *name, const char *value) : name(name) {
+    const char *current = std::getenv(name);
+    if (current) {
+      had_value = true;
+      old_value = current;
+    }
+
+    if (value)
+      set(name, value);
+    else
+      unset(name);
+  }
+
+  ~ScopedEnvVar() {
+    if (had_value)
+      set(name.c_str(), old_value.c_str());
+    else
+      unset(name.c_str());
+  }
+
+private:
+  static void set(const char *name, const char *value) {
+#if defined(_WIN32)
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+  }
+
+  static void unset(const char *name) {
+#if defined(_WIN32)
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
+#endif
+  }
+
+  std::string name;
+  bool had_value = false;
+  std::string old_value;
+};
+
+} // namespace
 
 // ─── ThreadManager parallel_for Tests ───────────────────────
 
@@ -103,6 +156,22 @@ TEST(ThreadManager, ThreadCounts) {
   if (hw > 1) {
     EXPECT_LE(tm.getComputeThreadCount(), hw);
   }
+}
+
+TEST(ThreadManagerConfig, OmpNumThreadsFallback) {
+  ScopedEnvVar nntr_num_threads("NNTR_NUM_THREADS", nullptr);
+  ScopedEnvVar omp_num_threads("OMP_NUM_THREADS", "1");
+
+  nntrainer::ThreadManagerConfig config;
+  EXPECT_EQ(config.compute_threads, 1u);
+}
+
+TEST(ThreadManagerConfig, NntrNumThreadsOverridesOmp) {
+  ScopedEnvVar nntr_num_threads("NNTR_NUM_THREADS", "2");
+  ScopedEnvVar omp_num_threads("OMP_NUM_THREADS", "1");
+
+  nntrainer::ThreadManagerConfig config;
+  EXPECT_EQ(config.compute_threads, 2u);
 }
 
 int main(int argc, char **argv) {
