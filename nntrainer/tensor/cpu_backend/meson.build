@@ -1,6 +1,10 @@
 cpu_backend_headers = [
   'cpu_backend.h',
+  'omp_setting.h',
 ]
+
+nntrainer_inc += include_directories('.')
+nntrainer_inc_abs += meson.current_source_dir()
 
 subdir('fallback')
 nntrainer_inc += include_directories('fallback')
