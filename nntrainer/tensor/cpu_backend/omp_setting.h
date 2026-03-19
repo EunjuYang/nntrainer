@@ -19,10 +19,11 @@
 #include <thread>
 
 /**
- * @brief Get runtime thread count from OMP_NUM_THREADS environment variable.
- * Falls back to hardware_concurrency()/2 if not set.
- * Supports dynamic override: if set_runtime_omp_num_threads() has been called,
- * returns that value instead.
+ * @brief Get the OMP thread count with the following priority:
+ *   1. Dynamic override (set via set_runtime_omp_num_threads())
+ *   2. OMP_NUM_THREADS environment variable (runtime)
+ *   3. OMP_NUM_THREADS compile-time macro (set via meson -Domp-num-threads=N)
+ *   4. hardware_concurrency() / 2
  *
  * @return int thread count to use
  */
@@ -43,13 +44,18 @@ inline int get_runtime_omp_num_threads() {
       return val;
     }
   }
+
+#ifdef OMP_NUM_THREADS
+  return OMP_NUM_THREADS;
+#endif
+
   int hw = static_cast<int>(std::thread::hardware_concurrency());
   return (hw > 1) ? hw / 2 : 1;
 }
 
 /**
  * @brief Dynamically override the OMP thread count.
- * Set to 0 to revert to OMP_NUM_THREADS env var / hardware default.
+ * Set to 0 to revert to env var / build-time / hardware default.
  *
  * @param n num_threads to set (0 to clear override)
  */
