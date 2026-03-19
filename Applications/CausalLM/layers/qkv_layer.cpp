@@ -23,8 +23,6 @@
 
 #include <qkv_layer.h>
 
-#include <bs_thread_pool_manager.hpp>
-#include <engine.h>
 #include <layer_context.h>
 #include <nntrainer_error.h>
 #include <nntrainer_log.h>
@@ -147,9 +145,6 @@ void QKVLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   input_step_dim.batch(1);
   input_step_dim.height(to - from);
 
-  auto &pool =
-    nntrainer::Engine::Global().getThreadPoolManager()->getThreadPool();
-
   nntrainer::Tensor input_step =
     input_.getSharedDataTensor(input_step_dim, 0, true);
 
@@ -174,11 +169,21 @@ void QKVLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   nntrainer::Tensor Vhidden_step =
     Vhidden_.getSharedDataTensor(Vhidden_step_dim, 0, true);
 
-  std::vector<nntrainer::Tensor *> Weights({&Qweight, &Kweight, &Vweight});
-  std::vector<nntrainer::Tensor *> Outputs(
-    {&Qhidden_step, &Khidden_step, &Vhidden_step});
-
-  input_step.dot(Weights, Outputs);
+  if (to - from > 1) {
+    // Prefill: use individual dot calls so each GEMM gets full OMP parallelism.
+    // The fused multi-weight path shares quantization but splits OMP threads
+    // across all weights, which hurts when K/V output dims are small.
+    input_step.dot(Qweight, Qhidden_step);
+    input_step.dot(Kweight, Khidden_step);
+    input_step.dot(Vweight, Vhidden_step);
+  } else {
+    // Generation: use fused multi-weight dot to save redundant input
+    // quantization (quantize once, multiply with Q/K/V weights).
+    std::vector<nntrainer::Tensor *> Weights({&Qweight, &Kweight, &Vweight});
+    std::vector<nntrainer::Tensor *> Outputs(
+      {&Qhidden_step, &Khidden_step, &Vhidden_step});
+    input_step.dot(Weights, Outputs);
+  }
 }
 
 void QKVLayer::calcDerivative(nntrainer::RunLayerContext &context) { return; }
