@@ -36,6 +36,20 @@ void SentenceTransformer::setupParameters(json &cfg, json &generation_cfg,
                                           json &nntr_cfg) {
   Transformer::setupParameters(cfg, generation_cfg, nntr_cfg);
 
+  // Check for inline modules configuration first
+  if (nntr_cfg.contains("modules") && nntr_cfg["modules"].is_array()) {
+    // Inline modules: modules pipeline and configs are embedded in nntr_cfg
+    modules = nntr_cfg["modules"].get<std::vector<json>>();
+    for (auto &module : modules) {
+      if (module.contains("config") && module.contains("idx")) {
+        int idx = module["idx"].get<int>();
+        module_configs[idx] = module["config"];
+      }
+    }
+    return;
+  }
+
+  // File-based modules: load from modules.json and module config files
   std::string modules_config_path = "modules.json";
   if (nntr_cfg.contains("module_config_path")) {
     modules_config_path = nntr_cfg["module_config_path"].get<std::string>();

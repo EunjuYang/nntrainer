@@ -83,14 +83,11 @@ static void register_qwen3_0_6b() {
 
 /**
  * @brief Register Qwen3-based Embedding model (example)
- * @details This is an example of how to register an embedding model
- *          with internal configuration. Architecture parameters and runtime
- *          parameters are embedded in code, while modules.json, module configs,
- *          tokenizer, and weight files are loaded from the model directory.
+ * @details This example shows how to register an embedding model with all
+ *          configuration embedded in code, including the module pipeline.
+ *          No config.json, nntr_config.json, or modules.json files are needed.
  *
  *          Required files in ./models/embedding-qwen3-w16a16/:
- *            - modules.json       (module pipeline definition)
- *            - 1_Pooling/config.json  (pooling module config)
  *            - tokenizer.json
  *            - embedding-qwen3-fp16.bin  (weight file)
  */
@@ -139,13 +136,35 @@ static void register_embedding_qwen3() {
           sizeof(rc.model_file_name) - 1);
   strncpy(rc.tokenizer_file, "tokenizer.json",
           sizeof(rc.tokenizer_file) - 1);
-  strncpy(rc.module_config_path, "modules.json",
-          sizeof(rc.module_config_path) - 1);
   rc.num_bad_word_ids = 0;
 
   rc.top_k = 0;
   rc.top_p = 0;
   rc.temperature = 0;
+
+  // 3. Inline modules pipeline config (replaces modules.json + module configs)
+  //    Each module entry:
+  //      - idx: execution order
+  //      - type: module class name
+  //      - config (optional): module-specific parameters (replaces
+  //        {N}_Module/config.json)
+  strncpy(rc.modules_config,
+          "["
+          "{\"idx\":0,"
+          "\"type\":\"sentence_transformers.models.Transformer\"},"
+          "{\"idx\":1,"
+          "\"type\":\"sentence_transformers.models.Pooling\","
+          "\"config\":{\"word_embedding_dimension\":1024,"
+          "\"pooling_mode_cls_token\":false,"
+          "\"pooling_mode_mean_tokens\":true,"
+          "\"pooling_mode_max_tokens\":false,"
+          "\"pooling_mode_mean_sqrt_len_tokens\":false,"
+          "\"pooling_mode_weightedmean_tokens\":false,"
+          "\"pooling_mode_lasttoken\":false}},"
+          "{\"idx\":2,"
+          "\"type\":\"sentence_transformers.models.Normalize\"}"
+          "]",
+          sizeof(rc.modules_config) - 1);
 
   registerModel("EMBEDDING-QWEN3-W16A16", "Embedding-Qwen3-Arch", rc);
 

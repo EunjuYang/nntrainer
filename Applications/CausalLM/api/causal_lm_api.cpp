@@ -480,8 +480,12 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
         std::string t_file = rc.tokenizer_file;
         nntr_cfg["tokenizer_file"] = model_dir_path + "/" + t_file;
 
-        // Embedding-specific: module_config_path
-        if (strlen(rc.module_config_path) > 0) {
+        // Embedding-specific: inline modules config or file-based
+        if (strlen(rc.modules_config) > 0) {
+          // Inline modules: parse JSON string and embed directly
+          nntr_cfg["modules"] = json::parse(rc.modules_config);
+        } else if (strlen(rc.module_config_path) > 0) {
+          // File-based modules: resolve path
           nntr_cfg["module_config_path"] =
             model_dir_path + "/" + std::string(rc.module_config_path);
         }

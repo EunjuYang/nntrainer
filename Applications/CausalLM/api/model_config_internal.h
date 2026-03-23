@@ -70,6 +70,10 @@ typedef struct {
 
   // Embedding model specific
   char module_config_path[256]; // e.g., "modules.json" (for embedding models)
+  char modules_config[4096];    // Inline JSON string for modules pipeline + configs
+                                // When set, module_config_path is ignored and
+                                // modules.json / module config files are not
+                                // loaded from disk.
 
   // generation_config.json (runtime parameters)
   unsigned int top_k;
