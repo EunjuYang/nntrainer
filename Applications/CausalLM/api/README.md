@@ -7,9 +7,7 @@ This directory contains the C API for CausalLM application, designed to provide 
 The API provides functionality to:
 - Initialize and configure the CausalLM environment.
 - Load pre-trained models with specific quantization settings.
-- Run inference (text generation) given a prompt.
-- Run embedding models (text-to-vector encoding) given a prompt.
-- Retrieve embedding output vectors after running an embedding model.
+- Run text generation (`runModel`) or embedding inference (`runModelFloat`) using a unified `loadModel` interface.
 - Retrieve performance metrics (token counts, duration).
 
 ## Build & Integration
@@ -116,14 +114,6 @@ Supported quantization formats.
 - `CAUSAL_LM_QUANTIZATION_W8A16`: 8-bit weights, 16-bit activations.
 - `CAUSAL_LM_QUANTIZATION_W32A32`: 32-bit weights, 32-bit activations (FP32).
 
-### Structures
-
-#### `EmbeddingOutput`
-Output structure for embedding results.
-- `data` (`float *`): Pointer to embedding vector data. Managed by the API, do not free.
-- `dim` (`unsigned int`): Embedding dimension (e.g., 1024).
-- `length` (`unsigned int`): Number of embedding vectors (equals batch size).
-
 ### Functions
 
 #### `ErrorCode setOptions(Config config)`
@@ -137,18 +127,18 @@ Loads a registered model. Works for both text generation and embedding models.
 - **quant_type**: Quantization type.
 
 #### `ErrorCode runModel(const char *inputTextPrompt, const char **outputText)`
-Runs the loaded model. Behavior depends on the loaded model type:
-- **CausalLM models**: Generates text and stores it in `outputText`.
-- **Embedding models**: Runs encoding internally. `outputText` will be set to an empty string. Use `getEmbeddingOutput()` to retrieve the embedding vectors.
+Runs text generation on the loaded CausalLM model.
 - **inputTextPrompt**: The input text/prompt.
 - **outputText**: Pointer to store the result string.
+- Returns `CAUSAL_LM_ERROR_INVALID_PARAMETER` if an embedding model is loaded. Use `runModelFloat()` instead.
 
-#### `ErrorCode getEmbeddingOutput(EmbeddingOutput *output)`
-Retrieves embedding vectors from the last `runModel()` call.
-- Only valid when an embedding model is loaded.
-- **output**: Pointer to `EmbeddingOutput` struct to be filled.
-- Returns `CAUSAL_LM_ERROR_INVALID_PARAMETER` if the loaded model is not an embedding model.
-- Returns `CAUSAL_LM_ERROR_INFERENCE_NOT_RUN` if `runModel()` has not been called yet.
+#### `ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData, unsigned int *outputDim, unsigned int *outputLength)`
+Runs embedding inference on the loaded embedding model.
+- **inputTextPrompt**: The input text to encode.
+- **outputData**: Pointer to receive the embedding vector data. Managed by the API, do not free.
+- **outputDim**: Pointer to receive the embedding dimension (e.g., 1024).
+- **outputLength**: Pointer to receive the number of embedding vectors (batch size).
+- Returns `CAUSAL_LM_ERROR_INVALID_PARAMETER` if a CausalLM model is loaded. Use `runModel()` instead.
 
 #### `ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics)`
 Retrieves performance metrics of the last run.
@@ -173,7 +163,6 @@ int main() {
     setOptions(config);
 
     // 2. Load Model
-    // Automatically looks for files in "./models/qwen3-0.6b-w16a16/"
     ErrorCode err = loadModel(CAUSAL_LM_BACKEND_CPU,
                               CAUSAL_LM_MODEL_QWEN3_0_6B,
                               CAUSAL_LM_QUANTIZATION_W16A16);
@@ -183,7 +172,7 @@ int main() {
         return -1;
     }
 
-    // 3. Run Inference
+    // 3. Run Inference (text output)
     const char* output = NULL;
     err = runModel("Hello, how are you?", &output);
 
@@ -216,8 +205,7 @@ int main() {
     config.verbose = false;
     setOptions(config);
 
-    // 2. Load Embedding Model
-    // Requires config files in "./models/" directory
+    // 2. Load Embedding Model (same loadModel API)
     ErrorCode err = loadModel(CAUSAL_LM_BACKEND_CPU,
                               CAUSAL_LM_MODEL_EMBEDDING_QWEN3,
                               CAUSAL_LM_QUANTIZATION_W16A16);
@@ -227,29 +215,24 @@ int main() {
         return -1;
     }
 
-    // 3. Run Model (same API as text generation)
-    const char* output_text = NULL;
-    err = runModel("Hello, world!", &output_text);
+    // 3. Run Inference (float vector output)
+    float *emb_data = NULL;
+    unsigned int emb_dim = 0;
+    unsigned int emb_length = 0;
 
-    if (err != CAUSAL_LM_ERROR_NONE) {
-        printf("Failed to run embedding\n");
-        return -1;
-    }
-
-    // 4. Get Embedding Output
-    EmbeddingOutput emb;
-    err = getEmbeddingOutput(&emb);
+    err = runModelFloat("Hello, world!", &emb_data, &emb_dim, &emb_length);
 
     if (err == CAUSAL_LM_ERROR_NONE) {
-        printf("Embedding dim: %u, batch: %u\n", emb.dim, emb.length);
-
-        // Print first 5 elements of the embedding vector
+        printf("Embedding dim: %u, batch: %u\n", emb_dim, emb_length);
         printf("Embedding: [");
-        for (unsigned int i = 0; i < 5 && i < emb.dim; ++i) {
-            printf("%.6f%s", emb.data[i], (i < 4) ? ", " : "");
+        for (unsigned int i = 0; i < 5 && i < emb_dim; ++i) {
+            printf("%.6f%s", emb_data[i], (i < 4) ? ", " : "");
         }
         printf(", ...]\n");
     }
+
+    // Note: runModel() would return CAUSAL_LM_ERROR_INVALID_PARAMETER
+    //       for embedding models.
 
     return 0;
 }

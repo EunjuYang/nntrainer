@@ -120,36 +120,36 @@ typedef struct {
 WIN_EXPORT ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics);
 
 /**
- * @brief Run inference
- * @details For CausalLM models, generates text and stores it in outputText.
- *          For Embedding models, runs encoding internally. The outputText
- *          will be set to an empty string. Use getEmbeddingOutput() to
- *          retrieve the embedding vectors.
+ * @brief Run inference with text output (for CausalLM models)
+ * @details Generates text from the input prompt. Only valid when a CausalLM
+ *          model is loaded. Returns CAUSAL_LM_ERROR_INVALID_PARAMETER if an
+ *          embedding model is loaded.
  * @param inputTextPrompt Input prompt
- * @param outputText Buffer to store output text (empty for embedding models)
+ * @param outputText Pointer to store the result string
  * @return ErrorCode
  */
 WIN_EXPORT ErrorCode runModel(const char *inputTextPrompt,
                               const char **outputText);
 
 /**
- * @brief Embedding output structure
- */
-typedef struct {
-  float *data;         ///< Pointer to embedding vector data (managed by API)
-  unsigned int dim;    ///< Embedding dimension
-  unsigned int length; ///< Number of embedding vectors (batch_size)
-} EmbeddingOutput;
-
-/**
- * @brief Get embedding output of the last run
- * @details Only valid after calling runModel() with an embedding model type.
- *          The data pointer is managed by the API and must not be freed by the
- *          caller. It remains valid until the next call to runModel().
- * @param output Pointer to EmbeddingOutput struct to be filled
+ * @brief Run inference with float vector output (for Embedding models)
+ * @details Encodes the input text into embedding vectors. Only valid when an
+ *          embedding model is loaded. Returns CAUSAL_LM_ERROR_INVALID_PARAMETER
+ *          if a CausalLM model is loaded.
+ *          The output data pointer is managed by the API and must not be freed
+ *          by the caller. It remains valid until the next call to
+ *          runModelFloat().
+ * @param inputTextPrompt Input text to encode
+ * @param outputData Pointer to receive embedding vector data
+ * @param outputDim Pointer to receive the embedding dimension
+ * @param outputLength Pointer to receive the number of embedding vectors
+ *                     (batch_size)
  * @return ErrorCode
  */
-WIN_EXPORT ErrorCode getEmbeddingOutput(EmbeddingOutput *output);
+WIN_EXPORT ErrorCode runModelFloat(const char *inputTextPrompt,
+                                    float **outputData,
+                                    unsigned int *outputDim,
+                                    unsigned int *outputLength);
 
 #ifdef __cplusplus
 }

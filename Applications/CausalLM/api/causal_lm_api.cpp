@@ -646,55 +646,90 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
   if (inputTextPrompt == nullptr || outputText == nullptr) {
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
   }
+  if (g_is_embedding_model) {
+    std::cerr << "runModel: text output is not supported for embedding models. "
+                 "Use runModelFloat() instead."
+              << std::endl;
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
+  }
 
   try {
     std::lock_guard<std::mutex> lock(g_mutex);
 
     std::string input(inputTextPrompt);
 
-    if (g_is_embedding_model) {
-      // Embedding model: call encode() to capture output vectors
-      auto *embedding_model =
-        dynamic_cast<causallm::SentenceTransformer *>(g_model.get());
-      if (!embedding_model) {
-        return CAUSAL_LM_ERROR_INFERENCE_FAILED;
-      }
-
-#if defined(_WIN32)
-      g_last_embedding_output = embedding_model->encode(
-        std::wstring(input.begin(), input.end()), L"", L"");
-#else
-      g_last_embedding_output = embedding_model->encode(input, "", "");
-#endif
-
-      g_last_output = "";
-      *outputText = g_last_output.c_str();
-    } else {
-      // CausalLM model: call run() for text generation
-      if (g_use_chat_template) {
-        input = apply_chat_template(g_architecture, input);
-      }
+    if (g_use_chat_template) {
+      input = apply_chat_template(g_architecture, input);
+    }
 
 // We assume single batch request for this API
 #if defined(_WIN32)
-      g_model->run(std::wstring(input.begin(), input.end()), false, L"", L"",
-                   g_verbose);
+    g_model->run(std::wstring(input.begin(), input.end()), false, L"", L"",
+                 g_verbose);
 #else
-      g_model->run(input, false, "", "", g_verbose);
+    g_model->run(input, false, "", "", g_verbose);
 #endif
 
-      auto causal_lm_model =
-        dynamic_cast<causallm::CausalLM *>(g_model.get());
-      g_last_output = "";
-      if (causal_lm_model) {
-        g_last_output = causal_lm_model->getOutput(0);
-      }
-
-      *outputText = g_last_output.c_str();
+    auto causal_lm_model = dynamic_cast<causallm::CausalLM *>(g_model.get());
+    g_last_output = "";
+    if (causal_lm_model) {
+      g_last_output = causal_lm_model->getOutput(0);
     }
+
+    *outputText = g_last_output.c_str();
 
   } catch (const std::exception &e) {
     std::cerr << "Exception in runModel: " << e.what() << std::endl;
+    return CAUSAL_LM_ERROR_INFERENCE_FAILED;
+  }
+
+  return CAUSAL_LM_ERROR_NONE;
+}
+
+ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData,
+                         unsigned int *outputDim, unsigned int *outputLength) {
+  if (!g_initialized || !g_model) {
+    return CAUSAL_LM_ERROR_NOT_INITIALIZED;
+  }
+  if (inputTextPrompt == nullptr || outputData == nullptr ||
+      outputDim == nullptr || outputLength == nullptr) {
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
+  }
+  if (!g_is_embedding_model) {
+    std::cerr << "runModelFloat: float output is not supported for CausalLM "
+                 "models. Use runModel() instead."
+              << std::endl;
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
+  }
+
+  try {
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    auto *embedding_model =
+      dynamic_cast<causallm::SentenceTransformer *>(g_model.get());
+    if (!embedding_model) {
+      return CAUSAL_LM_ERROR_INFERENCE_FAILED;
+    }
+
+    std::string input(inputTextPrompt);
+
+#if defined(_WIN32)
+    g_last_embedding_output = embedding_model->encode(
+      std::wstring(input.begin(), input.end()), L"", L"");
+#else
+    g_last_embedding_output = embedding_model->encode(input, "", "");
+#endif
+
+    if (g_last_embedding_output.empty()) {
+      return CAUSAL_LM_ERROR_INFERENCE_FAILED;
+    }
+
+    *outputData = g_last_embedding_output[0];
+    *outputDim = g_model->getDim();
+    *outputLength = g_model->getBatchSize();
+
+  } catch (const std::exception &e) {
+    std::cerr << "Exception in runModelFloat: " << e.what() << std::endl;
     return CAUSAL_LM_ERROR_INFERENCE_FAILED;
   }
 
@@ -727,36 +762,6 @@ ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
   } catch (const std::exception &e) {
     std::cerr << "Exception in getPerformanceMetrics: " << e.what()
               << std::endl;
-    return CAUSAL_LM_ERROR_UNKNOWN;
-  }
-
-  return CAUSAL_LM_ERROR_NONE;
-}
-
-ErrorCode getEmbeddingOutput(EmbeddingOutput *output) {
-  if (!g_initialized || !g_model) {
-    return CAUSAL_LM_ERROR_NOT_INITIALIZED;
-  }
-  if (output == nullptr) {
-    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
-  }
-  if (!g_is_embedding_model) {
-    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
-  }
-
-  try {
-    std::lock_guard<std::mutex> lock(g_mutex);
-
-    if (g_last_embedding_output.empty()) {
-      return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
-    }
-
-    output->data = g_last_embedding_output[0];
-    output->dim = g_model->getDim();
-    output->length = g_model->getBatchSize();
-
-  } catch (const std::exception &e) {
-    std::cerr << "Exception in getEmbeddingOutput: " << e.what() << std::endl;
     return CAUSAL_LM_ERROR_UNKNOWN;
   }
 
