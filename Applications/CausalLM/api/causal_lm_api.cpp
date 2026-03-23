@@ -55,6 +55,9 @@ static std::vector<float *> g_last_embedding_output;
 
 static std::map<std::string, std::string> g_model_path_map = {
   {"QWEN3-0.6B", "qwen3-0.6b"},
+  {"EMBEDDING-QWEN3", "embedding-qwen3"},
+  {"EMBEDDING-QWEN2", "embedding-qwen2"},
+  {"EMBEDDING-GEMMA3", "embedding-gemma3"},
 };
 
 /**
@@ -158,6 +161,19 @@ static const char *get_embedding_architecture(ModelType type) {
     return "Qwen2Embedding";
   case CAUSAL_LM_MODEL_EMBEDDING_GEMMA3:
     return "EmbeddingGemma";
+  default:
+    return nullptr;
+  }
+}
+
+static const char *get_embedding_model_name(ModelType type) {
+  switch (type) {
+  case CAUSAL_LM_MODEL_EMBEDDING_QWEN3:
+    return "EMBEDDING-QWEN3";
+  case CAUSAL_LM_MODEL_EMBEDDING_QWEN2:
+    return "EMBEDDING-QWEN2";
+  case CAUSAL_LM_MODEL_EMBEDDING_GEMMA3:
+    return "EMBEDDING-GEMMA3";
   default:
     return nullptr;
   }
@@ -369,48 +385,146 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
   // Handle embedding model types
   if (is_embedding_model_type(modeltype)) {
     const char *architecture = get_embedding_architecture(modeltype);
-    if (architecture == nullptr) {
+    const char *target_emb_name = get_embedding_model_name(modeltype);
+    if (architecture == nullptr || target_emb_name == nullptr) {
       return CAUSAL_LM_ERROR_INVALID_PARAMETER;
     }
 
     std::lock_guard<std::mutex> lock(g_mutex);
     try {
-      // Embedding models use external file-based configuration
-      std::string model_dir_path = "./models/";
+      std::string input_name_upper = std::string(target_emb_name);
+      std::transform(input_name_upper.begin(), input_name_upper.end(),
+                     input_name_upper.begin(), ::toupper);
 
-      json cfg = causallm::LoadJsonFile(model_dir_path + "config.json");
+      std::string quant_suffix = "";
+      switch (quant_type) {
+      case CAUSAL_LM_QUANTIZATION_W4A32:
+        quant_suffix = "-W4A32";
+        break;
+      case CAUSAL_LM_QUANTIZATION_W16A16:
+        quant_suffix = "-W16A16";
+        break;
+      case CAUSAL_LM_QUANTIZATION_W8A16:
+        quant_suffix = "-W8A16";
+        break;
+      case CAUSAL_LM_QUANTIZATION_W32A32:
+        quant_suffix = "-W32A32";
+        break;
+      default:
+        break;
+      }
+      std::string lookup_name = input_name_upper + quant_suffix;
+
+      json cfg;
       json generation_cfg;
-      try {
-        generation_cfg =
-          causallm::LoadJsonFile(model_dir_path + "generation_config.json");
-      } catch (...) {
-        generation_cfg = json::object();
-      }
-      json nntr_cfg =
-        causallm::LoadJsonFile(model_dir_path + "nntr_config.json");
+      json nntr_cfg;
+      std::string model_dir_path =
+        resolve_model_path(target_emb_name, quant_type);
 
-      if (nntr_cfg.contains("tokenizer_file")) {
-        std::string t_file = nntr_cfg["tokenizer_file"];
-        nntr_cfg["tokenizer_file"] = model_dir_path + t_file;
-      }
+      // Check in-memory config first
+      if (g_model_registry.find(lookup_name) != g_model_registry.end()) {
+        // ----------------------------------------------------------------
+        // CASE 1: Internal Configuration (registered in model_config.cpp)
+        // ----------------------------------------------------------------
+        RegisteredModel &rm = g_model_registry[lookup_name];
 
-      nntr_cfg["model_type"] = "Embedding";
+        if (g_arch_config_map.find(rm.arch_name) == g_arch_config_map.end()) {
+          std::cerr << "Architecture '" << rm.arch_name
+                    << "' not found for model '" << lookup_name << "'"
+                    << std::endl;
+          return CAUSAL_LM_ERROR_MODEL_LOAD_FAILED;
+        }
+        ModelArchConfig &ac = g_arch_config_map[rm.arch_name];
+        ModelRuntimeConfig &rc = rm.config;
 
-      if (nntr_cfg.contains("module_config_path")) {
-        std::string module_path =
-          nntr_cfg["module_config_path"].get<std::string>();
-        if (module_path.find('/') == std::string::npos) {
-          nntr_cfg["module_config_path"] = model_dir_path + module_path;
+        // Populate cfg from architecture config
+        cfg["vocab_size"] = ac.vocab_size;
+        cfg["hidden_size"] = ac.hidden_size;
+        cfg["intermediate_size"] = ac.intermediate_size;
+        cfg["num_hidden_layers"] = ac.num_hidden_layers;
+        cfg["num_attention_heads"] = ac.num_attention_heads;
+        cfg["head_dim"] = ac.head_dim;
+        cfg["num_key_value_heads"] = ac.num_key_value_heads > 0
+                                       ? ac.num_key_value_heads
+                                       : ac.num_attention_heads;
+        cfg["max_position_embeddings"] = ac.max_position_embeddings;
+        cfg["rope_theta"] = ac.rope_theta;
+        cfg["rms_norm_eps"] = ac.rms_norm_eps;
+        cfg["tie_word_embeddings"] = ac.tie_word_embeddings;
+        if (ac.sliding_window != UINT_MAX) {
+          cfg["sliding_window"] = ac.sliding_window;
+        } else {
+          cfg["sliding_window"] = nullptr;
+        }
+        cfg["sliding_window_pattern"] = ac.sliding_window_pattern;
+        cfg["architectures"] = {std::string(ac.architecture)};
+
+        if (ac.num_eos_token_ids > 0) {
+          std::vector<unsigned int> eos_ids;
+          for (unsigned int i = 0; i < ac.num_eos_token_ids; ++i)
+            eos_ids.push_back(ac.eos_token_ids[i]);
+          generation_cfg["eos_token_id"] = eos_ids;
+        }
+        generation_cfg["bos_token_id"] = ac.bos_token_id;
+
+        // Populate nntr_cfg from runtime config
+        nntr_cfg["batch_size"] = rc.batch_size;
+        nntr_cfg["model_type"] = std::string(rc.model_type);
+        nntr_cfg["model_tensor_type"] = std::string(rc.model_tensor_type);
+        nntr_cfg["init_seq_len"] = rc.init_seq_len;
+        nntr_cfg["max_seq_len"] = rc.max_seq_len;
+        nntr_cfg["embedding_dtype"] = std::string(rc.embedding_dtype);
+        nntr_cfg["fc_layer_dtype"] = std::string(rc.fc_layer_dtype);
+        nntr_cfg["model_file_name"] = std::string(rc.model_file_name);
+
+        std::string t_file = rc.tokenizer_file;
+        nntr_cfg["tokenizer_file"] = model_dir_path + "/" + t_file;
+
+        // Embedding-specific: module_config_path
+        if (strlen(rc.module_config_path) > 0) {
+          nntr_cfg["module_config_path"] =
+            model_dir_path + "/" + std::string(rc.module_config_path);
+        }
+
+      } else {
+        // ----------------------------------------------------------------
+        // CASE 2: External Configuration (file-based)
+        // ----------------------------------------------------------------
+        cfg = causallm::LoadJsonFile(model_dir_path + "/config.json");
+        try {
+          generation_cfg = causallm::LoadJsonFile(model_dir_path +
+                                                  "/generation_config.json");
+        } catch (...) {
+          generation_cfg = json::object();
+        }
+        nntr_cfg =
+          causallm::LoadJsonFile(model_dir_path + "/nntr_config.json");
+
+        if (nntr_cfg.contains("tokenizer_file")) {
+          std::string t_file = nntr_cfg["tokenizer_file"];
+          nntr_cfg["tokenizer_file"] = model_dir_path + "/" + t_file;
+        }
+
+        nntr_cfg["model_type"] = "Embedding";
+
+        if (nntr_cfg.contains("module_config_path")) {
+          std::string module_path =
+            nntr_cfg["module_config_path"].get<std::string>();
+          if (module_path.find('/') == std::string::npos) {
+            nntr_cfg["module_config_path"] =
+              model_dir_path + "/" + module_path;
+          }
         }
       }
 
+      // Construct weight file path
       std::string weight_file_name;
       if (nntr_cfg.contains("model_file_name")) {
         weight_file_name = nntr_cfg["model_file_name"].get<std::string>();
       } else {
         weight_file_name = "pytorch_model.bin";
       }
-      const std::string weight_file = model_dir_path + weight_file_name;
+      const std::string weight_file = model_dir_path + "/" + weight_file_name;
 
       g_model = causallm::Factory::Instance().create(
         std::string(architecture), cfg, generation_cfg, nntr_cfg);

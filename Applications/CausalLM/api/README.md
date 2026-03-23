@@ -60,10 +60,32 @@ For registered model types that do not have a specific hardcoded configuration f
 
 ### 3. Embedding Model Configuration
 
-Embedding models always use external file-based configuration. The model directory (`./models/`) must contain:
+Embedding models support both internal and external configuration, following the same two-mode pattern as CausalLM models.
+
+#### 3a. Internal/Embedded Configuration (Pre-configured)
+
+When an embedding model is registered via `model_config.cpp`, architecture and runtime parameters are embedded in the library code. Only the following files are needed on disk:
 
 ```
-./models/
+./models/embedding-qwen3-w16a16/
+  ├── modules.json              # Module pipeline (Transformer -> Pooling -> Normalize)
+  ├── 1_Pooling/config.json     # Pooling module config
+  ├── 2_Normalize/config.json   # Normalize module config (optional)
+  ├── embedding-qwen3-fp16.bin  # Weight file (name hardcoded in internal config)
+  └── tokenizer.json            # Tokenizer file
+```
+
+- `config.json` and `nntr_config.json` are **NOT** needed — their contents are embedded in `model_config.cpp`.
+- `modules.json` and module subdirectory configs are still loaded from disk (they define the module pipeline structure).
+
+See `model_config.cpp` for a complete example of registering an embedding model with internal configuration (`register_embedding_qwen3()`).
+
+#### 3b. External/File-based Configuration
+
+When no internal configuration is registered for the requested quantization type, all configuration files must be present:
+
+```
+./models/embedding-qwen3-w16a16/
   ├── config.json               # Model architecture config (HuggingFace format)
   ├── nntr_config.json          # NNTrainer config (model_type must be "Embedding")
   ├── modules.json              # Module pipeline (Transformer -> Pooling -> Normalize)
@@ -237,3 +259,83 @@ int main() {
     return 0;
 }
 ```
+
+## Registering Embedding Models with Internal Configuration
+
+To embed model configuration parameters directly in the library (avoiding `config.json` / `nntr_config.json` on disk), add a registration function in `model_config.cpp`. This is useful for protecting model specifications and simplifying deployment.
+
+### Example: `model_config.cpp`
+
+```c
+#include "model_config_internal.h"
+#include <climits>
+#include <cstring>
+
+static void register_embedding_qwen3() {
+    // 1. Architecture Config (from config.json)
+    ModelArchConfig ac;
+    memset(&ac, 0, sizeof(ModelArchConfig));
+
+    ac.vocab_size = 151936;
+    ac.hidden_size = 1024;
+    ac.intermediate_size = 3072;
+    ac.num_hidden_layers = 28;
+    ac.num_attention_heads = 16;
+    ac.head_dim = 128;
+    ac.num_key_value_heads = 8;
+    ac.max_position_embeddings = 32768;
+    ac.rope_theta = 1000000.0f;
+    ac.rms_norm_eps = 1e-06f;
+    ac.tie_word_embeddings = true;
+    ac.sliding_window = UINT_MAX;
+    // Architecture must match the base model (not the embedding variant)
+    strncpy(ac.architecture, "Qwen3ForCausalLM",
+            sizeof(ac.architecture) - 1);
+    ac.bos_token_id = 151643;
+    ac.eos_token_ids[0] = 151645;
+    ac.num_eos_token_ids = 1;
+
+    registerModelArchitecture("Embedding-Qwen3-Arch", ac);
+
+    // 2. Runtime Config (from nntr_config.json)
+    ModelRuntimeConfig rc;
+    memset(&rc, 0, sizeof(ModelRuntimeConfig));
+
+    rc.batch_size = 1;
+    strncpy(rc.model_type, "Embedding", sizeof(rc.model_type) - 1);
+    strncpy(rc.model_tensor_type, "FP16-FP16",
+            sizeof(rc.model_tensor_type) - 1);
+    rc.init_seq_len = 512;
+    rc.max_seq_len = 8192;
+    rc.num_to_generate = 0;  // Not used for embedding
+    strncpy(rc.embedding_dtype, "FP16", sizeof(rc.embedding_dtype) - 1);
+    strncpy(rc.fc_layer_dtype, "FP16", sizeof(rc.fc_layer_dtype) - 1);
+    strncpy(rc.model_file_name, "embedding-qwen3-fp16.bin",
+            sizeof(rc.model_file_name) - 1);
+    strncpy(rc.tokenizer_file, "tokenizer.json",
+            sizeof(rc.tokenizer_file) - 1);
+    // Embedding-specific: path to modules.json (loaded from disk)
+    strncpy(rc.module_config_path, "modules.json",
+            sizeof(rc.module_config_path) - 1);
+
+    registerModel("EMBEDDING-QWEN3-W16A16", "Embedding-Qwen3-Arch", rc);
+    registerModel("EMBEDDING-QWEN3", "Embedding-Qwen3-Arch", rc);  // alias
+}
+
+int register_builtin_model_configs() {
+    register_qwen3_0_6b();
+    register_embedding_qwen3();
+    return 0;
+}
+```
+
+### What Gets Embedded vs. Loaded from Disk
+
+| Parameter Source | Internal Config | External Config |
+|---|---|---|
+| Architecture params (vocab_size, hidden_size, ...) | Embedded in code | `config.json` |
+| Runtime params (batch_size, max_seq_len, ...) | Embedded in code | `nntr_config.json` |
+| Module pipeline definition | `modules.json` from disk | `modules.json` from disk |
+| Module configs (Pooling, Normalize, ...) | `{N}_Module/config.json` from disk | `{N}_Module/config.json` from disk |
+| Tokenizer | `tokenizer.json` from disk | `tokenizer.json` from disk |
+| Model weights | Binary file from disk | Binary file from disk |
