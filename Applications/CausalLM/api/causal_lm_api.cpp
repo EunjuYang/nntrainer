@@ -150,21 +150,33 @@ static const char *get_model_name_from_type(ModelType type) {
 }
 
 /**
- * @brief Get a fixed architecture name for embedding types.
- * @return Architecture string, or nullptr for CausalLM types (resolved from
- *         config["architectures"] instead).
+ * @brief Resolve the factory architecture key from backbone + model_type.
+ * @details For embedding models, config.json contains the backbone architecture
+ *          (e.g., "Qwen3ForCausalLM") while the actual factory key is the
+ *          embedding variant (e.g., "Qwen3Embedding"). This mirrors the
+ *          resolve_architecture() logic in main.cpp.
+ * @param model_type From nntr_cfg["model_type"] (e.g., "CausalLM", "Embedding")
+ * @param backbone   From cfg["architectures"][0] (e.g., "Qwen3ForCausalLM")
+ * @return Resolved factory key
  */
-static const char *get_architecture_override(ModelType type) {
-  switch (type) {
-  case CAUSAL_LM_MODEL_EMBEDDING_QWEN3:
-    return "Qwen3Embedding";
-  case CAUSAL_LM_MODEL_EMBEDDING_QWEN2:
-    return "Qwen2Embedding";
-  case CAUSAL_LM_MODEL_EMBEDDING_GEMMA3:
-    return "EmbeddingGemma";
-  default:
-    return nullptr;
+static std::string resolve_architecture(const std::string &model_type,
+                                        const std::string &backbone) {
+  std::string mt = model_type;
+  std::transform(mt.begin(), mt.end(), mt.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+
+  if (mt == "embedding") {
+    if (backbone == "Qwen3ForCausalLM")
+      return "Qwen3Embedding";
+    if (backbone == "Gemma3ForCausalLM" || backbone == "Gemma3TextModel")
+      return "EmbeddingGemma";
+    if (backbone == "Qwen2Model")
+      return "Qwen2Embedding";
+    throw std::invalid_argument(
+      "Unsupported backbone for embedding model: " + backbone);
   }
+
+  return backbone;
 }
 
 // ---------------------------------------------------------------------------
@@ -454,18 +466,17 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
       }
     }
 
-    // Resolve architecture: embedding types have a fixed override,
-    // CausalLM types resolve from cfg["architectures"].
-    const char *arch_override = get_architecture_override(modeltype);
-    if (arch_override) {
-      architecture = arch_override;
-    } else if (cfg.contains("architectures") &&
-               cfg["architectures"].is_array() &&
-               !cfg["architectures"].empty()) {
-      architecture = cfg["architectures"].get<std::vector<std::string>>()[0];
-    } else {
+    // Resolve architecture: extract backbone from cfg["architectures"],
+    // then resolve to embedding variant if model_type is "Embedding".
+    if (!cfg.contains("architectures") || !cfg["architectures"].is_array() ||
+        cfg["architectures"].empty()) {
       return CAUSAL_LM_ERROR_INVALID_PARAMETER;
     }
+    std::string backbone =
+      cfg["architectures"].get<std::vector<std::string>>()[0];
+    std::string model_type_str =
+      nntr_cfg.value("model_type", "CausalLM");
+    architecture = resolve_architecture(model_type_str, backbone);
 
     // Create, initialize, load
     g_model = causallm::Factory::Instance().create(architecture, cfg,
