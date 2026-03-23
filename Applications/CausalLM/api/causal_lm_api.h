@@ -51,8 +51,14 @@ typedef enum {
  * @note  Enable only when your library supports the model
  */
 typedef enum {
+  /** CausalLM (text generation) models */
   CAUSAL_LM_MODEL_QWEN3_0_6B = 0,
   // CAUSAL_LM_MODEL_GEMMA_2B = 3,
+
+  /** Embedding (sentence transformer) models */
+  CAUSAL_LM_MODEL_EMBEDDING_QWEN3 = 100,
+  CAUSAL_LM_MODEL_EMBEDDING_QWEN2 = 101,
+  CAUSAL_LM_MODEL_EMBEDDING_GEMMA3 = 102,
 } ModelType;
 
 /**
@@ -115,12 +121,35 @@ WIN_EXPORT ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics);
 
 /**
  * @brief Run inference
+ * @details For CausalLM models, generates text and stores it in outputText.
+ *          For Embedding models, runs encoding internally. The outputText
+ *          will be set to an empty string. Use getEmbeddingOutput() to
+ *          retrieve the embedding vectors.
  * @param inputTextPrompt Input prompt
- * @param outputText Buffer to store output text
+ * @param outputText Buffer to store output text (empty for embedding models)
  * @return ErrorCode
  */
 WIN_EXPORT ErrorCode runModel(const char *inputTextPrompt,
                               const char **outputText);
+
+/**
+ * @brief Embedding output structure
+ */
+typedef struct {
+  float *data;         ///< Pointer to embedding vector data (managed by API)
+  unsigned int dim;    ///< Embedding dimension
+  unsigned int length; ///< Number of embedding vectors (batch_size)
+} EmbeddingOutput;
+
+/**
+ * @brief Get embedding output of the last run
+ * @details Only valid after calling runModel() with an embedding model type.
+ *          The data pointer is managed by the API and must not be freed by the
+ *          caller. It remains valid until the next call to runModel().
+ * @param output Pointer to EmbeddingOutput struct to be filled
+ * @return ErrorCode
+ */
+WIN_EXPORT ErrorCode getEmbeddingOutput(EmbeddingOutput *output);
 
 #ifdef __cplusplus
 }

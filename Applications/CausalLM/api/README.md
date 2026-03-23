@@ -1,6 +1,6 @@
 # CausalLM API
 
-This directory contains the C API for CausalLM application, designed to provide a simple interface for loading and running Large Language Models (LLMs) on various backends, including Android.
+This directory contains the C API for CausalLM application, designed to provide a simple interface for loading and running Large Language Models (LLMs) and Embedding Models on various backends, including Android.
 
 ## Overview
 
@@ -8,6 +8,8 @@ The API provides functionality to:
 - Initialize and configure the CausalLM environment.
 - Load pre-trained models with specific quantization settings.
 - Run inference (text generation) given a prompt.
+- Run embedding models (text-to-vector encoding) given a prompt.
+- Retrieve embedding output vectors after running an embedding model.
 - Retrieve performance metrics (token counts, duration).
 
 ## Build & Integration
@@ -58,6 +60,21 @@ For registered model types that do not have a specific hardcoded configuration f
     - **`generation_config.json`**: (Optional) Generation parameters.
     - **Tokenizer Files**: `tokenizer.json` / `vocab.json`.
 
+### 3. Embedding Model Configuration
+
+Embedding models always use external file-based configuration. The model directory (`./models/`) must contain:
+
+```
+./models/
+  ├── config.json               # Model architecture config (HuggingFace format)
+  ├── nntr_config.json          # NNTrainer config (model_type must be "Embedding")
+  ├── modules.json              # Module pipeline (Transformer -> Pooling -> Normalize)
+  ├── 1_Pooling/config.json     # Pooling module config
+  ├── 2_Normalize/config.json   # Normalize module config (optional)
+  ├── pytorch_model.bin         # Weight file (name specified in nntr_config.json)
+  └── tokenizer.json            # Tokenizer file
+```
+
 **Note:** When `debug_mode` is enabled in `setOptions`, the API will attempt to validate the existence of the required files for the resolved mode during initialization.
 
 ## API Reference
@@ -82,8 +99,15 @@ Target backend for computation.
 - `CAUSAL_LM_BACKEND_NPU`: NPU execution (Planned).
 
 #### `ModelType`
-Supported pre-defined model types.
+Supported pre-defined model types. Includes both text generation and embedding models.
+
+**Text Generation (CausalLM):**
 - `CAUSAL_LM_MODEL_QWEN3_0_6B`: Qwen3 0.6B model.
+
+**Embedding (SentenceTransformer):**
+- `CAUSAL_LM_MODEL_EMBEDDING_QWEN3`: Qwen3-based embedding model.
+- `CAUSAL_LM_MODEL_EMBEDDING_QWEN2`: Qwen2-based embedding model.
+- `CAUSAL_LM_MODEL_EMBEDDING_GEMMA3`: Gemma3-based embedding model.
 
 #### `ModelQuantizationType`
 Supported quantization formats.
@@ -92,22 +116,39 @@ Supported quantization formats.
 - `CAUSAL_LM_QUANTIZATION_W8A16`: 8-bit weights, 16-bit activations.
 - `CAUSAL_LM_QUANTIZATION_W32A32`: 32-bit weights, 32-bit activations (FP32).
 
+### Structures
+
+#### `EmbeddingOutput`
+Output structure for embedding results.
+- `data` (`float *`): Pointer to embedding vector data. Managed by the API, do not free.
+- `dim` (`unsigned int`): Embedding dimension (e.g., 1024).
+- `length` (`unsigned int`): Number of embedding vectors (equals batch size).
+
 ### Functions
 
 #### `ErrorCode setOptions(Config config)`
 Sets global configuration options.
-- **config**: Structure containing options like `use_chat_template` and `debug_mode`.
+- **config**: Structure containing options like `use_chat_template`, `debug_mode`, and `verbose`.
 
 #### `ErrorCode loadModel(BackendType compute, ModelType modeltype, ModelQuantizationType quant_type)`
-Loads a registered model.
+Loads a registered model. Works for both text generation and embedding models.
 - **compute**: Backend to use.
-- **modeltype**: Specific model enum.
+- **modeltype**: Model type enum (CausalLM or Embedding).
 - **quant_type**: Quantization type.
 
 #### `ErrorCode runModel(const char *inputTextPrompt, const char **outputText)`
-Runs inference on the loaded model.
+Runs the loaded model. Behavior depends on the loaded model type:
+- **CausalLM models**: Generates text and stores it in `outputText`.
+- **Embedding models**: Runs encoding internally. `outputText` will be set to an empty string. Use `getEmbeddingOutput()` to retrieve the embedding vectors.
 - **inputTextPrompt**: The input text/prompt.
 - **outputText**: Pointer to store the result string.
+
+#### `ErrorCode getEmbeddingOutput(EmbeddingOutput *output)`
+Retrieves embedding vectors from the last `runModel()` call.
+- Only valid when an embedding model is loaded.
+- **output**: Pointer to `EmbeddingOutput` struct to be filled.
+- Returns `CAUSAL_LM_ERROR_INVALID_PARAMETER` if the loaded model is not an embedding model.
+- Returns `CAUSAL_LM_ERROR_INFERENCE_NOT_RUN` if `runModel()` has not been called yet.
 
 #### `ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics)`
 Retrieves performance metrics of the last run.
@@ -117,7 +158,7 @@ Retrieves performance metrics of the last run.
 - `total_duration_ms`: Total execution time from start to finish.
 - `peak_memory_kb`: Peak resident set size (memory usage) in KB.
 
-## Usage Example
+## Usage Example (Text Generation)
 
 ```c
 #include "causal_lm_api.h"
@@ -128,14 +169,15 @@ int main() {
     Config config;
     config.use_chat_template = true;
     config.debug_mode = false;
+    config.verbose = false;
     setOptions(config);
 
     // 2. Load Model
     // Automatically looks for files in "./models/qwen3-0.6b-w16a16/"
-    ErrorCode err = loadModel(CAUSAL_LM_BACKEND_CPU, 
-                              CAUSAL_LM_MODEL_QWEN3_0_6B, 
+    ErrorCode err = loadModel(CAUSAL_LM_BACKEND_CPU,
+                              CAUSAL_LM_MODEL_QWEN3_0_6B,
                               CAUSAL_LM_QUANTIZATION_W16A16);
-    
+
     if (err != CAUSAL_LM_ERROR_NONE) {
         printf("Failed to load model\n");
         return -1;
@@ -144,7 +186,7 @@ int main() {
     // 3. Run Inference
     const char* output = NULL;
     err = runModel("Hello, how are you?", &output);
-    
+
     if (err == CAUSAL_LM_ERROR_NONE) {
         printf("Response: %s\n", output);
     }
@@ -152,8 +194,61 @@ int main() {
     // 4. Check Metrics
     PerformanceMetrics metrics;
     if (getPerformanceMetrics(&metrics) == CAUSAL_LM_ERROR_NONE) {
-        printf("Generated %d tokens in %.2f ms\n", 
+        printf("Generated %d tokens in %.2f ms\n",
                metrics.generation_tokens, metrics.generation_duration_ms);
+    }
+
+    return 0;
+}
+```
+
+## Usage Example (Embedding)
+
+```c
+#include "causal_lm_api.h"
+#include <stdio.h>
+
+int main() {
+    // 1. Set Options
+    Config config;
+    config.use_chat_template = false;
+    config.debug_mode = false;
+    config.verbose = false;
+    setOptions(config);
+
+    // 2. Load Embedding Model
+    // Requires config files in "./models/" directory
+    ErrorCode err = loadModel(CAUSAL_LM_BACKEND_CPU,
+                              CAUSAL_LM_MODEL_EMBEDDING_QWEN3,
+                              CAUSAL_LM_QUANTIZATION_W16A16);
+
+    if (err != CAUSAL_LM_ERROR_NONE) {
+        printf("Failed to load embedding model\n");
+        return -1;
+    }
+
+    // 3. Run Model (same API as text generation)
+    const char* output_text = NULL;
+    err = runModel("Hello, world!", &output_text);
+
+    if (err != CAUSAL_LM_ERROR_NONE) {
+        printf("Failed to run embedding\n");
+        return -1;
+    }
+
+    // 4. Get Embedding Output
+    EmbeddingOutput emb;
+    err = getEmbeddingOutput(&emb);
+
+    if (err == CAUSAL_LM_ERROR_NONE) {
+        printf("Embedding dim: %u, batch: %u\n", emb.dim, emb.length);
+
+        // Print first 5 elements of the embedding vector
+        printf("Embedding: [");
+        for (unsigned int i = 0; i < 5 && i < emb.dim; ++i) {
+            printf("%.6f%s", emb.data[i], (i < 4) ? ", " : "");
+        }
+        printf(", ...]\n");
     }
 
     return 0;

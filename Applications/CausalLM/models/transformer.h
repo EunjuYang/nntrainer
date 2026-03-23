@@ -101,6 +101,18 @@ public:
                    const WSTR system_prompt = "", const WSTR tail_prompt = "",
                    bool log_output = true);
 
+  /**
+   * @brief Get the hidden dimension of the model
+   * @return hidden dimension
+   */
+  unsigned int getDim() const { return static_cast<unsigned int>(DIM); }
+
+  /**
+   * @brief Get the batch size of the model
+   * @return batch size
+   */
+  unsigned int getBatchSize() const { return BATCH_SIZE; }
+
 protected:
   /**
    * @brief Setup the parameters for the Transformer model
