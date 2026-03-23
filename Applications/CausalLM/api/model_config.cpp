@@ -10,9 +10,12 @@
  * @bug     No known bugs except for NYI items
  */
 #include "causal_lm_api.h"
+#include "json.hpp"
 #include "model_config_internal.h"
 #include <climits>
 #include <cstring>
+
+using json = nlohmann::json;
 
 static void register_qwen3_0_6b() {
   // 1. Architecture Config
@@ -143,27 +146,22 @@ static void register_embedding_qwen3() {
   rc.temperature = 0;
 
   // 3. Inline modules pipeline config (replaces modules.json + module configs)
-  //    Each module entry:
-  //      - idx: execution order
-  //      - type: module class name
-  //      - config (optional): module-specific parameters (replaces
-  //        {N}_Module/config.json)
-  strncpy(rc.modules_config,
-          "["
-          "{\"idx\":0,"
-          "\"type\":\"sentence_transformers.models.Transformer\"},"
-          "{\"idx\":1,"
-          "\"type\":\"sentence_transformers.models.Pooling\","
-          "\"config\":{\"word_embedding_dimension\":1024,"
-          "\"pooling_mode_cls_token\":false,"
-          "\"pooling_mode_mean_tokens\":true,"
-          "\"pooling_mode_max_tokens\":false,"
-          "\"pooling_mode_mean_sqrt_len_tokens\":false,"
-          "\"pooling_mode_weightedmean_tokens\":false,"
-          "\"pooling_mode_lasttoken\":false}},"
-          "{\"idx\":2,"
-          "\"type\":\"sentence_transformers.models.Normalize\"}"
-          "]",
+  json modules = json::array({
+    {{"idx", 0}, {"type", "sentence_transformers.models.Transformer"}},
+    {{"idx", 1},
+     {"type", "sentence_transformers.models.Pooling"},
+     {"config",
+      {{"word_embedding_dimension", 1024},
+       {"pooling_mode_cls_token", false},
+       {"pooling_mode_mean_tokens", true},
+       {"pooling_mode_max_tokens", false},
+       {"pooling_mode_mean_sqrt_len_tokens", false},
+       {"pooling_mode_weightedmean_tokens", false},
+       {"pooling_mode_lasttoken", false}}}},
+    {{"idx", 2}, {"type", "sentence_transformers.models.Normalize"}},
+  });
+  std::string modules_str = modules.dump();
+  strncpy(rc.modules_config, modules_str.c_str(),
           sizeof(rc.modules_config) - 1);
 
   registerModel("EMBEDDING-QWEN3-W16A16", "Embedding-Qwen3-Arch", rc);
