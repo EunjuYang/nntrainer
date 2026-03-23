@@ -21,20 +21,16 @@
 #include <vector>
 
 #include "causal_lm.h"
-#include "embedding_gemma.h"
 #include "gemma3_causallm.h"
 #include "gptoss_cached_slim_causallm.h"
 #include "gptoss_causallm.h"
 #include "json.hpp"
 #include "model_config_internal.h"
 #include "qwen2_causallm.h"
-#include "qwen2_embedding.h"
 #include "qwen3_cached_slim_moe_causallm.h"
 #include "qwen3_causallm.h"
-#include "qwen3_embedding.h"
 #include "qwen3_moe_causallm.h"
 #include "qwen3_slim_moe_causallm.h"
-#include "sentence_transformer.h"
 #include <factory.h>
 #include <fstream>
 #include <sys/stat.h>
@@ -119,23 +115,6 @@ static void register_models() {
     causallm::Factory::Instance().registerModel(
       "Gemma3ForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
         return std::make_unique<causallm::Gemma3CausalLM>(cfg, generation_cfg,
-                                                          nntr_cfg);
-      });
-
-    // Register Embedding Models
-    causallm::Factory::Instance().registerModel(
-      "Qwen3Embedding", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::Qwen3Embedding>(cfg, generation_cfg,
-                                                          nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "Qwen2Embedding", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::Qwen2Embedding>(cfg, generation_cfg,
-                                                          nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "EmbeddingGemma", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::EmbeddingGemma>(cfg, generation_cfg,
                                                           nntr_cfg);
       });
 
@@ -609,151 +588,6 @@ ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
     std::cerr << "Exception in getPerformanceMetrics: " << e.what()
               << std::endl;
     return CAUSAL_LM_ERROR_UNKNOWN;
-  }
-
-  return CAUSAL_LM_ERROR_NONE;
-}
-
-static const char *get_embedding_architecture(EmbeddingModelType type) {
-  switch (type) {
-  case CAUSAL_LM_EMBEDDING_QWEN3:
-    return "Qwen3Embedding";
-  case CAUSAL_LM_EMBEDDING_QWEN2:
-    return "Qwen2Embedding";
-  case CAUSAL_LM_EMBEDDING_GEMMA3:
-    return "EmbeddingGemma";
-  default:
-    return nullptr;
-  }
-}
-
-static std::vector<float *> g_last_embedding_output;
-
-ErrorCode loadEmbeddingModel(BackendType compute,
-                              EmbeddingModelType modeltype,
-                              ModelQuantizationType quant_type) {
-
-  auto start_init = std::chrono::high_resolution_clock::now();
-
-  const char *architecture = get_embedding_architecture(modeltype);
-  if (architecture == nullptr) {
-    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
-  }
-
-  register_models();
-
-  std::lock_guard<std::mutex> lock(g_mutex);
-  try {
-    // Embedding models use external file-based configuration.
-    // The user must place config.json, nntr_config.json, modules.json,
-    // weight file, and tokenizer in the model directory.
-    std::string model_dir_path = "./models/";
-
-    json cfg = causallm::LoadJsonFile(model_dir_path + "config.json");
-    json generation_cfg;
-    try {
-      generation_cfg =
-        causallm::LoadJsonFile(model_dir_path + "generation_config.json");
-    } catch (...) {
-      // generation_config.json is optional for embedding models
-      generation_cfg = json::object();
-    }
-    json nntr_cfg =
-      causallm::LoadJsonFile(model_dir_path + "nntr_config.json");
-
-    if (nntr_cfg.contains("tokenizer_file")) {
-      std::string t_file = nntr_cfg["tokenizer_file"];
-      nntr_cfg["tokenizer_file"] = model_dir_path + t_file;
-    }
-
-    // Override model_type to "Embedding" for embedding models
-    nntr_cfg["model_type"] = "Embedding";
-
-    if (nntr_cfg.contains("module_config_path")) {
-      std::string module_path =
-        nntr_cfg["module_config_path"].get<std::string>();
-      // Resolve relative module config path against model directory
-      if (module_path.find('/') == std::string::npos) {
-        nntr_cfg["module_config_path"] = model_dir_path + module_path;
-      }
-    }
-
-    // Construct weight file path
-    std::string weight_file_name;
-    if (nntr_cfg.contains("model_file_name")) {
-      weight_file_name = nntr_cfg["model_file_name"].get<std::string>();
-    } else {
-      weight_file_name = "pytorch_model.bin";
-    }
-
-    const std::string weight_file = model_dir_path + weight_file_name;
-
-    g_model = causallm::Factory::Instance().create(
-      std::string(architecture), cfg, generation_cfg, nntr_cfg);
-    if (!g_model) {
-      return CAUSAL_LM_ERROR_MODEL_LOAD_FAILED;
-    }
-
-    g_model->initialize();
-    g_model->load_weight(weight_file);
-
-    g_initialized = true;
-    g_architecture = architecture;
-
-    auto finish_init = std::chrono::high_resolution_clock::now();
-    auto init_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-      finish_init - start_init);
-    g_initialization_duration_ms = init_duration.count();
-
-  } catch (const std::exception &e) {
-    std::cerr << "Exception in loadEmbeddingModel: " << e.what() << std::endl;
-    return CAUSAL_LM_ERROR_MODEL_LOAD_FAILED;
-  } catch (...) {
-    std::cerr << "Unknown exception in loadEmbeddingModel" << std::endl;
-    return CAUSAL_LM_ERROR_MODEL_LOAD_FAILED;
-  }
-
-  return CAUSAL_LM_ERROR_NONE;
-}
-
-ErrorCode runEmbedding(const char *inputTextPrompt, EmbeddingOutput *output) {
-  if (!g_initialized || !g_model) {
-    return CAUSAL_LM_ERROR_NOT_INITIALIZED;
-  }
-  if (inputTextPrompt == nullptr || output == nullptr) {
-    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
-  }
-
-  try {
-    std::lock_guard<std::mutex> lock(g_mutex);
-
-    auto *embedding_model =
-      dynamic_cast<causallm::SentenceTransformer *>(g_model.get());
-    if (!embedding_model) {
-      std::cerr << "Loaded model is not an embedding model" << std::endl;
-      return CAUSAL_LM_ERROR_INVALID_PARAMETER;
-    }
-
-    std::string input(inputTextPrompt);
-
-#if defined(_WIN32)
-    g_last_embedding_output = embedding_model->encode(
-      std::wstring(input.begin(), input.end()), L"", L"");
-#else
-    g_last_embedding_output = embedding_model->encode(input, "", "");
-#endif
-
-    if (g_last_embedding_output.empty()) {
-      return CAUSAL_LM_ERROR_INFERENCE_FAILED;
-    }
-
-    output->data = g_last_embedding_output[0];
-    output->dim = embedding_model->getDim();
-    output->length = embedding_model->getBatchSize();
-
-  } catch (const std::exception &e) {
-    std::cerr << "Exception in runEmbedding: " << e.what() << std::endl;
-    return CAUSAL_LM_ERROR_INFERENCE_FAILED;
   }
 
   return CAUSAL_LM_ERROR_NONE;

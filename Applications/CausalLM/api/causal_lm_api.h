@@ -56,16 +56,6 @@ typedef enum {
 } ModelType;
 
 /**
- * @brief Embedding model type
- * @note  Enable only when your library supports the model
- */
-typedef enum {
-  CAUSAL_LM_EMBEDDING_QWEN3 = 0,
-  CAUSAL_LM_EMBEDDING_QWEN2 = 1,
-  CAUSAL_LM_EMBEDDING_GEMMA3 = 2,
-} EmbeddingModelType;
-
-/**
  * @brief Configuration structure
  */
 typedef struct {
@@ -131,38 +121,6 @@ WIN_EXPORT ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics);
  */
 WIN_EXPORT ErrorCode runModel(const char *inputTextPrompt,
                               const char **outputText);
-
-/**
- * @brief Embedding output structure
- */
-typedef struct {
-  float *data;         ///< Pointer to embedding vector data (managed by API)
-  unsigned int dim;    ///< Embedding dimension
-  unsigned int length; ///< Number of embedding vectors (batch_size)
-} EmbeddingOutput;
-
-/**
- * @brief Load an embedding model
- * @param compute Backend compute type
- * @param modeltype Embedding model type
- * @param quant_type Model quantization type
- * @return ErrorCode
- */
-WIN_EXPORT ErrorCode loadEmbeddingModel(BackendType compute,
-                                         EmbeddingModelType modeltype,
-                                         ModelQuantizationType quant_type);
-
-/**
- * @brief Run embedding model to get embedding vectors from input text
- * @param inputTextPrompt Input text to encode
- * @param output Pointer to EmbeddingOutput struct to be filled with results
- * @return ErrorCode
- * @note The output data pointer is managed by the API and must not be freed
- *       by the caller. It remains valid until the next call to runEmbedding()
- *       or until the model is unloaded.
- */
-WIN_EXPORT ErrorCode runEmbedding(const char *inputTextPrompt,
-                                   EmbeddingOutput *output);
 
 #ifdef __cplusplus
 }
