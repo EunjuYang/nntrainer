@@ -1085,6 +1085,32 @@ NeuralNetwork::inference(unsigned int batch_size,
   return output;
 }
 
+std::vector<float *>
+NeuralNetwork::embedding(unsigned int batch_size,
+                          const std::vector<float *> &input) {
+  sharedConstTensors input_tensors, output_tensors;
+  auto in_dim = getInputDimension();
+
+  input_tensors.reserve(input.size());
+  for (unsigned int idx = 0; idx < in_dim.size(); idx++) {
+    in_dim[idx].batch(batch_size);
+    input_tensors.emplace_back(MAKE_SHARED_TENSOR(Tensor::Map(
+      input[idx], in_dim[idx].getDataLen() * sizeof(float), in_dim[idx], 0)));
+  }
+
+  output_tensors = inference(input_tensors, false);
+
+  std::vector<float *> output;
+  output.reserve(output_tensors.size());
+
+  for (auto &out : output_tensors) {
+    auto out_t = *out.get();
+    output.push_back(out_t.getData());
+  }
+
+  return output;
+}
+
 sharedConstTensors
 NeuralNetwork::incremental_inference(sharedConstTensors X,
                                      unsigned int init_seq_len,
