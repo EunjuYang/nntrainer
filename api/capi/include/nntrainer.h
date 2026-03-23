@@ -688,29 +688,6 @@ int ml_train_model_load(ml_train_model_h model, const char *file_path,
                         ml_train_model_format_e format);
 
 /**
- * @brief Runs the embedding model to get embedding vectors.
- * @details Use this function to run an embedding model and retrieve embedding
- * vectors for given input token indices. The model must contain an embedding
- * layer and should be compiled and initialized before calling this function.
- * The input data contains integer token indices stored as float values.
- * The output contains the corresponding embedding vectors.
- * @since_tizen 10.0
- * @param[in] model The NNTrainer model handle.
- * @param[in] input The input data containing token indices (as float).
- * @param[in] input_length The number of elements in the input array.
- * @param[out] output The output buffer to store embedding vectors. Must be
- *             pre-allocated with sufficient size (input_length * embedding_dim).
- * @param[out] output_length The number of elements written to the output array.
- * @return @c 0 on success. Otherwise a negative error value.
- * @retval #ML_ERROR_NONE Successful.
- * @retval #ML_ERROR_NOT_SUPPORTED Not supported.
- * @retval #ML_ERROR_INVALID_PARAMETER Invalid parameter.
- */
-int ml_train_model_run_embedding(ml_train_model_h model, const float *input,
-                                  unsigned int input_length, float *output,
-                                  unsigned int *output_length);
-
-/**
  * @brief Gets neural network layer from the model with the given name.
  * @details Use this function to get already created Neural Network Layer. The
  * returned layer must not be released as it is owned by the model.

@@ -370,17 +370,6 @@ public:
     const std::vector<float *> &label = std::vector<float *>()) override;
 
   /**
-   * @brief     Run the embedding of the model
-   * @param[in] batch batch size of current input
-   * @param[in] input inputs as a list of each input data containing token
-   *            indices (as float)
-   * @retval list of output as float *
-   * @note The output memory must not be freed by the caller
-   */
-  std::vector<float *>
-  embedding(unsigned int batch, const std::vector<float *> &input) override;
-
-  /**
    * @brief     Run NeuralNetwork incremental inference
    * @param[in] X input tensor
    * @param[in] init_seq_len initial sequence length

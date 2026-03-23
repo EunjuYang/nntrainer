@@ -304,25 +304,6 @@ public:
             const std::vector<float *> &label = std::vector<float *>()) = 0;
 
   /**
-   * @brief     Run the embedding of the model
-   * @details   This API runs the model in inference mode and returns the
-   *            embedding vectors for the given input token indices. The model
-   *            should contain an embedding layer. Input data should contain
-   *            integer token indices (stored as float values). The output
-   *            contains the corresponding embedding vectors.
-   * @param[in] batch batch size of current input
-   * @param[in] input inputs as a list of each input data containing token
-   *            indices (as float)
-   * @param[out] output pre-allocated output buffer to store the embedding
-   *             vectors. The buffer must be large enough to hold
-   *             batch * sequence_length * embedding_dim floats.
-   * @retval list of output as float *
-   * @note The output memory must not be freed by the caller
-   */
-  virtual std::vector<float *>
-  embedding(unsigned int batch, const std::vector<float *> &input) = 0;
-
-  /**
    * @brief     Run the incremental inference of the model
    * @param[in] batch batch size of current input
    * @param[in] input inputs as a list of each input data

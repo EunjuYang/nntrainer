@@ -383,54 +383,6 @@ int ml_train_model_run_with_single_param(ml_train_model_h model,
   return ml_train_model_run(model, single_param, NULL);
 }
 
-int ml_train_model_run_embedding(ml_train_model_h model, const float *input,
-                                  unsigned int input_length, float *output,
-                                  unsigned int *output_length) {
-  int status = ML_ERROR_NONE;
-  ml_train_model *nnmodel;
-  std::shared_ptr<ml::train::Model> m;
-
-  check_feature_state();
-
-  ML_TRAIN_VERIFY_VALID_HANDLE(model);
-
-  if (input == nullptr || output == nullptr || output_length == nullptr ||
-      input_length == 0) {
-    return ML_ERROR_INVALID_PARAMETER;
-  }
-
-  {
-    ML_TRAIN_GET_VALID_MODEL_LOCKED(nnmodel, model);
-    ML_TRAIN_ADOPT_LOCK(nnmodel, model_lock);
-    m = nnmodel->model;
-  }
-
-  returnable f = [&]() {
-    unsigned int batch = 1;
-    std::vector<float *> input_vec = {const_cast<float *>(input)};
-
-    std::vector<float *> output_vec = m->embedding(batch, input_vec);
-
-    if (output_vec.empty()) {
-      return ML_ERROR_INVALID_PARAMETER;
-    }
-
-    auto out_dim = m->getOutputDimension();
-    unsigned int total_output_len = 0;
-    for (auto &dim : out_dim) {
-      total_output_len += dim.getFeatureLen();
-    }
-
-    std::memcpy(output, output_vec[0], total_output_len * sizeof(float));
-    *output_length = total_output_len;
-
-    return ML_ERROR_NONE;
-  };
-
-  status = nntrainer_exception_boundary(f);
-  return status;
-}
-
 int ml_train_model_destroy(ml_train_model_h model) {
   int status = ML_ERROR_NONE;
   ml_train_model *nnmodel;
