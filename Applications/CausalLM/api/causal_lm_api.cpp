@@ -199,34 +199,28 @@ static std::string apply_chat_template(const std::string &architecture,
   return input;
 }
 
-static std::string get_quantization_suffix(ModelQuantizationType type) {
+static std::string get_quantization_suffix(ModelQuantizationType type,
+                                            bool upper = false) {
+  std::string suffix;
   switch (type) {
   case CAUSAL_LM_QUANTIZATION_W4A32:
-    return "-w4a32";
+    suffix = "-w4a32";
+    break;
   case CAUSAL_LM_QUANTIZATION_W16A16:
-    return "-w16a16";
+    suffix = "-w16a16";
+    break;
   case CAUSAL_LM_QUANTIZATION_W8A16:
-    return "-w8a16";
+    suffix = "-w8a16";
+    break;
   case CAUSAL_LM_QUANTIZATION_W32A32:
-    return "-w32a32";
+    suffix = "-w32a32";
+    break;
   default:
-    return "-w4a32";
+    return upper ? "" : "-w4a32";
   }
-}
-
-static std::string get_quantization_suffix_upper(ModelQuantizationType type) {
-  switch (type) {
-  case CAUSAL_LM_QUANTIZATION_W4A32:
-    return "-W4A32";
-  case CAUSAL_LM_QUANTIZATION_W16A16:
-    return "-W16A16";
-  case CAUSAL_LM_QUANTIZATION_W8A16:
-    return "-W8A16";
-  case CAUSAL_LM_QUANTIZATION_W32A32:
-    return "-W32A32";
-  default:
-    return "";
-  }
+  if (upper)
+    std::transform(suffix.begin(), suffix.end(), suffix.begin(), ::toupper);
+  return suffix;
 }
 
 static std::string resolve_model_path(const std::string &model_key,
@@ -426,7 +420,7 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
     std::transform(model_name_upper.begin(), model_name_upper.end(),
                    model_name_upper.begin(), ::toupper);
     std::string lookup_name =
-      model_name_upper + get_quantization_suffix_upper(quant_type);
+      model_name_upper + get_quantization_suffix(quant_type, true);
     std::string model_dir_path = resolve_model_path(model_name, quant_type);
 
     json cfg, generation_cfg, nntr_cfg;
