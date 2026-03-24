@@ -41,6 +41,7 @@
 #include <limits.h>
 
 #include "json.hpp"
+#include "types.h"
 #include <fstream>
 #include <tokenizers_c.h>
 #include <tokenizers_cpp.h>
@@ -112,6 +113,18 @@ public:
    * @return batch size
    */
   unsigned int getBatchSize() const { return BATCH_SIZE; }
+
+  /**
+   * @brief Get PerformanceMetrics
+   */
+  PerformanceMetrics getPerformanceMetrics() const {
+    return performance_metrics;
+  }
+
+  /**
+   * @brief get the status of run
+   */
+  bool hasRun() const { return has_run_; }
 
 protected:
   /**
@@ -188,6 +201,10 @@ protected:
   unsigned int FSU_LOOKAHEAD;
   float ATTN_LOGIT_SOFTCAPPING = 0.0f; /**< attention logit softcapping */
   bool IS_CAUSAL = true;
+
+  // Performance metrics
+  PerformanceMetrics performance_metrics = {};
+  bool has_run_ = false;
 };
 /**
  * Loads JSON data from a file with detailed error handling

@@ -608,13 +608,10 @@ ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
 
   try {
     std::lock_guard<std::mutex> lock(g_mutex);
-    auto *causal = dynamic_cast<causallm::CausalLM *>(g_model.get());
-    if (!causal)
-      return CAUSAL_LM_ERROR_UNKNOWN;
-    if (!causal->hasRun())
+    if (!g_model->hasRun())
       return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
 
-    *metrics = causal->getPerformanceMetrics();
+    *metrics = g_model->getPerformanceMetrics();
     metrics->initialization_duration_ms = g_initialization_duration_ms;
 
   } catch (const std::exception &e) {

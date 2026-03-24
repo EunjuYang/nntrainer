@@ -11,6 +11,7 @@
  */
 
 #include <app_context.h>
+#include <chrono>
 #include <embedding_normalize_layer.h>
 #include <embedding_pooling_layer.h>
 #include <engine.h>
@@ -239,6 +240,8 @@ std::vector<float *> SentenceTransformer::encode(const WSTR prompt,
   auto _input = tokenizer->Encode(prompt_, true);
 #endif
 
+  auto encode_start = std::chrono::high_resolution_clock::now();
+
   std::vector<int64_t> init_input;
   unsigned int input_len =
     std::min((unsigned int)_input.size(), (unsigned int)MAX_SEQ_LEN);
@@ -270,6 +273,19 @@ std::vector<float *> SentenceTransformer::encode(const WSTR prompt,
     BATCH_SIZE, input, label, input_len, 0, input_len, false);
 
   free(input_sample);
+
+  auto encode_end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double, std::milli> encode_duration =
+    encode_end - encode_start;
+
+  performance_metrics.prefill_tokens = input_len;
+  performance_metrics.prefill_duration_ms = encode_duration.count();
+  performance_metrics.generation_tokens = 0;
+  performance_metrics.generation_duration_ms = 0;
+  performance_metrics.total_duration_ms = encode_duration.count();
+  performance_metrics.peak_memory_kb = getPeakMemoryKb();
+
+  has_run_ = true;
 
   return output;
 }
