@@ -7,7 +7,7 @@ This directory contains the C API for CausalLM application, designed to provide 
 The API provides functionality to:
 - Initialize and configure the CausalLM environment.
 - Load pre-trained models with specific quantization settings.
-- Run text generation (`runModel`) or embedding inference (`runModelFloat`) using a unified `loadModel` interface.
+- Run text generation (`runModel`) or embedding inference (`runEmebedding`) using a unified `loadModel` interface.
 - Retrieve performance metrics (token counts, duration).
 
 ## Build & Integration
@@ -123,7 +123,7 @@ Supported pre-defined model types.
 - `CAUSAL_LM_MODEL_QWEN3_0_6B`: Qwen3 0.6B model.
 
 **Embedding (SentenceTransformer):**
-- `CAUSAL_LM_MODEL_EMBEDDING_QWEN3`: Qwen3-based embedding model.
+- `EMBEDDING_MODEL_QWEN3_0_6B`: Qwen3-based embedding model.
 
 #### `ModelQuantizationType`
 Supported quantization formats.
@@ -225,7 +225,7 @@ int main() {
 
     // 2. Load Embedding Model (same loadModel API)
     ErrorCode err = loadModel(CAUSAL_LM_BACKEND_CPU,
-                              CAUSAL_LM_MODEL_EMBEDDING_QWEN3,
+                              EMBEDDING_MODEL_QWEN3_0_6B,
                               CAUSAL_LM_QUANTIZATION_W16A16);
 
     if (err != CAUSAL_LM_ERROR_NONE) {
@@ -238,7 +238,7 @@ int main() {
     unsigned int emb_dim = 0;
     unsigned int emb_length = 0;
 
-    err = runModelFloat("Hello, world!", &emb_data, &emb_dim, &emb_length);
+    err = runEmebedding("Hello, world!", &emb_data, &emb_dim, &emb_length);
 
     if (err == CAUSAL_LM_ERROR_NONE) {
         printf("Embedding dim: %u, batch: %u\n", emb_dim, emb_length);

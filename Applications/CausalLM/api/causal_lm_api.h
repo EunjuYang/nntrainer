@@ -24,6 +24,8 @@ extern "C" {
 
 #include <stddef.h>
 
+#include "../models/performance_metrics.h"
+
 /**
  * @brief Error codes
  */
@@ -96,19 +98,6 @@ typedef enum {
  */
 WIN_EXPORT ErrorCode loadModel(BackendType compute, ModelType modeltype,
                                ModelQuantizationType quant_type);
-
-/**
- * @brief Performance Metrics
- */
-typedef struct {
-  unsigned int prefill_tokens;
-  double prefill_duration_ms;
-  unsigned int generation_tokens;
-  double generation_duration_ms;
-  double total_duration_ms;
-  double initialization_duration_ms;
-  size_t peak_memory_kb;
-} PerformanceMetrics;
 
 /**
  * @brief Get performance metrics of the last run

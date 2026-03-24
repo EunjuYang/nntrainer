@@ -118,7 +118,7 @@ static void register_embedding_qwen3() {
   ac.eos_token_ids[0] = 151645;
   ac.num_eos_token_ids = 1;
 
-  registerModelArchitecture("Embedding-Qwen3-Arch", ac);
+  registerModelArchitecture("Qwen3-Embedding-Arch", ac);
 
   // 2. Runtime Config for Embedding
   ModelRuntimeConfig rc;
@@ -126,15 +126,15 @@ static void register_embedding_qwen3() {
 
   rc.batch_size = 1;
   strncpy(rc.model_type, "Embedding", sizeof(rc.model_type) - 1);
-  strncpy(rc.model_tensor_type, "FP16-FP16", sizeof(rc.model_tensor_type) - 1);
+  strncpy(rc.model_tensor_type, "Q4_0-FP32", sizeof(rc.model_tensor_type) - 1);
   rc.init_seq_len = 512;
   rc.max_seq_len = 8192;
   rc.num_to_generate = 0; // Embedding models don't generate tokens
   rc.fsu = false;
   rc.fsu_lookahead = 0;
-  strncpy(rc.embedding_dtype, "FP16", sizeof(rc.embedding_dtype) - 1);
-  strncpy(rc.fc_layer_dtype, "FP16", sizeof(rc.fc_layer_dtype) - 1);
-  strncpy(rc.model_file_name, "embedding-qwen3-fp16.bin",
+  strncpy(rc.embedding_dtype, "Q4_0", sizeof(rc.embedding_dtype) - 1);
+  strncpy(rc.fc_layer_dtype, "Q4_0", sizeof(rc.fc_layer_dtype) - 1);
+  strncpy(rc.model_file_name, "embedding-qwen3-q40.bin",
           sizeof(rc.model_file_name) - 1);
   strncpy(rc.tokenizer_file, "tokenizer.json", sizeof(rc.tokenizer_file) - 1);
   rc.num_bad_word_ids = 0;
@@ -162,10 +162,10 @@ static void register_embedding_qwen3() {
   strncpy(rc.modules_config, modules_str.c_str(),
           sizeof(rc.modules_config) - 1);
 
-  registerModel("EMBEDDING-QWEN3-W16A16", "Embedding-Qwen3-Arch", rc);
+  registerModel("Qwen3-embedding-0.6B-W4A32", "Qwen3-Embedding-Arch", rc);
 
   // Register default alias
-  registerModel("EMBEDDING-QWEN3", "Embedding-Qwen3-Arch", rc);
+  registerModel("Qwen3-embedding-0.6B", "Qwen3-Embedding-Arch", rc);
 }
 
 int register_builtin_model_configs() {
