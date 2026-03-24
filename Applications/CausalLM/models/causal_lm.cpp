@@ -77,8 +77,12 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
   ids_history = (unsigned int *)malloc(static_cast<size_t>(BATCH_SIZE) *
                                        MAX_SEQ_LEN * sizeof(unsigned int));
 
-  BAD_WORD_IDS = nntr_cfg["bad_word_ids"].get<std::vector<unsigned int>>();
-  NUM_BADWORDS = BAD_WORD_IDS.size();
+  BAD_WORD_IDS = nntr_cfg.contains("bad_word_ids")
+                   ? nntr_cfg["bad_word_ids"].get<std::vector<unsigned int>>()
+                   : std::vector<unsigned int>();
+  NUM_BADWORDS = nntr_cfg.contains("num_bad_word_ids")
+                   ? nntr_cfg["num_bad_word_ids"].get<unsigned int>()
+                   : 0;
 
   LMHEAD_DTYPE = nntr_cfg.contains("lmhead_dtype")
                    ? nntr_cfg["lmhead_dtype"]
