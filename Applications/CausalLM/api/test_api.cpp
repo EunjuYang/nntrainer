@@ -12,6 +12,7 @@
  */
 
 #include "causal_lm_api.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <iomanip>
@@ -158,13 +159,16 @@ int main(int argc, char *argv[]) {
     verbose = (std::string(argv[5]) == "1" || std::string(argv[5]) == "true");
   }
 
-  // Map string to ModelType
+  // Map string to ModelType (case-insensitive)
   ModelType model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
   bool is_embedding = false;
   std::string model_name_str(model_name);
-  if (model_name_str == "QWEN3-0.6B") {
+  std::string model_name_upper = model_name_str;
+  std::transform(model_name_upper.begin(), model_name_upper.end(),
+                 model_name_upper.begin(), ::toupper);
+  if (model_name_upper == "QWEN3-0.6B") {
     model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
-  } else if (model_name_str == "QWEN3-EMBEDDING-0.6B") {
+  } else if (model_name_upper == "QWEN3-EMBEDDING-0.6B") {
     model_type = EMBEDDING_MODEL_QWEN3_0_6B;
     is_embedding = true;
   } else {
