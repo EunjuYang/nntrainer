@@ -36,65 +36,71 @@ void SentenceTransformer::setupParameters(json &cfg, json &generation_cfg,
                                           json &nntr_cfg) {
   Transformer::setupParameters(cfg, generation_cfg, nntr_cfg);
 
-  std::string modules_config_path = "modules.json";
-  if (nntr_cfg.contains("module_config_path")) {
-    modules_config_path = nntr_cfg["module_config_path"].get<std::string>();
-  } else {
-    std::cout << "module_config_path is not set. Using default: "
-              << modules_config_path << std::endl;
-  }
-
-  // Get the directory containing modules.json to resolve relative paths
-  std::filesystem::path modules_json_path(modules_config_path);
-  std::filesystem::path base_dir = modules_json_path.parent_path();
-
-  try {
-    // 1. Load modules.json to get the structure and order of layers
-    json modules_json = LoadJsonFile(modules_config_path);
-    modules = modules_json.get<std::vector<json>>();
+  if (nntr_cfg.contains("modules") && nntr_cfg["modules"].is_array()) {
+    // Inline modules config provided directly in nntr_cfg (API path)
+    modules = nntr_cfg["modules"].get<std::vector<json>>();
 
     for (auto &module : modules) {
-      if (module.contains("path")) {
-        std::string module_path_str = module["path"].get<std::string>();
-        if (module_path_str.empty()) {
-          // For the first module (Transformer), the path might be empty or ".""
-          // We generally skip it or handle it if it points to a separate
-          // config.
-          continue;
-        }
+      if (module.contains("config") && module.contains("idx")) {
+        int idx = module["idx"].get<int>();
+        module_configs[idx] = module["config"];
+      }
+    }
+  } else {
+    // File-based modules config (direct app path)
+    std::string modules_config_path = "modules.json";
+    if (nntr_cfg.contains("module_config_path")) {
+      modules_config_path = nntr_cfg["module_config_path"].get<std::string>();
+    } else {
+      std::cout << "module_config_path is not set. Using default: "
+                << modules_config_path << std::endl;
+    }
 
-        // 2. Resolve config.json path for each module
-        std::filesystem::path module_dir = base_dir / module_path_str;
+    // Get the directory containing modules.json to resolve relative paths
+    std::filesystem::path modules_json_path(modules_config_path);
+    std::filesystem::path base_dir = modules_json_path.parent_path();
 
-        if (std::filesystem::exists(module_dir) &&
-            std::filesystem::is_directory(module_dir)) {
-          std::filesystem::path config_path = module_dir / "config.json";
-          if (std::filesystem::exists(config_path)) {
-            try {
-              // 3. Load config.json and store it in module_configs map using
-              // idx as key
-              json module_config = LoadJsonFile(config_path.string());
-              if (module.contains("idx")) {
-                int idx = module["idx"].get<int>();
-                module_configs[idx] = module_config;
-              } else {
-                std::cerr << "Warning: Module does not have idx field"
+    try {
+      // 1. Load modules.json to get the structure and order of layers
+      json modules_json = LoadJsonFile(modules_config_path);
+      modules = modules_json.get<std::vector<json>>();
+
+      for (auto &module : modules) {
+        if (module.contains("path")) {
+          std::string module_path_str = module["path"].get<std::string>();
+          if (module_path_str.empty()) {
+            continue;
+          }
+
+          // 2. Resolve config.json path for each module
+          std::filesystem::path module_dir = base_dir / module_path_str;
+
+          if (std::filesystem::exists(module_dir) &&
+              std::filesystem::is_directory(module_dir)) {
+            std::filesystem::path config_path = module_dir / "config.json";
+            if (std::filesystem::exists(config_path)) {
+              try {
+                json module_config = LoadJsonFile(config_path.string());
+                if (module.contains("idx")) {
+                  int idx = module["idx"].get<int>();
+                  module_configs[idx] = module_config;
+                } else {
+                  std::cerr << "Warning: Module does not have idx field"
+                            << std::endl;
+                }
+              } catch (const std::exception &e) {
+                std::cerr << "Failed to load config for module: "
+                          << module_path_str << " Reason: " << e.what()
                           << std::endl;
               }
-            } catch (const std::exception &e) {
-              std::cerr << "Failed to load config for module: "
-                        << module_path_str << " Reason: " << e.what()
-                        << std::endl;
             }
-          } else {
-            // It's possible some modules don't have a config.json
           }
         }
       }
+    } catch (const std::exception &e) {
+      std::cerr << "Failed to load modules config from: "
+                << modules_config_path << " Reason: " << e.what() << std::endl;
     }
-  } catch (const std::exception &e) {
-    std::cerr << "Failed to load modules config from: " << modules_config_path
-              << " Reason: " << e.what() << std::endl;
   }
 }
 
