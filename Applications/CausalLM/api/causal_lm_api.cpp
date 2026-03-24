@@ -57,7 +57,7 @@ static std::vector<float *> g_last_embedding_output;
 
 static std::map<std::string, std::string> g_model_path_map = {
   {"QWEN3-0.6B", "qwen3-0.6b"},
-  {"EMBEDDING-QWEN3", "embedding-qwen3"},
+  {"QWEN3-EMBEDDING-0.6B", "qwen3-embedding-0.6b"},
 };
 
 struct RegisteredModel {
@@ -199,34 +199,28 @@ static std::string apply_chat_template(const std::string &architecture,
   return input;
 }
 
-static std::string get_quantization_suffix(ModelQuantizationType type) {
+static std::string get_quantization_suffix(ModelQuantizationType type,
+                                           bool upper = false) {
+  std::string suffix;
   switch (type) {
   case CAUSAL_LM_QUANTIZATION_W4A32:
-    return "-w4a32";
+    suffix = "-w4a32";
+    break;
   case CAUSAL_LM_QUANTIZATION_W16A16:
-    return "-w16a16";
+    suffix = "-w16a16";
+    break;
   case CAUSAL_LM_QUANTIZATION_W8A16:
-    return "-w8a16";
+    suffix = "-w8a16";
+    break;
   case CAUSAL_LM_QUANTIZATION_W32A32:
-    return "-w32a32";
+    suffix = "-w32a32";
+    break;
   default:
-    return "-w4a32";
+    return upper ? "" : "-w4a32";
   }
-}
-
-static std::string get_quantization_suffix_upper(ModelQuantizationType type) {
-  switch (type) {
-  case CAUSAL_LM_QUANTIZATION_W4A32:
-    return "-W4A32";
-  case CAUSAL_LM_QUANTIZATION_W16A16:
-    return "-W16A16";
-  case CAUSAL_LM_QUANTIZATION_W8A16:
-    return "-W8A16";
-  case CAUSAL_LM_QUANTIZATION_W32A32:
-    return "-W32A32";
-  default:
-    return "";
-  }
+  if (upper)
+    std::transform(suffix.begin(), suffix.end(), suffix.begin(), ::toupper);
+  return suffix;
 }
 
 static std::string resolve_model_path(const std::string &model_key,
@@ -426,7 +420,7 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
     std::transform(model_name_upper.begin(), model_name_upper.end(),
                    model_name_upper.begin(), ::toupper);
     std::string lookup_name =
-      model_name_upper + get_quantization_suffix_upper(quant_type);
+      model_name_upper + get_quantization_suffix(quant_type, true);
     std::string model_dir_path = resolve_model_path(model_name, quant_type);
 
     json cfg, generation_cfg, nntr_cfg;
@@ -451,7 +445,10 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
       try {
         generation_cfg =
           causallm::LoadJsonFile(model_dir_path + "/generation_config.json");
-      } catch (...) {
+      } catch (const std::exception &e) {
+        if (g_verbose)
+          std::cerr << "generation_config.json not found or invalid: "
+                    << e.what() << " (using defaults)" << std::endl;
         generation_cfg = json::object();
       }
       nntr_cfg = causallm::LoadJsonFile(model_dir_path + "/nntr_config.json");
@@ -517,7 +514,7 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
   if (is_embedding_model()) {
     std::cerr << "runModel: text output is not supported for embedding models. "
-                 "Use runModelFloat() instead."
+                 "Use runEmbedding() instead."
               << std::endl;
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
   }
@@ -552,10 +549,10 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
 }
 
 // ---------------------------------------------------------------------------
-// Public API: runModelFloat (float vector output, Embedding only)
+// Public API: runEmbedding (float vector output, Embedding only)
 // ---------------------------------------------------------------------------
-ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData,
-                        unsigned int *outputDim, unsigned int *outputLength) {
+ErrorCode runEmbedding(const char *inputTextPrompt, float **outputData,
+                       unsigned int *outputDim, unsigned int *outputLength) {
   if (!g_initialized || !g_model)
     return CAUSAL_LM_ERROR_NOT_INITIALIZED;
   if (inputTextPrompt == nullptr || outputData == nullptr ||
@@ -564,7 +561,7 @@ ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData,
 
   auto *encoder = dynamic_cast<causallm::SentenceTransformer *>(g_model.get());
   if (!encoder) {
-    std::cerr << "runModelFloat: float output is not supported for CausalLM "
+    std::cerr << "runEmbedding: float output is not supported for CausalLM "
                  "models. Use runModel() instead."
               << std::endl;
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
@@ -589,7 +586,7 @@ ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData,
     *outputLength = g_model->getBatchSize();
 
   } catch (const std::exception &e) {
-    std::cerr << "Exception in runModelFloat: " << e.what() << std::endl;
+    std::cerr << "Exception in runEmbedding: " << e.what() << std::endl;
     return CAUSAL_LM_ERROR_INFERENCE_FAILED;
   }
 
@@ -607,13 +604,9 @@ ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
 
   try {
     std::lock_guard<std::mutex> lock(g_mutex);
-    auto *causal = dynamic_cast<causallm::CausalLM *>(g_model.get());
-    if (!causal)
-      return CAUSAL_LM_ERROR_UNKNOWN;
-    if (!causal->hasRun())
-      return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
-
-    *metrics = causal->getPerformanceMetrics();
+    if (!g_model->hasRun())
+      return CAUSAL_LM_ERROR_INFERENCE_FAILED;
+    *metrics = g_model->getPerformanceMetrics();
     metrics->initialization_duration_ms = g_initialization_duration_ms;
 
   } catch (const std::exception &e) {

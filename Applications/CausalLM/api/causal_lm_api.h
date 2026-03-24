@@ -25,6 +25,8 @@ extern "C" {
 #include "../models/performance_metrics.h"
 #include <stddef.h>
 
+#include "../models/performance_metrics.h"
+
 /**
  * @brief Error codes
  */
