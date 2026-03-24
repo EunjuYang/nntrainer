@@ -38,31 +38,10 @@ typedef struct {
 
 #ifdef __cplusplus
 
-#ifdef _WIN32
-#include <psapi.h>
-#include <windows.h>
-#else
-#include <sys/resource.h>
-#endif
-
 /**
  * @brief Get peak memory usage in KB
  */
-inline size_t getPeakMemoryKb() {
-#if defined(_WIN32)
-  PROCESS_MEMORY_COUNTERS pmc;
-  if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
-    return (size_t)(pmc.PeakWorkingSetSize / 1024);
-  }
-  return 0;
-#else
-  struct rusage rusage;
-  if (getrusage(RUSAGE_SELF, &rusage) == 0) {
-    return (size_t)(rusage.ru_maxrss);
-  }
-  return 0;
-#endif
-}
+size_t getPeakMemoryKb();
 
 #endif // __cplusplus
 
