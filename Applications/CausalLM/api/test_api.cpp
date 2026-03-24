@@ -94,7 +94,7 @@ void printUsage(const char *program_name) {
 
   std::cout << COLOR_CYAN << "Arguments:" << COLOR_RESET << "\n";
   std::cout << "  model_name        " << COLOR_BOLD << "REQUIRED" << COLOR_RESET
-            << "  - Model name (e.g., QWEN3-0.6B, EMBEDDING-QWEN3-0.6B)\n";
+            << "  - Model name (e.g., QWEN3-0.6B, QWEN3-EMBEDDING-0.6B)\n";
   std::cout << "  prompt            " << COLOR_GREEN << "OPTIONAL"
             << COLOR_RESET
             << "  - Input prompt (default: 'Hello, how are you?')\n";
@@ -110,7 +110,7 @@ void printUsage(const char *program_name) {
   std::cout << "  " << COLOR_BOLD << "CausalLM:" << COLOR_RESET
             << "         QWEN3-0.6B\n";
   std::cout << "  " << COLOR_BOLD << "Embedding:" << COLOR_RESET
-            << "        EMBEDDING-QWEN3-0.6B\n\n";
+            << "        QWEN3-EMBEDDING-0.6B\n\n";
 
   std::cout << COLOR_YELLOW << "Examples:" << COLOR_RESET << "\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
@@ -118,7 +118,7 @@ void printUsage(const char *program_name) {
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
             << " QWEN3-0.6B \"Write a poem\" 1 W32A32 1\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
-            << " EMBEDDING-QWEN3-0.6B \"Hello world\" 0 W32A32\n\n";
+            << " QWEN3-EMBEDDING-0.6B \"Hello world\" 0 W32A32\n\n";
 }
 } // namespace
 
@@ -164,7 +164,7 @@ int main(int argc, char *argv[]) {
   std::string model_name_str(model_name);
   if (model_name_str == "QWEN3-0.6B") {
     model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
-  } else if (model_name_str == "EMBEDDING-QWEN3-0.6B") {
+  } else if (model_name_str == "QWEN3-EMBEDDING-0.6B") {
     model_type = EMBEDDING_MODEL_QWEN3_0_6B;
     is_embedding = true;
   } else {
