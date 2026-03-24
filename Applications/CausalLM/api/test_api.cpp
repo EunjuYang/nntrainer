@@ -6,7 +6,7 @@
  * @date   21 Jan 2026
  * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
- * @brief  Simple application to test CausalLM API
+ * @brief  Simple application to test CausalLM and Embedding API
  * @bug    No known bugs except for NYI items
  *
  */
@@ -94,7 +94,7 @@ void printUsage(const char *program_name) {
 
   std::cout << COLOR_CYAN << "Arguments:" << COLOR_RESET << "\n";
   std::cout << "  model_name        " << COLOR_BOLD << "REQUIRED" << COLOR_RESET
-            << "  - Model name (e.g., QWEN3-0.6B)\n";
+            << "  - Model name (e.g., QWEN3-0.6B, EMBEDDING-QWEN3-0.6B)\n";
   std::cout << "  prompt            " << COLOR_GREEN << "OPTIONAL"
             << COLOR_RESET
             << "  - Input prompt (default: 'Hello, how are you?')\n";
@@ -106,11 +106,19 @@ void printUsage(const char *program_name) {
   std::cout << "  verbose           " << COLOR_GREEN << "OPTIONAL"
             << COLOR_RESET << "  - 0/1 or true/false (default: 0)\n\n";
 
+  std::cout << COLOR_YELLOW << "Supported Models:" << COLOR_RESET << "\n";
+  std::cout << "  " << COLOR_BOLD << "CausalLM:" << COLOR_RESET
+            << "         QWEN3-0.6B\n";
+  std::cout << "  " << COLOR_BOLD << "Embedding:" << COLOR_RESET
+            << "        EMBEDDING-QWEN3-0.6B\n\n";
+
   std::cout << COLOR_YELLOW << "Examples:" << COLOR_RESET << "\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
             << " QWEN3-0.6B \"Tell me a joke\" 1 W4A32\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
-            << " QWEN3-0.6B \"Write a poem\" 1 W32A32 1\n\n";
+            << " QWEN3-0.6B \"Write a poem\" 1 W32A32 1\n";
+  std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
+            << " EMBEDDING-QWEN3-0.6B \"Hello world\" 0 W32A32\n\n";
 }
 } // namespace
 
@@ -150,8 +158,24 @@ int main(int argc, char *argv[]) {
     verbose = (std::string(argv[5]) == "1" || std::string(argv[5]) == "true");
   }
 
+  // Map string to ModelType
+  ModelType model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
+  bool is_embedding = false;
+  std::string model_name_str(model_name);
+  if (model_name_str == "QWEN3-0.6B") {
+    model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
+  } else if (model_name_str == "EMBEDDING-QWEN3-0.6B") {
+    model_type = EMBEDDING_MODEL_QWEN3_0_6B;
+    is_embedding = true;
+  } else {
+    std::cout << COLOR_YELLOW << "⚠ Warning: Unknown model name '"
+              << model_name_str << "'. Defaulting to QWEN3-0.6B." << COLOR_RESET
+              << "\n";
+  }
+
   printSection("Configuration");
   printInfo("Model Name", model_name);
+  printInfo("Model Type", is_embedding ? "Embedding" : "CausalLM");
   printInfo("Use Chat Template", use_chat_template ? "true" : "false");
   printInfo("Quantization", quant_str);
   printInfo("Verbose", verbose ? "true" : "false");
@@ -176,17 +200,6 @@ int main(int argc, char *argv[]) {
             << "Loading model: " << COLOR_BOLD << model_name << COLOR_RESET
             << "\n";
 
-  // Map string to ModelType
-  ModelType model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
-  std::string model_name_str(model_name);
-  if (model_name_str == "QWEN3-0.6B") {
-    model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
-  } else {
-    std::cout << COLOR_YELLOW << "⚠ Warning: Unknown model name '"
-              << model_name_str << "'. Defaulting to QWEN3-0.6B." << COLOR_RESET
-              << "\n";
-  }
-
   err = loadModel(CAUSAL_LM_BACKEND_CPU, model_type, quant_type);
 
   if (err != CAUSAL_LM_ERROR_NONE) {
@@ -201,49 +214,102 @@ int main(int argc, char *argv[]) {
   std::cout << COLOR_BOLD << COLOR_YELLOW << "  " << prompt << COLOR_RESET
             << "\n\n";
 
-  std::cout << COLOR_CYAN << "⚡ " << COLOR_RESET << "Running inference...\n\n";
+  std::cout << COLOR_CYAN << "⚡ " << COLOR_RESET << "Running "
+            << (is_embedding ? "embedding" : "text generation")
+            << " inference...\n\n";
 
-  const char *outputText = nullptr;
+  if (is_embedding) {
+    float *outputData = nullptr;
+    unsigned int outputDim = 0;
+    unsigned int outputLength = 0;
 
-  if (verbose) {
-    std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Streaming Output:\n";
-    std::cout << COLOR_BOLD << COLOR_GRAY;
-  }
+    err = runEmbedding(prompt, &outputData, &outputDim, &outputLength);
 
-  err = runModel(prompt, &outputText);
-
-  if (verbose) {
-    std::cout << COLOR_RESET << "\n\n";
-  }
-
-  if (err != CAUSAL_LM_ERROR_NONE) {
-    printError("Failed to run model");
-    std::cerr << "  Error code: " << static_cast<int>(err) << "\n";
-    return 1;
-  }
-
-  if (outputText) {
-    std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Output:\n";
-    std::cout << COLOR_BOLD << COLOR_GREEN << "  ";
-    std::string out(outputText);
-    size_t pos = 0;
-    while (pos < out.length()) {
-      size_t newlinePos = out.find('\n', pos);
-      if (newlinePos == std::string::npos) {
-        newlinePos = out.length();
-      }
-      std::string line = out.substr(pos, newlinePos - pos);
-      std::cout << line;
-      if (newlinePos < out.length()) {
-        std::cout << "\n  ";
-        pos = newlinePos + 1;
-      } else {
-        pos = out.length();
-      }
+    if (err != CAUSAL_LM_ERROR_NONE) {
+      printError("Failed to run embedding");
+      std::cerr << "  Error code: " << static_cast<int>(err) << "\n";
+      return 1;
     }
-    std::cout << COLOR_RESET << "\n\n";
+
+    std::cout << COLOR_CYAN << "📊 " << COLOR_RESET << "Embedding Output:\n";
+    printInfo("Dimension", std::to_string(outputDim));
+    printInfo("Batch Length", std::to_string(outputLength));
+    std::cout << "\n";
+
+    if (outputData && outputDim > 0 && outputLength > 0) {
+      for (unsigned int b = 0; b < outputLength; ++b) {
+        std::cout << COLOR_CYAN << "  Vector[" << b << "]:" << COLOR_RESET
+                  << " [";
+        unsigned int display_count =
+          outputDim > 8 ? 8 : outputDim;
+        for (unsigned int d = 0; d < display_count; ++d) {
+          if (d > 0)
+            std::cout << ", ";
+          std::cout << std::fixed << std::setprecision(6)
+                    << outputData[b * outputDim + d];
+        }
+        if (outputDim > 8) {
+          std::cout << ", ... (" << outputDim - 8 << " more)";
+        }
+        std::cout << "]\n";
+
+        // Compute and print L2 norm for verification
+        double norm = 0.0;
+        for (unsigned int d = 0; d < outputDim; ++d) {
+          double val = outputData[b * outputDim + d];
+          norm += val * val;
+        }
+        norm = std::sqrt(norm);
+        std::cout << COLOR_CYAN << "  L2 Norm:" << COLOR_RESET << "  "
+                  << std::fixed << std::setprecision(6) << norm << "\n";
+      }
+      std::cout << "\n";
+    } else {
+      printWarning("No embedding output generated");
+    }
   } else {
-    printWarning("No output generated");
+    const char *outputText = nullptr;
+
+    if (verbose) {
+      std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Streaming Output:\n";
+      std::cout << COLOR_BOLD << COLOR_GRAY;
+    }
+
+    err = runModel(prompt, &outputText);
+
+    if (verbose) {
+      std::cout << COLOR_RESET << "\n\n";
+    }
+
+    if (err != CAUSAL_LM_ERROR_NONE) {
+      printError("Failed to run model");
+      std::cerr << "  Error code: " << static_cast<int>(err) << "\n";
+      return 1;
+    }
+
+    if (outputText) {
+      std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Output:\n";
+      std::cout << COLOR_BOLD << COLOR_GREEN << "  ";
+      std::string out(outputText);
+      size_t pos = 0;
+      while (pos < out.length()) {
+        size_t newlinePos = out.find('\n', pos);
+        if (newlinePos == std::string::npos) {
+          newlinePos = out.length();
+        }
+        std::string line = out.substr(pos, newlinePos - pos);
+        std::cout << line;
+        if (newlinePos < out.length()) {
+          std::cout << "\n  ";
+          pos = newlinePos + 1;
+        } else {
+          pos = out.length();
+        }
+      }
+      std::cout << COLOR_RESET << "\n\n";
+    } else {
+      printWarning("No output generated");
+    }
   }
 
   printSection("Performance Metrics");
@@ -253,36 +319,58 @@ int main(int argc, char *argv[]) {
     printWarning("Failed to get metrics");
     std::cout << "  Error code: " << static_cast<int>(err) << "\n";
   } else {
-    double prefill_tps =
-      metrics.prefill_duration_ms > 0
-        ? (metrics.prefill_tokens / metrics.prefill_duration_ms * 1000.0)
-        : 0.0;
-    double gen_tps =
-      metrics.generation_duration_ms > 0
-        ? (metrics.generation_tokens / metrics.generation_duration_ms * 1000.0)
-        : 0.0;
+    if (is_embedding) {
+      double encode_tps =
+        metrics.prefill_duration_ms > 0
+          ? (metrics.prefill_tokens / metrics.prefill_duration_ms * 1000.0)
+          : 0.0;
 
-    std::cout << COLOR_CYAN << "  📊 " << COLOR_RESET << COLOR_BOLD
-              << "Prefill Stage" << COLOR_RESET << "\n";
-    std::cout << COLOR_CYAN << "    Tokens:" << COLOR_RESET << "       "
-              << metrics.prefill_tokens << "\n";
-    std::cout << COLOR_CYAN << "    Duration:" << COLOR_RESET << "     "
-              << std::fixed << std::setprecision(2)
-              << metrics.prefill_duration_ms << " ms\n";
-    std::cout << COLOR_CYAN << "    Throughput:" << COLOR_RESET << "   "
-              << COLOR_BOLD << COLOR_GREEN << std::fixed << std::setprecision(1)
-              << prefill_tps << COLOR_RESET << " tokens/sec\n\n";
+      std::cout << COLOR_CYAN << "  📊 " << COLOR_RESET << COLOR_BOLD
+                << "Encoding Stage" << COLOR_RESET << "\n";
+      std::cout << COLOR_CYAN << "    Tokens:" << COLOR_RESET << "       "
+                << metrics.prefill_tokens << "\n";
+      std::cout << COLOR_CYAN << "    Duration:" << COLOR_RESET << "     "
+                << std::fixed << std::setprecision(2)
+                << metrics.prefill_duration_ms << " ms\n";
+      std::cout << COLOR_CYAN << "    Throughput:" << COLOR_RESET << "   "
+                << COLOR_BOLD << COLOR_GREEN << std::fixed
+                << std::setprecision(1) << encode_tps << COLOR_RESET
+                << " tokens/sec\n\n";
+    } else {
+      double prefill_tps =
+        metrics.prefill_duration_ms > 0
+          ? (metrics.prefill_tokens / metrics.prefill_duration_ms * 1000.0)
+          : 0.0;
+      double gen_tps =
+        metrics.generation_duration_ms > 0
+          ? (metrics.generation_tokens / metrics.generation_duration_ms *
+             1000.0)
+          : 0.0;
 
-    std::cout << COLOR_CYAN << "  📊 " << COLOR_RESET << COLOR_BOLD
-              << "Generation Stage" << COLOR_RESET << "\n";
-    std::cout << COLOR_CYAN << "    Tokens:" << COLOR_RESET << "       "
-              << metrics.generation_tokens << "\n";
-    std::cout << COLOR_CYAN << "    Duration:" << COLOR_RESET << "     "
-              << std::fixed << std::setprecision(2)
-              << metrics.generation_duration_ms << " ms\n";
-    std::cout << COLOR_CYAN << "    Throughput:" << COLOR_RESET << "   "
-              << COLOR_BOLD << COLOR_GREEN << std::fixed << std::setprecision(1)
-              << gen_tps << COLOR_RESET << " tokens/sec\n\n";
+      std::cout << COLOR_CYAN << "  📊 " << COLOR_RESET << COLOR_BOLD
+                << "Prefill Stage" << COLOR_RESET << "\n";
+      std::cout << COLOR_CYAN << "    Tokens:" << COLOR_RESET << "       "
+                << metrics.prefill_tokens << "\n";
+      std::cout << COLOR_CYAN << "    Duration:" << COLOR_RESET << "     "
+                << std::fixed << std::setprecision(2)
+                << metrics.prefill_duration_ms << " ms\n";
+      std::cout << COLOR_CYAN << "    Throughput:" << COLOR_RESET << "   "
+                << COLOR_BOLD << COLOR_GREEN << std::fixed
+                << std::setprecision(1) << prefill_tps << COLOR_RESET
+                << " tokens/sec\n\n";
+
+      std::cout << COLOR_CYAN << "  📊 " << COLOR_RESET << COLOR_BOLD
+                << "Generation Stage" << COLOR_RESET << "\n";
+      std::cout << COLOR_CYAN << "    Tokens:" << COLOR_RESET << "       "
+                << metrics.generation_tokens << "\n";
+      std::cout << COLOR_CYAN << "    Duration:" << COLOR_RESET << "     "
+                << std::fixed << std::setprecision(2)
+                << metrics.generation_duration_ms << " ms\n";
+      std::cout << COLOR_CYAN << "    Throughput:" << COLOR_RESET << "   "
+                << COLOR_BOLD << COLOR_GREEN << std::fixed
+                << std::setprecision(1) << gen_tps << COLOR_RESET
+                << " tokens/sec\n\n";
+    }
 
     std::cout << COLOR_CYAN << "  📊 " << COLOR_RESET << COLOR_BOLD
               << "Total Stats" << COLOR_RESET << "\n";
