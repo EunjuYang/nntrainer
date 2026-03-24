@@ -103,6 +103,18 @@ public:
                    bool log_output = true);
 
   /**
+   * @brief Get the hidden dimension of the model
+   * @return hidden dimension
+   */
+  unsigned int getDim() const { return static_cast<unsigned int>(DIM); }
+
+  /**
+   * @brief Get the batch size of the model
+   * @return batch size
+   */
+  unsigned int getBatchSize() const { return BATCH_SIZE; }
+
+  /**
    * @brief Get PerformanceMetrics
    */
   PerformanceMetrics getPerformanceMetrics() const {

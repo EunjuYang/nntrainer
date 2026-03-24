@@ -21,16 +21,20 @@
 #include <vector>
 
 #include "causal_lm.h"
+#include "embedding_gemma.h"
 #include "gemma3_causallm.h"
 #include "gptoss_cached_slim_causallm.h"
 #include "gptoss_causallm.h"
 #include "json.hpp"
 #include "model_config_internal.h"
 #include "qwen2_causallm.h"
+#include "qwen2_embedding.h"
 #include "qwen3_cached_slim_moe_causallm.h"
 #include "qwen3_causallm.h"
+#include "qwen3_embedding.h"
 #include "qwen3_moe_causallm.h"
 #include "qwen3_slim_moe_causallm.h"
+#include "sentence_transformer.h"
 #include <factory.h>
 #include <fstream>
 #include <sys/stat.h>
@@ -38,6 +42,9 @@
 
 using json = nlohmann::json;
 
+// ---------------------------------------------------------------------------
+// Global state
+// ---------------------------------------------------------------------------
 static std::unique_ptr<causallm::Transformer> g_model;
 static std::mutex g_mutex;
 static bool g_initialized = false;
@@ -46,14 +53,13 @@ static bool g_use_chat_template = false;
 static bool g_verbose = false;
 static std::string g_last_output = "";
 static double g_initialization_duration_ms = 0.0;
+static std::vector<float *> g_last_embedding_output;
 
 static std::map<std::string, std::string> g_model_path_map = {
   {"QWEN3-0.6B", "qwen3-0.6b"},
+  {"EMBEDDING-QWEN3", "embedding-qwen3"},
 };
 
-/**
- * @brief RegisteredModel
- */
 struct RegisteredModel {
   std::string arch_name;
   ModelRuntimeConfig config;
@@ -61,77 +67,114 @@ struct RegisteredModel {
 static std::map<std::string, RegisteredModel> g_model_registry;
 static std::map<std::string, ModelArchConfig> g_arch_config_map;
 
-// Helper to register models (similar to main.cpp)
-// ensuring factory is populated.
-// @note: Factory registration is singleton and persistent, but we do it once
-// here to be sure. Since main.cpp is not linked, we must duplicate registration
-// or share it. Assuming this lib is used independently of main.cpp.
+// ---------------------------------------------------------------------------
+// Runtime type checks (using dynamic_cast on the loaded model)
+// ---------------------------------------------------------------------------
+static bool is_embedding_model() {
+  return dynamic_cast<causallm::SentenceTransformer *>(g_model.get()) !=
+         nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// Factory registration
+// ---------------------------------------------------------------------------
 static void register_models() {
   static std::once_flag flag;
   std::call_once(flag, []() {
-    causallm::Factory::Instance().registerModel(
-      "LlamaForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::CausalLM>(cfg, generation_cfg,
-                                                    nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "Qwen2ForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::Qwen2CausalLM>(cfg, generation_cfg,
-                                                         nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "Qwen3ForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::Qwen3CausalLM>(cfg, generation_cfg,
-                                                         nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "Qwen3MoeForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::Qwen3MoECausalLM>(cfg, generation_cfg,
-                                                            nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "Qwen3SlimMoeForCausalLM",
-      [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::Qwen3SlimMoECausalLM>(
-          cfg, generation_cfg, nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "Qwen3CachedSlimMoeForCausalLM",
-      [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::Qwen3CachedSlimMoECausalLM>(
-          cfg, generation_cfg, nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "GptOssForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::GptOssForCausalLM>(
-          cfg, generation_cfg, nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "GptOssCachedSlimCausalLM",
-      [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::GptOssCachedSlimCausalLM>(
-          cfg, generation_cfg, nntr_cfg);
-      });
-    causallm::Factory::Instance().registerModel(
-      "Gemma3ForCausalLM", [](json cfg, json generation_cfg, json nntr_cfg) {
-        return std::make_unique<causallm::Gemma3CausalLM>(cfg, generation_cfg,
-                                                          nntr_cfg);
-      });
+    auto &F = causallm::Factory::Instance();
 
-    // Register built-in configurations
+    // CausalLM models
+    F.registerModel("LlamaForCausalLM", [](json c, json g, json n) {
+      return std::make_unique<causallm::CausalLM>(c, g, n);
+    });
+    F.registerModel("Qwen2ForCausalLM", [](json c, json g, json n) {
+      return std::make_unique<causallm::Qwen2CausalLM>(c, g, n);
+    });
+    F.registerModel("Qwen3ForCausalLM", [](json c, json g, json n) {
+      return std::make_unique<causallm::Qwen3CausalLM>(c, g, n);
+    });
+    F.registerModel("Qwen3MoeForCausalLM", [](json c, json g, json n) {
+      return std::make_unique<causallm::Qwen3MoECausalLM>(c, g, n);
+    });
+    F.registerModel("Qwen3SlimMoeForCausalLM", [](json c, json g, json n) {
+      return std::make_unique<causallm::Qwen3SlimMoECausalLM>(c, g, n);
+    });
+    F.registerModel(
+      "Qwen3CachedSlimMoeForCausalLM", [](json c, json g, json n) {
+        return std::make_unique<causallm::Qwen3CachedSlimMoECausalLM>(c, g, n);
+      });
+    F.registerModel("GptOssForCausalLM", [](json c, json g, json n) {
+      return std::make_unique<causallm::GptOssForCausalLM>(c, g, n);
+    });
+    F.registerModel("GptOssCachedSlimCausalLM", [](json c, json g, json n) {
+      return std::make_unique<causallm::GptOssCachedSlimCausalLM>(c, g, n);
+    });
+    F.registerModel("Gemma3ForCausalLM", [](json c, json g, json n) {
+      return std::make_unique<causallm::Gemma3CausalLM>(c, g, n);
+    });
+
+    // Embedding models
+    F.registerModel("Qwen3Embedding", [](json c, json g, json n) {
+      return std::make_unique<causallm::Qwen3Embedding>(c, g, n);
+    });
+    F.registerModel("Qwen2Embedding", [](json c, json g, json n) {
+      return std::make_unique<causallm::Qwen2Embedding>(c, g, n);
+    });
+    F.registerModel("EmbeddingGemma", [](json c, json g, json n) {
+      return std::make_unique<causallm::EmbeddingGemma>(c, g, n);
+    });
+
     register_builtin_model_configs();
   });
 }
 
+// ---------------------------------------------------------------------------
+// ModelType → model name / architecture helpers
+// ---------------------------------------------------------------------------
 static const char *get_model_name_from_type(ModelType type) {
   switch (type) {
   case CAUSAL_LM_MODEL_QWEN3_0_6B:
     return "QWEN3-0.6B";
+  case EMBEDDING_MODEL_QWEN3_0_6B:
+    return "QWEN3-EMBEDDING-0.6B";
   default:
     return nullptr;
   }
 }
 
+/**
+ * @brief Resolve the factory architecture key from backbone + model_type.
+ * @details For embedding models, config.json contains the backbone architecture
+ *          (e.g., "Qwen3ForCausalLM") while the actual factory key is the
+ *          embedding variant (e.g., "Qwen3Embedding"). This mirrors the
+ *          resolve_architecture() logic in main.cpp.
+ * @param model_type From nntr_cfg["model_type"] (e.g., "CausalLM", "Embedding")
+ * @param backbone   From cfg["architectures"][0] (e.g., "Qwen3ForCausalLM")
+ * @return Resolved factory key
+ */
+static std::string resolve_architecture(const std::string &model_type,
+                                        const std::string &backbone) {
+  std::string mt = model_type;
+  std::transform(mt.begin(), mt.end(), mt.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+
+  if (mt == "embedding") {
+    if (backbone == "Qwen3ForCausalLM")
+      return "Qwen3Embedding";
+    if (backbone == "Gemma3ForCausalLM" || backbone == "Gemma3TextModel")
+      return "EmbeddingGemma";
+    if (backbone == "Qwen2Model")
+      return "Qwen2Embedding";
+    throw std::invalid_argument("Unsupported backbone for embedding model: " +
+                                backbone);
+  }
+
+  return backbone;
+}
+
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
 static std::string apply_chat_template(const std::string &architecture,
                                        const std::string &input) {
   if (architecture == "LlamaForCausalLM") {
@@ -166,8 +209,23 @@ static std::string get_quantization_suffix(ModelQuantizationType type) {
     return "-w8a16";
   case CAUSAL_LM_QUANTIZATION_W32A32:
     return "-w32a32";
-  default: // W4A32 by default
+  default:
     return "-w4a32";
+  }
+}
+
+static std::string get_quantization_suffix_upper(ModelQuantizationType type) {
+  switch (type) {
+  case CAUSAL_LM_QUANTIZATION_W4A32:
+    return "-W4A32";
+  case CAUSAL_LM_QUANTIZATION_W16A16:
+    return "-W16A16";
+  case CAUSAL_LM_QUANTIZATION_W8A16:
+    return "-W8A16";
+  case CAUSAL_LM_QUANTIZATION_W32A32:
+    return "-W32A32";
+  default:
+    return "";
   }
 }
 
@@ -177,10 +235,8 @@ static std::string resolve_model_path(const std::string &model_key,
   std::transform(path_upper.begin(), path_upper.end(), path_upper.begin(),
                  ::toupper);
 
-  std::string base_dir_name = "";
-
-  // 1. Try to find base directory name from map
-  if (g_model_path_map.find(path_upper) != g_model_path_map.end()) {
+  std::string base_dir_name;
+  if (g_model_path_map.count(path_upper)) {
     base_dir_name = g_model_path_map[path_upper];
   } else {
     // Fallback: use lowercased key as base dir name if not found in map
@@ -191,10 +247,7 @@ static std::string resolve_model_path(const std::string &model_key,
                    base_dir_name.begin(), ::tolower);
   }
 
-  std::string model_path =
-    "./models/" + base_dir_name + get_quantization_suffix(quant_type);
-
-  return model_path;
+  return "./models/" + base_dir_name + get_quantization_suffix(quant_type);
 }
 
 static bool check_file_exists(const std::string &path) {
@@ -202,12 +255,87 @@ static bool check_file_exists(const std::string &path) {
   return (stat(path.c_str(), &buffer) == 0);
 }
 
+// ---------------------------------------------------------------------------
+// Internal config → JSON conversion helpers
+// ---------------------------------------------------------------------------
+
+/** Populate cfg (config.json equivalent) from ModelArchConfig */
+static void populate_arch_config(json &cfg, json &generation_cfg,
+                                 const ModelArchConfig &ac) {
+  cfg["vocab_size"] = ac.vocab_size;
+  cfg["hidden_size"] = ac.hidden_size;
+  cfg["intermediate_size"] = ac.intermediate_size;
+  cfg["num_hidden_layers"] = ac.num_hidden_layers;
+  cfg["num_attention_heads"] = ac.num_attention_heads;
+  cfg["head_dim"] = ac.head_dim;
+  cfg["num_key_value_heads"] = ac.num_key_value_heads > 0
+                                 ? ac.num_key_value_heads
+                                 : ac.num_attention_heads;
+  cfg["max_position_embeddings"] = ac.max_position_embeddings;
+  cfg["rope_theta"] = ac.rope_theta;
+  cfg["rms_norm_eps"] = ac.rms_norm_eps;
+  cfg["tie_word_embeddings"] = ac.tie_word_embeddings;
+  cfg["sliding_window"] =
+    (ac.sliding_window != UINT_MAX) ? json(ac.sliding_window) : json(nullptr);
+  cfg["sliding_window_pattern"] = ac.sliding_window_pattern;
+  cfg["architectures"] = {std::string(ac.architecture)};
+
+  if (ac.num_eos_token_ids > 0) {
+    std::vector<unsigned int> eos_ids(ac.eos_token_ids,
+                                      ac.eos_token_ids + ac.num_eos_token_ids);
+    generation_cfg["eos_token_id"] = eos_ids;
+  }
+  generation_cfg["bos_token_id"] = ac.bos_token_id;
+}
+
+/** Populate nntr_cfg (nntr_config.json equivalent) from ModelRuntimeConfig */
+static void populate_runtime_config(json &nntr_cfg, json &generation_cfg,
+                                    const ModelRuntimeConfig &rc,
+                                    const std::string &model_dir_path) {
+  nntr_cfg["batch_size"] = rc.batch_size;
+  nntr_cfg["model_type"] = std::string(rc.model_type);
+  nntr_cfg["model_tensor_type"] = std::string(rc.model_tensor_type);
+  nntr_cfg["init_seq_len"] = rc.init_seq_len;
+  nntr_cfg["max_seq_len"] = rc.max_seq_len;
+  nntr_cfg["num_to_generate"] = rc.num_to_generate;
+  nntr_cfg["fsu"] = rc.fsu;
+  nntr_cfg["fsu_lookahead"] = rc.fsu_lookahead;
+  nntr_cfg["embedding_dtype"] = std::string(rc.embedding_dtype);
+  nntr_cfg["fc_layer_dtype"] = std::string(rc.fc_layer_dtype);
+  nntr_cfg["model_file_name"] = std::string(rc.model_file_name);
+  nntr_cfg["tokenizer_file"] =
+    model_dir_path + "/" + std::string(rc.tokenizer_file);
+  nntr_cfg["num_bad_word_ids"] = rc.num_bad_word_ids;
+
+  if (strlen(rc.lmhead_dtype) > 0)
+    nntr_cfg["lmhead_dtype"] = std::string(rc.lmhead_dtype);
+
+  if (rc.num_bad_word_ids > 0) {
+    std::vector<unsigned int> bad_ids(rc.bad_word_ids,
+                                      rc.bad_word_ids + rc.num_bad_word_ids);
+    nntr_cfg["bad_word_ids"] = bad_ids;
+  }
+
+  generation_cfg["top_k"] = rc.top_k;
+  generation_cfg["top_p"] = rc.top_p;
+  generation_cfg["temperature"] = rc.temperature;
+  generation_cfg["do_sample"] = false;
+
+  // Embedding-specific: inline modules take priority over file path
+  if (strlen(rc.modules_config) > 0) {
+    nntr_cfg["modules"] = json::parse(rc.modules_config);
+  } else if (strlen(rc.module_config_path) > 0) {
+    nntr_cfg["module_config_path"] =
+      model_dir_path + "/" + std::string(rc.module_config_path);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Debug validation
+// ---------------------------------------------------------------------------
 static void validate_models() {
   std::cout << "[DEBUG] Validating model files..." << std::endl;
-  // Iterate over all known model names in map
   for (auto const &[key, val] : g_model_path_map) {
-    // We want to check for each Quantization Type if it exists
-    // List of quant types to check: UNKNOWN (default), W4A32, W16A16, W32A32
     std::vector<ModelQuantizationType> quant_types = {
       CAUSAL_LM_QUANTIZATION_UNKNOWN, CAUSAL_LM_QUANTIZATION_W4A32,
       CAUSAL_LM_QUANTIZATION_W16A16, CAUSAL_LM_QUANTIZATION_W32A32};
@@ -218,74 +346,36 @@ static void validate_models() {
       std::string lookup_key = key;
       if (qt != CAUSAL_LM_QUANTIZATION_UNKNOWN) {
         std::transform(quant_suffix.begin(), quant_suffix.end(),
-                       quant_suffix.begin(), ::toupper); // "-W4A32"
+                       quant_suffix.begin(), ::toupper);
         lookup_key += quant_suffix;
       }
 
-      // Resolve path for this combination
       std::string resolved_path = resolve_model_path(key, qt);
 
-      if (g_model_registry.find(lookup_key) != g_model_registry.end()) {
-        // CASE 1: Configuration is registered in model_config.cpp
-        // For these models, we only check if the binary weight file exists.
-        // The configurations (config.json, etc.) are embedded in the library.
+      if (g_model_registry.count(lookup_key)) {
         RegisteredModel &rm = g_model_registry[lookup_key];
-        std::string bin_file_name = rm.config.model_file_name;
-        std::string full_path = resolved_path + "/" + bin_file_name;
-
-        if (check_file_exists(full_path)) {
-          std::cout << "  [OK] Reg Config: " << lookup_key << " -> "
-                    << full_path << std::endl;
-        } else {
-          std::cout << "  [FAIL] Reg Config: " << lookup_key
-                    << " -> Missing binary: " << full_path << std::endl;
-        }
-
-      } else {
-        // CASE 2: No internal config, but model type exists (via map
-        // iteration). For these models, we require external configuration files
-        // (config.json, nntr_config.json) to be present in the directory.
-        if (check_file_exists(resolved_path)) {
-          bool has_config = check_file_exists(resolved_path + "/config.json");
-          bool has_nntr =
-            check_file_exists(resolved_path + "/nntr_config.json");
-
-          if (has_config && has_nntr) {
-            std::cout << "  [OK] External Config: " << lookup_key << " -> "
-                      << resolved_path << std::endl;
-            // Optional: Parse nntr_config to check bin
-            try {
-              json nntr =
-                causallm::LoadJsonFile(resolved_path + "/nntr_config.json");
-              if (nntr.contains("model_file_name")) {
-                std::string bin = nntr["model_file_name"];
-                if (check_file_exists(resolved_path + "/" + bin)) {
-                  std::cout << "       (Binary confirmed: " << bin << ")"
-                            << std::endl;
-                } else {
-                  std::cout << "       (MISSING BINARY: " << bin << ")"
-                            << std::endl;
-                }
-              }
-            } catch (...) {
-            }
-          } else {
-            std::cout << "  [FAIL] External Config: " << lookup_key
-                      << " -> Missing configs in " << resolved_path
-                      << std::endl;
-          }
-        }
+        std::string full_path = resolved_path + "/" + rm.config.model_file_name;
+        std::cout << (check_file_exists(full_path) ? "  [OK] " : "  [FAIL] ")
+                  << "Reg Config: " << lookup_key << " -> " << full_path
+                  << std::endl;
+      } else if (check_file_exists(resolved_path)) {
+        bool has_config = check_file_exists(resolved_path + "/config.json");
+        bool has_nntr = check_file_exists(resolved_path + "/nntr_config.json");
+        std::cout << ((has_config && has_nntr) ? "  [OK] " : "  [FAIL] ")
+                  << "External Config: " << lookup_key << " -> "
+                  << resolved_path << std::endl;
       }
     }
   }
 }
 
+// ---------------------------------------------------------------------------
+// Public API: setOptions / registerModelArchitecture / registerModel
+// ---------------------------------------------------------------------------
 ErrorCode setOptions(Config config) {
-  // Currently no options are being handled
   g_use_chat_template = config.use_chat_template;
   g_verbose = config.verbose;
   if (config.debug_mode) {
-    // Ensure models are registered so we can validate them
     register_models();
     validate_models();
   }
@@ -310,204 +400,101 @@ ErrorCode registerModel(const char *model_name, const char *arch_name,
   std::lock_guard<std::mutex> lock(g_mutex);
   std::string name(model_name);
   std::transform(name.begin(), name.end(), name.begin(), ::toupper);
-
   std::string aname(arch_name);
   std::transform(aname.begin(), aname.end(), aname.begin(), ::toupper);
-
   g_model_registry[name] = {aname, config};
   return CAUSAL_LM_ERROR_NONE;
 }
 
+// ---------------------------------------------------------------------------
+// Public API: loadModel (unified for CausalLM and Embedding)
+// ---------------------------------------------------------------------------
 ErrorCode loadModel(BackendType compute, ModelType modeltype,
                     ModelQuantizationType quant_type) {
 
   auto start_init = std::chrono::high_resolution_clock::now();
 
-  const char *target_model_name = get_model_name_from_type(modeltype);
-  if (target_model_name == nullptr) {
-    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
-  }
-
-  // Ensure models/configs are registered (thread-safe via call_once)
   register_models();
+
+  const char *model_name = get_model_name_from_type(modeltype);
+  if (model_name == nullptr)
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
 
   std::lock_guard<std::mutex> lock(g_mutex);
   try {
+    std::string model_name_upper(model_name);
+    std::transform(model_name_upper.begin(), model_name_upper.end(),
+                   model_name_upper.begin(), ::toupper);
+    std::string lookup_name =
+      model_name_upper + get_quantization_suffix_upper(quant_type);
+    std::string model_dir_path = resolve_model_path(model_name, quant_type);
 
-    // Check if it's a registered in-memory config
-    std::string input_name = std::string(target_model_name);
-    std::string input_name_upper = input_name;
-    std::transform(input_name_upper.begin(), input_name_upper.end(),
-                   input_name_upper.begin(), ::toupper);
+    json cfg, generation_cfg, nntr_cfg;
+    std::string architecture;
 
-    std::string quant_suffix = "";
-    switch (quant_type) {
-    case CAUSAL_LM_QUANTIZATION_W4A32:
-      quant_suffix = "-W4A32";
-      break;
-    case CAUSAL_LM_QUANTIZATION_W16A16:
-      quant_suffix = "-W16A16";
-      break;
-    case CAUSAL_LM_QUANTIZATION_W8A16:
-      quant_suffix = "-W8A16";
-      break;
-    case CAUSAL_LM_QUANTIZATION_W32A32:
-      quant_suffix = "-W32A32";
-      break;
-    default:
-      break;
-    }
-    std::string lookup_name = input_name_upper + quant_suffix;
-
-    json cfg;
-    json generation_cfg;
-    json nntr_cfg;
-    std::string model_dir_path;
-
-    // Check in-memory map first
-    if (g_model_registry.find(lookup_name) != g_model_registry.end()) {
-      // ------------------------------------------------------------------------
-      // CASE 1: Model Configuration is Internal (Registered in
-      // model_config.cpp)
-      // ------------------------------------------------------------------------
-      // In this case, we do NOT load config.json or nntr_config.json from disk.
-      // We only locate the binary weight file.
+    if (g_model_registry.count(lookup_name)) {
+      // ---- Internal configuration (registered in model_config.cpp) ----
       RegisteredModel &rm = g_model_registry[lookup_name];
-
-      // Find architecture config
-      if (g_arch_config_map.find(rm.arch_name) == g_arch_config_map.end()) {
+      if (!g_arch_config_map.count(rm.arch_name)) {
         std::cerr << "Architecture '" << rm.arch_name
                   << "' not found for model '" << lookup_name << "'"
                   << std::endl;
         return CAUSAL_LM_ERROR_MODEL_LOAD_FAILED;
       }
-      ModelArchConfig &ac = g_arch_config_map[rm.arch_name];
-      ModelRuntimeConfig &rc = rm.config;
-
-      // Strategy: Resolve path to find the weight file
-      model_dir_path = resolve_model_path(target_model_name, quant_type);
-
-      // Populate JSONs from Arch Struct
-      cfg["vocab_size"] = ac.vocab_size;
-      cfg["hidden_size"] = ac.hidden_size;
-      cfg["intermediate_size"] = ac.intermediate_size;
-      cfg["num_hidden_layers"] = ac.num_hidden_layers;
-      cfg["num_attention_heads"] = ac.num_attention_heads;
-      cfg["head_dim"] = ac.head_dim;
-      cfg["num_key_value_heads"] = ac.num_key_value_heads > 0
-                                     ? ac.num_key_value_heads
-                                     : ac.num_attention_heads;
-      cfg["max_position_embeddings"] = ac.max_position_embeddings;
-      cfg["rope_theta"] = ac.rope_theta;
-      cfg["rms_norm_eps"] = ac.rms_norm_eps;
-      cfg["tie_word_embeddings"] = ac.tie_word_embeddings;
-      if (ac.sliding_window != UINT_MAX) {
-        cfg["sliding_window"] = ac.sliding_window;
-      } else {
-        cfg["sliding_window"] = nullptr;
-      }
-      cfg["sliding_window_pattern"] = ac.sliding_window_pattern;
-      cfg["architectures"] = {std::string(ac.architecture)};
-
-      if (ac.num_eos_token_ids > 0) {
-        std::vector<unsigned int> eos_ids;
-        for (unsigned int i = 0; i < ac.num_eos_token_ids; ++i)
-          eos_ids.push_back(ac.eos_token_ids[i]);
-        generation_cfg["eos_token_id"] = eos_ids;
-      }
-      generation_cfg["bos_token_id"] = ac.bos_token_id;
-
-      // Populate JSONs from Runtime Struct
-      generation_cfg["top_k"] = rc.top_k;
-      generation_cfg["top_p"] = rc.top_p;
-      generation_cfg["temperature"] = rc.temperature;
-      generation_cfg["do_sample"] = false;
-
-      nntr_cfg["batch_size"] = rc.batch_size;
-      nntr_cfg["model_type"] = std::string(rc.model_type);
-      nntr_cfg["model_tensor_type"] = std::string(rc.model_tensor_type);
-      nntr_cfg["init_seq_len"] = rc.init_seq_len;
-      nntr_cfg["max_seq_len"] = rc.max_seq_len;
-      nntr_cfg["num_to_generate"] = rc.num_to_generate;
-      nntr_cfg["fsu"] = rc.fsu;
-      nntr_cfg["fsu_lookahead"] = rc.fsu_lookahead;
-      nntr_cfg["embedding_dtype"] = std::string(rc.embedding_dtype);
-      nntr_cfg["fc_layer_dtype"] = std::string(rc.fc_layer_dtype);
-      nntr_cfg["model_file_name"] = std::string(rc.model_file_name);
-
-      std::string t_file = rc.tokenizer_file;
-      nntr_cfg["tokenizer_file"] = model_dir_path + "/" + t_file;
-
-      if (strlen(rc.lmhead_dtype) > 0) {
-        nntr_cfg["lmhead_dtype"] = std::string(rc.lmhead_dtype);
-      }
-
-      std::vector<unsigned int> bad_ids;
-      for (unsigned int i = 0; i < rc.num_bad_word_ids; ++i)
-        bad_ids.push_back(rc.bad_word_ids[i]);
-      nntr_cfg["bad_word_ids"] = bad_ids;
-
+      populate_arch_config(cfg, generation_cfg,
+                           g_arch_config_map[rm.arch_name]);
+      populate_runtime_config(nntr_cfg, generation_cfg, rm.config,
+                              model_dir_path);
     } else {
-      // --------------------------------------------------
-      // CASE 2: External Model Configuration (File-based)
-      // --------------------------------------------------
-      // The model type is registered (enum), but specific configuration for
-      // this quantization is not in memory. We must load config.json and
-      // nntr_config.json from the model directory
-      model_dir_path = resolve_model_path(target_model_name, quant_type);
-
-      // Load configuration files
+      // ---- External configuration (file-based) ----
       cfg = causallm::LoadJsonFile(model_dir_path + "/config.json");
-      generation_cfg =
-        causallm::LoadJsonFile(model_dir_path + "/generation_config.json");
+      try {
+        generation_cfg =
+          causallm::LoadJsonFile(model_dir_path + "/generation_config.json");
+      } catch (...) {
+        generation_cfg = json::object();
+      }
       nntr_cfg = causallm::LoadJsonFile(model_dir_path + "/nntr_config.json");
 
       if (nntr_cfg.contains("tokenizer_file")) {
-        std::string t_file = nntr_cfg["tokenizer_file"];
-        nntr_cfg["tokenizer_file"] = model_dir_path + "/" + t_file;
+        nntr_cfg["tokenizer_file"] =
+          model_dir_path + "/" + nntr_cfg["tokenizer_file"].get<std::string>();
+      }
+      if (nntr_cfg.contains("module_config_path")) {
+        std::string mp = nntr_cfg["module_config_path"].get<std::string>();
+        if (mp.find('/') == std::string::npos)
+          nntr_cfg["module_config_path"] = model_dir_path + "/" + mp;
       }
     }
 
-    // Construct weight file path
-    std::string weight_file_name;
-    if (nntr_cfg.contains("model_file_name")) {
-      weight_file_name = nntr_cfg["model_file_name"].get<std::string>();
-    } else {
-      weight_file_name =
-        "pytorch_model.bin"; // Default fallback if not specified
-    }
-
-    const std::string weight_file = model_dir_path + "/" + weight_file_name;
-
-    // Determine architecture from config or ModelType
-    // Priority: Config file architecture > ModelType mapping (fallback)
-    std::string architecture;
-    if (cfg.contains("architectures") && cfg["architectures"].is_array() &&
-        !cfg["architectures"].empty()) {
-      architecture = cfg["architectures"].get<std::vector<std::string>>()[0];
-    } else {
-      // No fallback mapping from specific ModelType instances to generic
-      // architecture strings for now, as specific types should have config or
-      // be loaded from valid file with config.json
+    // Resolve architecture: extract backbone from cfg["architectures"],
+    // then resolve to embedding variant if model_type is "Embedding".
+    if (!cfg.contains("architectures") || !cfg["architectures"].is_array() ||
+        cfg["architectures"].empty()) {
       return CAUSAL_LM_ERROR_INVALID_PARAMETER;
     }
+    std::string backbone =
+      cfg["architectures"].get<std::vector<std::string>>()[0];
+    std::string model_type_str = nntr_cfg.value("model_type", "CausalLM");
+    architecture = resolve_architecture(model_type_str, backbone);
 
+    // Create, initialize, load
     g_model = causallm::Factory::Instance().create(architecture, cfg,
                                                    generation_cfg, nntr_cfg);
-    if (!g_model) {
+    if (!g_model)
       return CAUSAL_LM_ERROR_MODEL_LOAD_FAILED;
-    }
 
+    std::string weight_file_name =
+      nntr_cfg.value("model_file_name", "pytorch_model.bin");
     g_model->initialize();
-    g_model->load_weight(weight_file);
+    g_model->load_weight(model_dir_path + "/" + weight_file_name);
 
     g_initialized = true;
     g_architecture = architecture;
-
-    auto finish_init = std::chrono::high_resolution_clock::now();
-    auto init_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-      finish_init - start_init);
-    g_initialization_duration_ms = init_duration.count();
+    g_initialization_duration_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::high_resolution_clock::now() - start_init)
+        .count();
 
   } catch (const std::exception &e) {
     std::cerr << "Exception in loadModel: " << e.what() << std::endl;
@@ -520,24 +507,28 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
   return CAUSAL_LM_ERROR_NONE;
 }
 
+// ---------------------------------------------------------------------------
+// Public API: runModel (text output, CausalLM only)
+// ---------------------------------------------------------------------------
 ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
-  if (!g_initialized || !g_model) {
+  if (!g_initialized || !g_model)
     return CAUSAL_LM_ERROR_NOT_INITIALIZED;
-  }
-  if (inputTextPrompt == nullptr || outputText == nullptr) {
+  if (inputTextPrompt == nullptr || outputText == nullptr)
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
+  if (is_embedding_model()) {
+    std::cerr << "runModel: text output is not supported for embedding models. "
+                 "Use runModelFloat() instead."
+              << std::endl;
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
   }
 
   try {
     std::lock_guard<std::mutex> lock(g_mutex);
-
     std::string input(inputTextPrompt);
 
-    if (g_use_chat_template) {
+    if (g_use_chat_template)
       input = apply_chat_template(g_architecture, input);
-    }
 
-// We assume single batch request for this API
 #if defined(_WIN32)
     g_model->run(std::wstring(input.begin(), input.end()), false, L"", L"",
                  g_verbose);
@@ -545,11 +536,10 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
     g_model->run(input, false, "", "", g_verbose);
 #endif
 
-    auto causal_lm_model = dynamic_cast<causallm::CausalLM *>(g_model.get());
-    g_last_output = ""; // Reset last output
-    if (causal_lm_model) {
-      g_last_output = causal_lm_model->getOutput(0);
-    }
+    g_last_output = "";
+    auto *causal = dynamic_cast<causallm::CausalLM *>(g_model.get());
+    if (causal)
+      g_last_output = causal->getOutput(0);
 
     *outputText = g_last_output.c_str();
 
@@ -561,28 +551,70 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
   return CAUSAL_LM_ERROR_NONE;
 }
 
-ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
-  if (!g_initialized || !g_model) {
+// ---------------------------------------------------------------------------
+// Public API: runModelFloat (float vector output, Embedding only)
+// ---------------------------------------------------------------------------
+ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData,
+                        unsigned int *outputDim, unsigned int *outputLength) {
+  if (!g_initialized || !g_model)
     return CAUSAL_LM_ERROR_NOT_INITIALIZED;
-  }
-  if (metrics == nullptr) {
+  if (inputTextPrompt == nullptr || outputData == nullptr ||
+      outputDim == nullptr || outputLength == nullptr)
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
+
+  auto *encoder = dynamic_cast<causallm::SentenceTransformer *>(g_model.get());
+  if (!encoder) {
+    std::cerr << "runModelFloat: float output is not supported for CausalLM "
+                 "models. Use runModel() instead."
+              << std::endl;
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
   }
 
   try {
     std::lock_guard<std::mutex> lock(g_mutex);
-    auto causal_lm_model = dynamic_cast<causallm::CausalLM *>(g_model.get());
+    std::string input(inputTextPrompt);
 
-    if (causal_lm_model) {
-      if (!causal_lm_model->hasRun()) {
-        return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
-      }
-      *metrics = causal_lm_model->getPerformanceMetrics();
-      // Overwrite init duration with the one measured in loadModel API
-      metrics->initialization_duration_ms = g_initialization_duration_ms;
-    } else {
+#if defined(_WIN32)
+    g_last_embedding_output =
+      encoder->encode(std::wstring(input.begin(), input.end()), L"", L"");
+#else
+    g_last_embedding_output = encoder->encode(input, "", "");
+#endif
+
+    if (g_last_embedding_output.empty())
+      return CAUSAL_LM_ERROR_INFERENCE_FAILED;
+
+    *outputData = g_last_embedding_output[0];
+    *outputDim = g_model->getDim();
+    *outputLength = g_model->getBatchSize();
+
+  } catch (const std::exception &e) {
+    std::cerr << "Exception in runModelFloat: " << e.what() << std::endl;
+    return CAUSAL_LM_ERROR_INFERENCE_FAILED;
+  }
+
+  return CAUSAL_LM_ERROR_NONE;
+}
+
+// ---------------------------------------------------------------------------
+// Public API: getPerformanceMetrics
+// ---------------------------------------------------------------------------
+ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
+  if (!g_initialized || !g_model)
+    return CAUSAL_LM_ERROR_NOT_INITIALIZED;
+  if (metrics == nullptr)
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
+
+  try {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto *causal = dynamic_cast<causallm::CausalLM *>(g_model.get());
+    if (!causal)
       return CAUSAL_LM_ERROR_UNKNOWN;
-    }
+    if (!causal->hasRun())
+      return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
+
+    *metrics = causal->getPerformanceMetrics();
+    metrics->initialization_duration_ms = g_initialization_duration_ms;
 
   } catch (const std::exception &e) {
     std::cerr << "Exception in getPerformanceMetrics: " << e.what()

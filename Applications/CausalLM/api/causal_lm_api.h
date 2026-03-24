@@ -51,7 +51,11 @@ typedef enum {
  * @note  Enable only when your library supports the model
  */
 typedef enum {
+  /** CausalLM (text generation models) */
   CAUSAL_LM_MODEL_QWEN3_0_6B = 0,
+
+  /** Embedding (sentence transformer) models */
+  EMBEDDING_MODEL_QWEN3_0_6B = 100,
 } ModelType;
 
 /**
@@ -100,13 +104,34 @@ WIN_EXPORT ErrorCode loadModel(BackendType compute, ModelType modeltype,
 WIN_EXPORT ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics);
 
 /**
- * @brief Run inference
+ * @brief Run inference with text output (for CausalLM)
+ * @details Generates text from the input prompt. Only valid when a CausalLM
+ * model is loaded. Returns CAUSAL_LM_ERROR_INVALID_PARAMETER if an embedding
+ * model is loaded.
  * @param inputTextPrompt Input prompt
- * @param outputText Buffer to store output text
+ * @param outputText Pointer to store the result string
  * @return ErrorCode
  */
 WIN_EXPORT ErrorCode runModel(const char *inputTextPrompt,
                               const char **outputText);
+
+/**
+ * @brief Run inference with float vector output (for Embedding models)
+ * @details Encodes the input text into embedding vectors. Only valid when an
+ * embedding model is loaded. Returns CAUSAL_LM_ERROR_INVALID_PARAMETER if a
+ * CausalLM model is loaded. The output data pointer is managed by the API and
+ * must not be freed by the caller. It remains valid until the next call to
+ * runModel()
+ * @param inputTextPrompt Input text to encode
+ * @param outputData Pointer to receive embedding vector data
+ * @param outputDim Pointer to receive the embedding dimension
+ * @param outputLength Pointer to receive the number of embedding vectors
+ * (batch_size)
+ * @return ErrorCode
+ */
+WIN_EXPORT ErrorCode runEmbedding(const char *inputTextPrompt,
+                                  float **outputData, unsigned int *outputDim,
+                                  unsigned int *outputLength);
 
 #ifdef __cplusplus
 }
