@@ -41,7 +41,7 @@
 #include <limits.h>
 
 #include "json.hpp"
-#include "types.h"
+#include "performance_metrics.h"
 #include <fstream>
 #include <tokenizers_c.h>
 #include <tokenizers_cpp.h>

@@ -2,16 +2,16 @@
 /**
  * Copyright (C) 2026 Samsung Electronics Co., Ltd. All Rights Reserved.
  *
- * @file    types.h
+ * @file    performance_metrics.h
  * @date    24 Mar 2026
- * @brief   Common type definitions shared between models and API layers
+ * @brief   Performance metrics definitions shared between models and API layers
  * @see     https://github.com/nntrainer/nntrainer
  * @author  Eunju Yang <ej.yang@samsung.com>
  * @bug     No known bugs except for NYI items
  */
 
-#ifndef __CAUSAL_LM_TYPES_H__
-#define __CAUSAL_LM_TYPES_H__
+#ifndef __CAUSAL_LM_PERFORMANCE_METRICS_H__
+#define __CAUSAL_LM_PERFORMANCE_METRICS_H__
 
 #include <stddef.h>
 
@@ -66,4 +66,4 @@ inline size_t getPeakMemoryKb() {
 
 #endif // __cplusplus
 
-#endif // __CAUSAL_LM_TYPES_H__
+#endif // __CAUSAL_LM_PERFORMANCE_METRICS_H__
