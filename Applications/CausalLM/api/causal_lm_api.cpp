@@ -517,7 +517,7 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
   if (is_embedding_model()) {
     std::cerr << "runModel: text output is not supported for embedding models. "
-                 "Use runModelFloat() instead."
+                 "Use runEmbedding() instead."
               << std::endl;
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
   }
@@ -552,9 +552,9 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
 }
 
 // ---------------------------------------------------------------------------
-// Public API: runModelFloat (float vector output, Embedding only)
+// Public API: runEmbedding (float vector output, Embedding only)
 // ---------------------------------------------------------------------------
-ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData,
+ErrorCode runEmbedding(const char *inputTextPrompt, float **outputData,
                         unsigned int *outputDim, unsigned int *outputLength) {
   if (!g_initialized || !g_model)
     return CAUSAL_LM_ERROR_NOT_INITIALIZED;
@@ -564,7 +564,7 @@ ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData,
 
   auto *encoder = dynamic_cast<causallm::SentenceTransformer *>(g_model.get());
   if (!encoder) {
-    std::cerr << "runModelFloat: float output is not supported for CausalLM "
+    std::cerr << "runEmbedding: float output is not supported for CausalLM "
                  "models. Use runModel() instead."
               << std::endl;
     return CAUSAL_LM_ERROR_INVALID_PARAMETER;
@@ -589,7 +589,7 @@ ErrorCode runModelFloat(const char *inputTextPrompt, float **outputData,
     *outputLength = g_model->getBatchSize();
 
   } catch (const std::exception &e) {
-    std::cerr << "Exception in runModelFloat: " << e.what() << std::endl;
+    std::cerr << "Exception in runEmbedding: " << e.what() << std::endl;
     return CAUSAL_LM_ERROR_INFERENCE_FAILED;
   }
 

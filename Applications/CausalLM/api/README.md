@@ -7,7 +7,7 @@ This directory contains the C API for CausalLM application, designed to provide 
 The API provides functionality to:
 - Initialize and configure the CausalLM environment.
 - Load pre-trained models with specific quantization settings.
-- Run text generation (`runModel`) or embedding inference (`runModelFloat`) using a unified `loadModel` interface.
+- Run text generation (`runModel`) or embedding inference (`runEmbedding`) using a unified `loadModel` interface.
 - Retrieve performance metrics (token counts, duration).
 
 ## Build & Integration
@@ -149,7 +149,7 @@ Runs text generation on the loaded CausalLM model.
 - **inputTextPrompt**: The input text/prompt.
 - **outputText**: Pointer to store the result string.
 
-#### `ErrorCode runModel(const char *inputTextPrompt, float **outputData, unsigned int *outputDim, unsigned int *outputLength)`
+#### `ErrorCode runEmbedding(const char *inputTextPrompt, float **outputData, unsigned int *outputDim, unsigned int *outputLength)`
 Runs embedding inference on the loaded embedding model.
 - **inputTextPrompt**: The input text to encode.
 - **outputData**: Pointer to receive the embedding vector data. Managed by the API, do not free.
@@ -238,7 +238,7 @@ int main() {
     unsigned int emb_dim = 0;
     unsigned int emb_length = 0;
 
-    err = runModelFloat("Hello, world!", &emb_data, &emb_dim, &emb_length);
+    err = runEmbedding("Hello, world!", &emb_data, &emb_dim, &emb_length);
 
     if (err == CAUSAL_LM_ERROR_NONE) {
         printf("Embedding dim: %u, batch: %u\n", emb_dim, emb_length);
