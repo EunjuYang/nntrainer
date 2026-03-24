@@ -123,7 +123,7 @@ Supported pre-defined model types.
 - `CAUSAL_LM_MODEL_QWEN3_0_6B`: Qwen3 0.6B model.
 
 **Embedding (SentenceTransformer):**
-- `CAUSAL_LM_MODEL_EMBEDDING_QWEN3`: Qwen3-based embedding model.
+- `CAUSAL_LM_MODEL_EMBEDDING_QWEN3`: Qwen3-based embedding model (0.6B).
 
 #### `ModelQuantizationType`
 Supported quantization formats.

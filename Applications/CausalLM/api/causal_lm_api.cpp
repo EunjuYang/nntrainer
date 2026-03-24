@@ -135,8 +135,8 @@ static const char *get_model_name_from_type(ModelType type) {
   switch (type) {
   case CAUSAL_LM_MODEL_QWEN3_0_6B:
     return "QWEN3-0.6B";
-  case EMBEDDING_MODEL_QWEN3_0_6B:
-    return "QWEN3-EMBEDDING-0.6B";
+  case CAUSAL_LM_MODEL_EMBEDDING_QWEN3:
+    return "EMBEDDING-QWEN3";
   default:
     return nullptr;
   }

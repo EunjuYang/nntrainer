@@ -58,7 +58,7 @@ typedef enum {
   // CAUSAL_LM_MODEL_GEMMA_2B = 3,
 
   /** Embedding (sentence transformer) models */
-  EMBEDDING_MODEL_QWEN3_0_6B = 100,
+  CAUSAL_LM_MODEL_EMBEDDING_QWEN3 = 100,
 } ModelType;
 
 /**
