@@ -24,6 +24,8 @@ extern "C" {
 
 #include <stddef.h>
 
+#include "../models/performance_metrics.h"
+
 /**
  * @brief Error codes
  */
@@ -51,8 +53,14 @@ typedef enum {
  * @note  Enable only when your library supports the model
  */
 typedef enum {
+  /** CausalLM (text generation) models */
   CAUSAL_LM_MODEL_QWEN3_0_6B = 0,
   // CAUSAL_LM_MODEL_GEMMA_2B = 3,
+
+  /** Embedding (sentence transformer) models */
+  CAUSAL_LM_MODEL_EMBEDDING_QWEN3 = 100,
+  CAUSAL_LM_MODEL_EMBEDDING_QWEN2 = 101,
+  CAUSAL_LM_MODEL_EMBEDDING_GEMMA3 = 102,
 } ModelType;
 
 /**
@@ -94,19 +102,6 @@ WIN_EXPORT ErrorCode loadModel(BackendType compute, ModelType modeltype,
                                ModelQuantizationType quant_type);
 
 /**
- * @brief Performance Metrics
- */
-typedef struct {
-  unsigned int prefill_tokens;
-  double prefill_duration_ms;
-  unsigned int generation_tokens;
-  double generation_duration_ms;
-  double total_duration_ms;
-  double initialization_duration_ms;
-  size_t peak_memory_kb;
-} PerformanceMetrics;
-
-/**
  * @brief Get performance metrics of the last run
  * @param metrics Pointer to PerformanceMetrics struct to be filled
  * @return ErrorCode
@@ -114,13 +109,36 @@ typedef struct {
 WIN_EXPORT ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics);
 
 /**
- * @brief Run inference
+ * @brief Run inference with text output (for CausalLM models)
+ * @details Generates text from the input prompt. Only valid when a CausalLM
+ *          model is loaded. Returns CAUSAL_LM_ERROR_INVALID_PARAMETER if an
+ *          embedding model is loaded.
  * @param inputTextPrompt Input prompt
- * @param outputText Buffer to store output text
+ * @param outputText Pointer to store the result string
  * @return ErrorCode
  */
 WIN_EXPORT ErrorCode runModel(const char *inputTextPrompt,
                               const char **outputText);
+
+/**
+ * @brief Run inference with float vector output (for Embedding models)
+ * @details Encodes the input text into embedding vectors. Only valid when an
+ *          embedding model is loaded. Returns CAUSAL_LM_ERROR_INVALID_PARAMETER
+ *          if a CausalLM model is loaded.
+ *          The output data pointer is managed by the API and must not be freed
+ *          by the caller. It remains valid until the next call to
+ *          runModelFloat().
+ * @param inputTextPrompt Input text to encode
+ * @param outputData Pointer to receive embedding vector data
+ * @param outputDim Pointer to receive the embedding dimension
+ * @param outputLength Pointer to receive the number of embedding vectors
+ *                     (batch_size)
+ * @return ErrorCode
+ */
+WIN_EXPORT ErrorCode runModelFloat(const char *inputTextPrompt,
+                                    float **outputData,
+                                    unsigned int *outputDim,
+                                    unsigned int *outputLength);
 
 #ifdef __cplusplus
 }
