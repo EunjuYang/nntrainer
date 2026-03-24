@@ -445,7 +445,10 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
       try {
         generation_cfg =
           causallm::LoadJsonFile(model_dir_path + "/generation_config.json");
-      } catch (...) {
+      } catch (const std::exception &e) {
+        if (g_verbose)
+          std::cerr << "generation_config.json not found or invalid: "
+                    << e.what() << " (using defaults)" << std::endl;
         generation_cfg = json::object();
       }
       nntr_cfg = causallm::LoadJsonFile(model_dir_path + "/nntr_config.json");
