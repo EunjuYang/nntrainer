@@ -70,8 +70,6 @@ class TestableQwen3CausalLM : public causallm::Qwen3CausalLM {
 public:
   TestableQwen3CausalLM(json &cfg, json &gen_cfg, json &nntr_cfg) :
     causallm::Transformer(cfg, gen_cfg, nntr_cfg, causallm::ModelType::CAUSALLM),
-    causallm::CausalLM(cfg, gen_cfg, nntr_cfg),
-    causallm::Qwen3Transformer(cfg, gen_cfg, nntr_cfg),
     causallm::Qwen3CausalLM(cfg, gen_cfg, nntr_cfg) {}
 
   struct TestResult {
