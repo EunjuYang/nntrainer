@@ -100,6 +100,21 @@ public:
   virtual void run(const WSTR prompt, bool do_sample = false,
                    const WSTR system_prompt = "", const WSTR tail_prompt = "");
 
+  /**
+   * @brief Prefill stage - process the initial input tokens
+   * @param prompt User prompt
+   * @param system_prompt System prompt
+   * @param tail_prompt Tail prompt
+   */
+  virtual void prefill(const WSTR prompt, const WSTR system_prompt = "",
+                       const WSTR tail_prompt = "");
+
+  /**
+   * @brief Generation stage - autoregressive token generation
+   * @param do_sample Whether to use sampling (true) or greedy decoding (false)
+   */
+  virtual void generation(bool do_sample = false);
+
 protected:
   /**
    * @brief Setup the parameters for the Transformer model

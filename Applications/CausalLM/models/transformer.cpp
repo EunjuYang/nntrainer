@@ -263,6 +263,11 @@ void Transformer::run(const WSTR prompt, bool do_sample,
   /// The run action can be defined by the precedent classes.
 }
 
+void Transformer::prefill(const WSTR prompt, const WSTR system_prompt,
+                          const WSTR tail_prompt) {}
+
+void Transformer::generation(bool do_sample) {}
+
 std::vector<LayerHandle>
 Transformer::createTransformerDecoderBlock(const int layer_id,
                                            std::string input_name) {

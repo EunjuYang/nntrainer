@@ -72,6 +72,17 @@ public:
   void run(const WSTR prompt, bool do_sample = false,
            const WSTR system_prompt = "", const WSTR tail_prompt = "") override;
 
+  /**
+   * @brief Prefill stage for CausalLM
+   */
+  void prefill(const WSTR prompt, const WSTR system_prompt = "",
+               const WSTR tail_prompt = "") override;
+
+  /**
+   * @brief Generation stage for CausalLM
+   */
+  void generation(bool do_sample = false) override;
+
 protected:
   /**
    * @brief Setup the parameters for the CausalLM model
@@ -140,6 +151,25 @@ protected:
   unsigned int global_token_len;
 
   std::mt19937 rng; /**< Random Number Gen */
+
+  /**
+   * @brief Context for sharing state between prefill and generation stages
+   */
+  struct RunContext {
+    float *input_sample = nullptr;
+    std::vector<int64_t> init_input;
+    std::vector<float *> input;
+    std::vector<float *> label;
+    std::vector<bool> eos_list;
+    unsigned int input_len = 0;
+    unsigned int init_len = 0;
+    unsigned int _len = 0;
+    std::vector<unsigned int> id_list;
+    unsigned int generation_cnt = 0;
+    std::chrono::milliseconds prefill_duration{0};
+  };
+
+  RunContext run_ctx_; /**< Shared context between prefill and generation */
 };
 
 } // namespace causallm

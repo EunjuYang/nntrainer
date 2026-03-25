@@ -301,17 +301,45 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       "MAX_SEQ_LEN must be greater than or equal to INIT_SEQ_LEN");
   }
 
-  /**
-   * Variables for Log
-   */
-  unsigned int generation_cnt = 0;
-  int64_t total_generation_duration = 0;
+  prefill(prompt, system_prompt, tail_prompt);
+
+  if (SAVE_KVCACHE)
+    return;
+
+  auto start_generation = std::chrono::high_resolution_clock::now();
+
+  generation(do_sample);
+
+  auto finish_generation = std::chrono::high_resolution_clock::now();
+  auto generation_duration =
+    std::chrono::duration_cast<std::chrono::milliseconds>(finish_generation -
+                                                          start_generation);
+
+  global_token_len += (run_ctx_.generation_cnt + run_ctx_.init_len);
+
+  std::cout << "\n\n";
+  std::cout << "=================[ LLM with NNTrainer ]===================\n";
+  std::cout << "prefill: " << run_ctx_.init_len << " tokens, "
+            << run_ctx_.prefill_duration.count() << " ms, "
+            << ((double)run_ctx_.init_len / run_ctx_.prefill_duration.count() *
+                1000)
+            << " TPS\n";
+  std::cout << "generation: " << run_ctx_.generation_cnt << " tokens, "
+            << generation_duration.count() << " ms, "
+            << ((double)run_ctx_.generation_cnt / generation_duration.count() *
+                1000)
+            << " TPS\n";
+  std::cout << "==========================================================\n";
+};
+
+void CausalLM::prefill(const WSTR prompt, const WSTR system_prompt,
+                        const WSTR tail_prompt) {
 
   /**
    * INPUT PREPARATION
    */
-  std::vector<float *> input;
-  std::vector<float *> label;
+  run_ctx_ = RunContext();
+  run_ctx_.generation_cnt = 0;
 
   /**
    * SAVE_KVCACHE ?
@@ -353,51 +381,43 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   //                       ||             ||
   // |<-- System prompt -->||<-- input -->||<-- generate -->|
 
-  std::vector<int64_t> init_input;
-  unsigned int _len = _input.size();
+  run_ctx_._len = _input.size();
   unsigned int num_allow_str = MAX_SEQ_LEN - NUM_TO_GENERATE;
-  unsigned text_len = _len;
+  unsigned text_len = run_ctx_._len;
 
-  if (_len > num_allow_str)
+  if (run_ctx_._len > num_allow_str)
     text_len = num_allow_str;
 
   // feed only available length
   // if _input is allowed, it feeds all of the _input
   // otherwise, feeds only a part of _input
   for (unsigned int i = 0; i < text_len; ++i)
-    init_input.push_back(_input[i]);
+    run_ctx_.init_input.push_back(_input[i]);
 
   ///@todo currently, the whole sequence may not be fed into the model
   /// This should be handled later.
   _input.clear();
 
-  unsigned int init_len = init_input.size();
-  float *input_sample =
+  run_ctx_.init_len = run_ctx_.init_input.size();
+  run_ctx_.input_sample =
     (float *)malloc(sizeof(float) * BATCH_SIZE * MAX_SEQ_LEN);
-  std::vector<bool> eos_list(BATCH_SIZE, false);
+  run_ctx_.eos_list.assign(BATCH_SIZE, false);
 
-  unsigned int input_len = init_len;
-  unsigned int token_generation_idx = input_len + 1;
+  run_ctx_.input_len = run_ctx_.init_len;
 
   for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
-    for (unsigned int i = 0; i < input_len; ++i) {
-      input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN + i] =
-        static_cast<float>(init_input[i]);
-      ids_history[static_cast<size_t>(b) * MAX_SEQ_LEN + i] = init_input[i];
+    for (unsigned int i = 0; i < run_ctx_.input_len; ++i) {
+      run_ctx_.input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN + i] =
+        static_cast<float>(run_ctx_.init_input[i]);
+      ids_history[static_cast<size_t>(b) * MAX_SEQ_LEN + i] =
+        run_ctx_.init_input[i];
     }
   }
 
   /**
    * PREFILL
    */
-  std::vector<int64_t> token_ids;
-  input.push_back(input_sample);
-
-  ///@note contains possible bug
-  // std::vector<ml::train::TensorDim> input_dims;
-  // ml::train::TensorDim input_dim(1, 1, input_len, DIM);
-  // input_dims.push_back(input_dim);
-  // model->resetInputDimension(input_dims);
+  run_ctx_.input.push_back(run_ctx_.input_sample);
 
   auto start_prefill = std::chrono::high_resolution_clock::now();
 
@@ -416,11 +436,11 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
     //
 
     std::cout << "\n==============[KV CACHE SAVE MODE]================\n";
-    output = model->incremental_inference(BATCH_SIZE, input, label, input_len,
-                                          0 + global_token_len,
-                                          input_len + global_token_len, false);
+    output = model->incremental_inference(
+      BATCH_SIZE, run_ctx_.input, run_ctx_.label, run_ctx_.input_len,
+      0 + global_token_len, run_ctx_.input_len + global_token_len, false);
 
-    SYS_PROMP_LEN = input_len;
+    SYS_PROMP_LEN = run_ctx_.input_len;
     save_kvcache(PRE_COMPUTED_CACHE_PATH, SYS_PROMP_LEN);
 
     std::cout
@@ -437,97 +457,85 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   } else {
     SYS_PROMP_LEN = 0;
   }
-  output = model->incremental_inference(BATCH_SIZE, input, label, init_len,
-                                        SYS_PROMP_LEN,
-                                        SYS_PROMP_LEN + input_len, false);
+  output = model->incremental_inference(
+    BATCH_SIZE, run_ctx_.input, run_ctx_.label, run_ctx_.init_len,
+    SYS_PROMP_LEN, SYS_PROMP_LEN + run_ctx_.input_len, false);
 
   // post process of model output
-  std::vector<unsigned int> id_list(generate_multi_tokens(
-    output[0], NUM_VOCAB, BATCH_SIZE, 1, ids_history, _len));
+  run_ctx_.id_list = generate_multi_tokens(output[0], NUM_VOCAB, BATCH_SIZE, 1,
+                                           ids_history, run_ctx_._len);
 
-  if (init_len < INIT_SEQ_LEN)
-    registerOutputs(tokenizer, id_list, init_len, eos_list);
+  if (run_ctx_.init_len < INIT_SEQ_LEN)
+    registerOutputs(tokenizer, run_ctx_.id_list, run_ctx_.init_len,
+                    run_ctx_.eos_list);
 
   auto finish_prefill = std::chrono::high_resolution_clock::now();
-  auto prefill_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
-    finish_prefill - start_prefill);
+  run_ctx_.prefill_duration =
+    std::chrono::duration_cast<std::chrono::milliseconds>(finish_prefill -
+                                                          start_prefill);
+}
 
-  /**
-   * TOKEN GENERATION
-   */
+void CausalLM::generation(bool do_sample) {
 
-  input_len += SYS_PROMP_LEN;
+  run_ctx_.input_len += SYS_PROMP_LEN;
 
   // Update generated token by prefill as an input
   for (unsigned int b = 0; b < BATCH_SIZE; ++b)
-    input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
-      static_cast<float>(id_list[b]);
+    run_ctx_.input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
+      static_cast<float>(run_ctx_.id_list[b]);
 
-  auto start_generation = std::chrono::high_resolution_clock::now();
+  unsigned int token_generation_idx;
 
-  for (token_generation_idx = input_len + 1;
-       token_generation_idx < input_len + 1 + NUM_TO_GENERATE;
+  for (token_generation_idx = run_ctx_.input_len + 1;
+       token_generation_idx < run_ctx_.input_len + 1 + NUM_TO_GENERATE;
        ++token_generation_idx) {
 
-    auto output_interval =
-      model->incremental_inference(BATCH_SIZE, input, label, input_len,
-                                   token_generation_idx - 1 + global_token_len,
-                                   token_generation_idx + global_token_len);
+    auto output_interval = model->incremental_inference(
+      BATCH_SIZE, run_ctx_.input, run_ctx_.label, run_ctx_.input_len,
+      token_generation_idx - 1 + global_token_len,
+      token_generation_idx + global_token_len);
     std::vector<unsigned int> ids_list(generate(output_interval[0], do_sample));
-    if (token_generation_idx < input_len) {
+    if (token_generation_idx < run_ctx_.input_len) {
       for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
-        input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
-          static_cast<float>(init_input[token_generation_idx - SYS_PROMP_LEN]);
+        run_ctx_.input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
+          static_cast<float>(
+            run_ctx_.init_input[token_generation_idx - SYS_PROMP_LEN]);
       }
-      registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list);
+      registerOutputs(tokenizer, ids_list, token_generation_idx,
+                      run_ctx_.eos_list);
     } else {
       for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
-        input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
+        run_ctx_.input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
           static_cast<float>(ids_list[b]);
       }
-      registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list);
+      registerOutputs(tokenizer, ids_list, token_generation_idx,
+                      run_ctx_.eos_list);
     }
-    ++generation_cnt;
+    ++run_ctx_.generation_cnt;
 
     // check FINISH
     for (unsigned int j = 0; j < BATCH_SIZE; ++j) {
-      if (!eos_list[j] && (std::find(EOS_TOKEN_ID.begin(), EOS_TOKEN_ID.end(),
-                                     ids_list[j]) != EOS_TOKEN_ID.end())) {
-        eos_list[j] = true;
+      if (!run_ctx_.eos_list[j] &&
+          (std::find(EOS_TOKEN_ID.begin(), EOS_TOKEN_ID.end(), ids_list[j]) !=
+           EOS_TOKEN_ID.end())) {
+        run_ctx_.eos_list[j] = true;
       }
     }
 
     bool is_finish = true;
     for (unsigned int j = 0; j < BATCH_SIZE; ++j) {
-      if (!eos_list[j]) {
+      if (!run_ctx_.eos_list[j]) {
         is_finish = false;
         break;
       }
     }
 
     if (is_finish) {
-      free(input_sample);
+      free(run_ctx_.input_sample);
+      run_ctx_.input_sample = nullptr;
       break;
     }
   }
-
-  global_token_len += (generation_cnt + init_len);
-
-  auto finish_generation = std::chrono::high_resolution_clock::now();
-  auto generation_duration =
-    std::chrono::duration_cast<std::chrono::milliseconds>(finish_generation -
-                                                          start_generation);
-
-  std::cout << "\n\n";
-  std::cout << "=================[ LLM with NNTrainer ]===================\n";
-  std::cout << "prefill: " << init_len << " tokens, "
-            << prefill_duration.count() << " ms, "
-            << ((double)init_len / prefill_duration.count() * 1000) << " TPS\n";
-  std::cout << "generation: " << generation_cnt << " tokens, "
-            << generation_duration.count() << " ms, "
-            << ((double)generation_cnt / generation_duration.count() * 1000)
-            << " TPS\n";
-  std::cout << "==========================================================\n";
 };
 
 } // namespace causallm
