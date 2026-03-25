@@ -40,6 +40,7 @@
 #include "qwen3_causallm.h"
 #include "qwen3_embedding.h"
 #include "qwen3_moe_causallm.h"
+#include "qwen3_omni_moe_causallm.h"
 #include "qwen3_slim_moe_causallm.h"
 #include <models/gemma3/function.h>
 #include <sys/resource.h>
@@ -169,6 +170,12 @@ int main(int argc, char *argv[]) {
     "Qwen3CachedSlimMoeForCausalLM",
     [](json cfg, json generation_cfg, json nntr_cfg) {
       return std::make_unique<causallm::Qwen3CachedSlimMoECausalLM>(
+        cfg, generation_cfg, nntr_cfg);
+    });
+  causallm::Factory::Instance().registerModel(
+    "Qwen3OmniMoeForCausalLM",
+    [](json cfg, json generation_cfg, json nntr_cfg) {
+      return std::make_unique<causallm::Qwen3OmniMoECausalLM>(
         cfg, generation_cfg, nntr_cfg);
     });
   causallm::Factory::Instance().registerModel(
