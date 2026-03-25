@@ -47,6 +47,12 @@ public:
            const WSTR system_prompt = "", const WSTR tail_prmopt = "") override;
 
   /**
+   * @brief Prefill stage for SentenceTransformer (encode the input)
+   */
+  void prefill(const WSTR prompt, const WSTR system_prompt = "",
+               const WSTR tail_prompt = "") override;
+
+  /**
    * @brief Encode the prompt and return the embedding
    * @param prompt User prompt
    * @param system_prompt System prompt
@@ -90,6 +96,8 @@ protected:
    * @brief register CustomLayers
    */
   void registerCustomLayers() override;
+
+  std::vector<float *> last_encode_results_; /**< Results from last prefill */
 
 private:
   /**

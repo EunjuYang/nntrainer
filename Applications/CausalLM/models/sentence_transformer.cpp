@@ -183,7 +183,7 @@ void SentenceTransformer::run(const WSTR prompt, bool do_sample,
                               const WSTR tail_prompt) {
 
   try {
-    std::vector<float *> results = encode(prompt, system_prompt, tail_prompt);
+    prefill(prompt, system_prompt, tail_prompt);
 
     std::cout << "Embedding Result (" << BATCH_SIZE
               << " batch(es)):" << std::endl;
@@ -192,7 +192,7 @@ void SentenceTransformer::run(const WSTR prompt, bool do_sample,
       // Print first few elements as sample
       int print_dim = (DIM > 10) ? 10 : DIM;
       for (int i = 0; i < print_dim; ++i) {
-        std::cout << results[0][b * DIM + i]
+        std::cout << last_encode_results_[0][b * DIM + i]
                   << (i == print_dim - 1 ? "" : ", ");
       }
       if (DIM > 10)
@@ -202,6 +202,11 @@ void SentenceTransformer::run(const WSTR prompt, bool do_sample,
   } catch (const std::exception &e) {
     std::cerr << "Error during embedding run: " << e.what() << std::endl;
   }
+}
+
+void SentenceTransformer::prefill(const WSTR prompt, const WSTR system_prompt,
+                                   const WSTR tail_prompt) {
+  last_encode_results_ = encode(prompt, system_prompt, tail_prompt);
 }
 
 std::vector<float *> SentenceTransformer::encode(const WSTR prompt,
