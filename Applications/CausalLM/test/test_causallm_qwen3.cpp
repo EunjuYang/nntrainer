@@ -5,7 +5,8 @@
  * @file   test_causallm_qwen3.cpp
  * @date   25 March 2026
  * @brief  Verification test for Qwen3 CausalLM model.
- *         Compares C++ inference results against Python (HuggingFace) reference.
+ *         Compares C++ inference results against Python (HuggingFace)
+ * reference.
  * @see    https://github.com/nntrainer/nntrainer
  * @author Eunju Yang <ej.yang@samsung.com>
  */
@@ -33,8 +34,7 @@ using json = nlohmann::json;
 /**
  * @brief Helper to load numpy .npy files (int32 or float32, 1D)
  */
-template <typename T>
-static std::vector<T> load_npy(const std::string &path) {
+template <typename T> static std::vector<T> load_npy(const std::string &path) {
   std::ifstream f(path, std::ios::binary);
   if (!f.is_open())
     throw std::runtime_error("Cannot open npy file: " + path);
@@ -69,7 +69,8 @@ static std::vector<T> load_npy(const std::string &path) {
 class TestableQwen3CausalLM : public causallm::Qwen3CausalLM {
 public:
   TestableQwen3CausalLM(json &cfg, json &gen_cfg, json &nntr_cfg) :
-    causallm::Transformer(cfg, gen_cfg, nntr_cfg, causallm::ModelType::CAUSALLM),
+    causallm::Transformer(cfg, gen_cfg, nntr_cfg,
+                          causallm::ModelType::CAUSALLM),
     causallm::Qwen3CausalLM(cfg, gen_cfg, nntr_cfg) {}
 
   struct TestResult {
@@ -172,14 +173,13 @@ protected:
     model_path = std::string(env_path);
 
     // Check required files exist
-    std::vector<std::string> required = {
-      "config.json",
-      "generation_config.json",
-      "nntr_config.json",
-      "reference_input_ids.npy",
-      "reference_generated_ids.npy",
-      "reference_prefill_logits.npy",
-      "reference_topk.json"};
+    std::vector<std::string> required = {"config.json",
+                                         "generation_config.json",
+                                         "nntr_config.json",
+                                         "reference_input_ids.npy",
+                                         "reference_generated_ids.npy",
+                                         "reference_prefill_logits.npy",
+                                         "reference_topk.json"};
 
     for (const auto &fname : required) {
       std::ifstream check(model_path + "/" + fname);
@@ -199,8 +199,7 @@ protected:
     int num_generate = nntr_cfg["num_to_generate"].get<int>();
 
     // Load reference data
-    auto input_ids =
-      load_npy<int32_t>(model_path + "/reference_input_ids.npy");
+    auto input_ids = load_npy<int32_t>(model_path + "/reference_input_ids.npy");
     ref_generated =
       load_npy<int32_t>(model_path + "/reference_generated_ids.npy");
     ref_logits = load_npy<float>(model_path + "/reference_prefill_logits.npy");
@@ -231,7 +230,7 @@ protected:
   void SetUp() override {
     if (model_path.empty()) {
       GTEST_SKIP() << "CAUSALLM_TEST_MODEL_PATH not set. "
-                    << "Run generate_reference.py first and set the env var.";
+                   << "Run generate_reference.py first and set the env var.";
     }
     if (!inference_done) {
       GTEST_SKIP() << "Model inference did not complete successfully.";
