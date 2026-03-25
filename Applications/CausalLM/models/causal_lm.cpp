@@ -55,7 +55,10 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
   ids_history = (unsigned int *)malloc(static_cast<size_t>(BATCH_SIZE) *
                                        MAX_SEQ_LEN * sizeof(unsigned int));
 
-  BAD_WORD_IDS = nntr_cfg["bad_word_ids"].get<std::vector<unsigned int>>();
+  if (nntr_cfg.contains("bad_word_ids") &&
+      !nntr_cfg["bad_word_ids"].is_null()) {
+    BAD_WORD_IDS = nntr_cfg["bad_word_ids"].get<std::vector<unsigned int>>();
+  }
   NUM_BADWORDS = BAD_WORD_IDS.size();
 
   LMHEAD_DTYPE = nntr_cfg.contains("lmhead_dtype")
@@ -77,18 +80,36 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
           .get<unsigned int>();
   }
 
-  if (generation_cfg["eos_token_id"].is_array()) {
-    EOS_TOKEN_ID =
-      generation_cfg["eos_token_id"].empty()
-        ? cfg["eos_token_id"].get<std::vector<unsigned int>>()
-        : generation_cfg["eos_token_id"].get<std::vector<unsigned int>>();
-  } else {
-    EOS_TOKEN_ID.clear();
-    EOS_TOKEN_ID.push_back(generation_cfg["eos_token_id"].get<unsigned int>());
+  // Parse eos_token_id from generation_cfg, falling back to cfg
+  if (generation_cfg.contains("eos_token_id") &&
+      !generation_cfg["eos_token_id"].is_null()) {
+    if (generation_cfg["eos_token_id"].is_array()) {
+      EOS_TOKEN_ID =
+        generation_cfg["eos_token_id"].get<std::vector<unsigned int>>();
+    } else {
+      EOS_TOKEN_ID.clear();
+      EOS_TOKEN_ID.push_back(
+        generation_cfg["eos_token_id"].get<unsigned int>());
+    }
+  } else if (cfg.contains("eos_token_id") && !cfg["eos_token_id"].is_null()) {
+    if (cfg["eos_token_id"].is_array()) {
+      EOS_TOKEN_ID = cfg["eos_token_id"].get<std::vector<unsigned int>>();
+    } else {
+      EOS_TOKEN_ID.clear();
+      EOS_TOKEN_ID.push_back(cfg["eos_token_id"].get<unsigned int>());
+    }
   }
-  BOS_TOKEN_ID = generation_cfg["bos_token_id"].empty()
-                   ? cfg["bos_token_id"].get<unsigned int>()
-                   : generation_cfg["bos_token_id"].get<unsigned int>();
+
+  // Parse bos_token_id from generation_cfg, falling back to cfg
+  if (generation_cfg.contains("bos_token_id") &&
+      !generation_cfg["bos_token_id"].is_null()) {
+    BOS_TOKEN_ID = generation_cfg["bos_token_id"].get<unsigned int>();
+  } else if (cfg.contains("bos_token_id") &&
+             !cfg["bos_token_id"].is_null()) {
+    BOS_TOKEN_ID = cfg["bos_token_id"].get<unsigned int>();
+  } else {
+    BOS_TOKEN_ID = 0;
+  }
   TOP_K = generation_cfg.contains("top_k")
             ? generation_cfg["top_k"].get<unsigned int>()
             : 20;
