@@ -104,8 +104,7 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
   if (generation_cfg.contains("bos_token_id") &&
       !generation_cfg["bos_token_id"].is_null()) {
     BOS_TOKEN_ID = generation_cfg["bos_token_id"].get<unsigned int>();
-  } else if (cfg.contains("bos_token_id") &&
-             !cfg["bos_token_id"].is_null()) {
+  } else if (cfg.contains("bos_token_id") && !cfg["bos_token_id"].is_null()) {
     BOS_TOKEN_ID = cfg["bos_token_id"].get<unsigned int>();
   } else {
     BOS_TOKEN_ID = 0;
