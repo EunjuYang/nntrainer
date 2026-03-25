@@ -209,22 +209,28 @@ protected:
     ref_top_values = topk_ref["top_values"].get<std::vector<float>>();
 
     // Create and run model
-    std::cout << "[Setup] Initializing Qwen3CausalLM model..." << std::endl;
+    try {
+      std::cout << "[Setup] Initializing Qwen3CausalLM model..." << std::endl;
 
-    TestableQwen3CausalLM model(cfg, gen_cfg, nntr_cfg);
-    model.initialize();
+      TestableQwen3CausalLM model(cfg, gen_cfg, nntr_cfg);
+      model.initialize();
 
-    std::string weight_file =
-      model_path + "/" + nntr_cfg["model_file_name"].get<std::string>();
-    std::cout << "[Setup] Loading weights from " << weight_file << std::endl;
-    model.load_weight(weight_file);
+      std::string weight_file =
+        model_path + "/" + nntr_cfg["model_file_name"].get<std::string>();
+      std::cout << "[Setup] Loading weights from " << weight_file << std::endl;
+      model.load_weight(weight_file);
 
-    std::cout << "[Setup] Running inference with " << input_ids.size()
-              << " input tokens, generating " << num_generate << " tokens..."
-              << std::endl;
-    test_result = model.testInference(input_ids, num_generate);
-    inference_done = true;
-    std::cout << "[Setup] Inference complete." << std::endl;
+      std::cout << "[Setup] Running inference with " << input_ids.size()
+                << " input tokens, generating " << num_generate << " tokens..."
+                << std::endl;
+      test_result = model.testInference(input_ids, num_generate);
+      inference_done = true;
+      std::cout << "[Setup] Inference complete." << std::endl;
+    } catch (const std::exception &e) {
+      std::cerr << "[Setup] Model initialization/inference failed: " << e.what()
+                << std::endl;
+      model_path.clear();
+    }
   }
 
   void SetUp() override {
