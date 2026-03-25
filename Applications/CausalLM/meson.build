@@ -71,3 +71,7 @@ e = executable('nntr_causallm',
     include_directories: causallm_inc,
     dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
 )
+
+if get_option('enable-test') and gtest_dep.found()
+    subdir('test')
+endif

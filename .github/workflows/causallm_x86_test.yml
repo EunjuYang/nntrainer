@@ -1,0 +1,109 @@
+name: "CausalLM X86 Verification Test"
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'Applications/CausalLM/**'
+      - 'nntrainer/**'
+      - '.github/workflows/causallm_x86_test.yml'
+  workflow_dispatch:
+
+jobs:
+  causallm_verify:
+    runs-on: ubuntu-24.04
+    name: Verify CausalLM Qwen3-0.6B (x86_64)
+    timeout-minutes: 60
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+
+    - name: Cache HuggingFace model
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/huggingface
+        key: hf-qwen3-0.6b-${{ runner.os }}
+
+    - name: Install system dependencies
+      run: |
+        sudo add-apt-repository -y ppa:nnstreamer/ppa && sudo apt-get update
+        sudo apt-get install -y gcc g++ pkg-config libopenblas-dev \
+          libiniparser-dev libjsoncpp-dev libcurl3-dev tensorflow2-lite-dev \
+          nnstreamer-dev libglib2.0-dev libgstreamer1.0-dev libgtest-dev \
+          ml-api-common-dev flatbuffers-compiler ml-inference-api-dev \
+          libunwind-dev python3-dev python3-numpy python3
+
+    - name: Install GCC 13
+      run: |
+        sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+        sudo apt-get install -y build-essential gcc-13 g++-13
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 1000
+        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 1000
+        sudo update-alternatives --set gcc /usr/bin/gcc-13
+
+    - name: Install Python dependencies
+      run: |
+        pip install torch --index-url https://download.pytorch.org/whl/cpu
+        pip install transformers numpy sentencepiece
+
+    - name: Install submodules
+      run: git submodule sync && git submodule update --init --recursive
+
+    - name: Install build systems
+      run: sudo apt install -y meson ninja-build
+
+    - name: Configure build
+      run: |
+        meson \
+          --buildtype=plain \
+          --prefix=/usr \
+          --sysconfdir=/etc \
+          --libdir=lib/x86_64-linux-gnu \
+          --bindir=lib/nntrainer/bin \
+          --includedir=include \
+          -Dinstall-app=true \
+          -Dreduce-tolerance=false \
+          -Denable-debug=true \
+          -Denable-test=true \
+          -Denable-transformer=true \
+          -Dml-api-support=enabled \
+          -Denable-nnstreamer-tensor-filter=enabled \
+          -Denable-nnstreamer-tensor-trainer=enabled \
+          -Denable-nnstreamer-backbone=true \
+          -Dcapi-ml-common-actual=capi-ml-common \
+          -Dcapi-ml-inference-actual=capi-ml-inference \
+          -Denable-capi=enabled \
+          -Denable-fp16=false \
+          -Denable-fsu=false \
+          build
+
+    - name: Build
+      run: ninja -C build
+
+    - name: Generate Python reference data (Qwen3-0.6B)
+      run: |
+        python3 Applications/CausalLM/test/generate_reference.py \
+          --model_path Qwen/Qwen3-0.6B \
+          --output_dir /tmp/causallm_test/qwen3-0.6b \
+          --num_generate 10
+
+    - name: Run CausalLM verification test
+      env:
+        CAUSALLM_TEST_MODEL_PATH: /tmp/causallm_test/qwen3-0.6b
+      run: |
+        ./build/Applications/CausalLM/test/test_causallm_qwen3 \
+          --gtest_output=xml:build/test_causallm_qwen3.xml
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: causallm-test-results
+        path: build/test_causallm_qwen3.xml

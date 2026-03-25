@@ -21,6 +21,10 @@ Applications/**/data
 cifar-100-binary*
 Applications/**/*.bin
 Applications/**/res/*
+!Applications/CausalLM/res/qwen3/
+!Applications/CausalLM/res/qwen3/*/
+!Applications/CausalLM/res/qwen3/*/*.json
+!Applications/CausalLM/res/qwen3/*/*.py
 Applications/**/tokenizers-cpp-build/*
 
 # CTag
