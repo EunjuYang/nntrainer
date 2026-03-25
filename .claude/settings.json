@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "bash .claude/setup-env.sh",
+        "timeout": 600
+      }
+    ]
+  },
+  "env": {
+    "ANDROID_NDK": "/opt/android-ndk-r27c"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(meson *)",
+      "Bash(ninja *)",
+      "Bash(ndk-build *)",
+      "Bash(cargo *)",
+      "Bash(rustup *)",
+      "Bash(clang-format *)",
+      "Bash(git *)",
+      "Bash(apt-get *)",
+      "Bash(LD_LIBRARY_PATH=* ./build/*)"
+    ]
+  }
+}
