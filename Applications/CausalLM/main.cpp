@@ -267,7 +267,14 @@ int main(int argc, char *argv[]) {
     auto model = causallm::Factory::Instance().create(architecture, cfg,
                                                       generation_cfg, nntr_cfg);
     model->initialize();
+    fprintf(stderr, "[Memory] after initialize: VmRSS=%zu KB\n",
+            read_vm_rss_kb());
+    printMemoryUsage();
+
     model->load_weight(weight_file);
+    fprintf(stderr, "[Memory] after load_weight: VmRSS=%zu KB\n",
+            read_vm_rss_kb());
+    printMemoryUsage();
 
     bool do_sample = generation_cfg.value("do_sample", false);
 
@@ -280,6 +287,7 @@ int main(int argc, char *argv[]) {
 #else
     model->run(input_text, do_sample, system_head_prompt, system_tail_prompt);
 #endif
+    fprintf(stderr, "[Memory] after run: VmRSS=%zu KB\n", read_vm_rss_kb());
 #ifdef PROFILE
     stop_and_print_peak();
 #endif
