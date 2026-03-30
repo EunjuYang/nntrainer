@@ -7,7 +7,13 @@
 
 #include <cpu_backend.h>
 #include <gtest/gtest.h>
+#include <omp.h>
 #include <turboquant_utils.h>
+
+#ifdef USE_BLAS
+extern "C" void openblas_set_num_threads(int num_threads);
+extern "C" int openblas_get_num_threads(void);
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -1792,6 +1798,359 @@ TEST(turboquant_mha_core_pipeline, quantize_dequantize_fidelity) {
 
   EXPECT_GT(avg_cosine, 0.95f) << "Average quant-dequant cosine too low";
   EXPECT_GT(worst_cosine, 0.85f) << "Worst-case quant-dequant cosine too low";
+}
+
+/**
+ * @brief Verify TurboQuant v2 produces bit-exact results regardless of
+ *        OMP_NUM_THREADS. Reproduces the reported bug where results differ
+ *        between OMP_NUM_THREADS=4 and OMP_NUM_THREADS=8.
+ *
+ *        Tests the OMP parallel for pattern used in mha_core.cpp (lines 827,
+ * 850): each OMP thread calls compute_kcaches/vcache_packed4_v2 with a
+ * single-head range.
+ */
+TEST(turboquant_mha_core_pipeline, omp_thread_count_determinism) {
+  // Qwen3-1.7B-like config
+  constexpr int num_heads_Q = 16;
+  constexpr int num_heads_KV = 4;
+  constexpr int head_dim = 128;
+  constexpr int gqa_size = num_heads_Q / num_heads_KV;
+  constexpr int tile_size = 4;
+  constexpr int context_len = 64;
+  constexpr int kv_width = num_heads_KV * head_dim;
+  constexpr int packed_row_bytes = kv_width / 2;
+  constexpr size_t local_window_size = 4096;
+
+  std::mt19937 gen(99999);
+  std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+
+  // Generate deterministic rot_signs
+  std::vector<float> rot_signs(head_dim);
+  for (int i = 0; i < head_dim; ++i)
+    rot_signs[i] = (gen() % 2) ? 1.0f : -1.0f;
+
+  // Build quantized KV cache using v2
+  std::vector<uint8_t> packed_kcache(context_len * packed_row_bytes);
+  std::vector<float> kcache_norms(context_len * num_heads_KV);
+  std::vector<uint8_t> packed_vcache(context_len * packed_row_bytes);
+  std::vector<float> vcache_norms(context_len * num_heads_KV);
+
+  for (int row = 0; row < context_len; ++row) {
+    std::vector<float> k_data(kv_width), v_data(kv_width);
+    for (auto &v : k_data)
+      v = dist(gen);
+    for (auto &v : v_data)
+      v = dist(gen);
+
+    nntrainer::quantize_kv_turboquant_v2(
+      k_data.data(), packed_kcache.data() + row * packed_row_bytes,
+      kcache_norms.data() + row * num_heads_KV, rot_signs.data(), head_dim,
+      num_heads_KV);
+    nntrainer::quantize_kv_turboquant_v2(
+      v_data.data(), packed_vcache.data() + row * packed_row_bytes,
+      vcache_norms.data() + row * num_heads_KV, rot_signs.data(), head_dim,
+      num_heads_KV);
+  }
+
+  // Query
+  std::vector<float> query(num_heads_Q * head_dim);
+  for (auto &v : query)
+    v = dist(gen);
+
+  // ---- Run kcache with different OMP thread counts ----
+  auto run_kcache_omp = [&](int nthreads) -> std::vector<float> {
+    int row_to_compute = context_len;
+    std::vector<float> out(row_to_compute * num_heads_Q, 0.0f);
+
+    omp_set_num_threads(nthreads);
+#pragma omp parallel for schedule(static)
+    for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
+      nntrainer::compute_kcaches_packed4_v2(
+        query.data(), packed_kcache.data(), kcache_norms.data(), out.data(),
+        row_to_compute, num_heads_KV, head_dim, gqa_size, tile_size,
+        rot_signs.data(), local_window_size, head_kv, head_kv + 1);
+    }
+    return out;
+  };
+
+  std::vector<float> kcache_t1 = run_kcache_omp(1);
+  std::vector<float> kcache_t4 = run_kcache_omp(4);
+  std::vector<float> kcache_t8 = run_kcache_omp(8);
+
+  std::cout << "\n=== OMP Thread Count Determinism (kcache) ===" << std::endl;
+
+  int kcache_diffs_1v4 = 0, kcache_diffs_1v8 = 0, kcache_diffs_4v8 = 0;
+  float max_diff_1v4 = 0, max_diff_1v8 = 0, max_diff_4v8 = 0;
+  for (size_t i = 0; i < kcache_t1.size(); ++i) {
+    float d14 = std::fabs(kcache_t1[i] - kcache_t4[i]);
+    float d18 = std::fabs(kcache_t1[i] - kcache_t8[i]);
+    float d48 = std::fabs(kcache_t4[i] - kcache_t8[i]);
+    if (d14 > 0)
+      kcache_diffs_1v4++;
+    if (d18 > 0)
+      kcache_diffs_1v8++;
+    if (d48 > 0)
+      kcache_diffs_4v8++;
+    max_diff_1v4 = std::max(max_diff_1v4, d14);
+    max_diff_1v8 = std::max(max_diff_1v8, d18);
+    max_diff_4v8 = std::max(max_diff_4v8, d48);
+  }
+
+  std::cout << "  1 vs 4 threads: " << kcache_diffs_1v4 << " diffs, max="
+            << max_diff_1v4 << std::endl;
+  std::cout << "  1 vs 8 threads: " << kcache_diffs_1v8 << " diffs, max="
+            << max_diff_1v8 << std::endl;
+  std::cout << "  4 vs 8 threads: " << kcache_diffs_4v8 << " diffs, max="
+            << max_diff_4v8 << std::endl;
+
+  EXPECT_EQ(kcache_diffs_1v4, 0)
+    << "kcache results differ between 1 and 4 threads!";
+  EXPECT_EQ(kcache_diffs_1v8, 0)
+    << "kcache results differ between 1 and 8 threads!";
+  EXPECT_EQ(kcache_diffs_4v8, 0)
+    << "kcache results differ between 4 and 8 threads!";
+
+  // ---- Softmax (serial, deterministic) ----
+  auto softmax = [&](std::vector<float> &attn, int num_rows) {
+    for (int h = 0; h < num_heads_Q; ++h) {
+      float max_val = -1e30f;
+      for (int r = 0; r < num_rows; ++r)
+        max_val = std::max(max_val, attn[r * num_heads_Q + h]);
+      float sum_exp = 0.0f;
+      for (int r = 0; r < num_rows; ++r) {
+        attn[r * num_heads_Q + h] =
+          std::exp(attn[r * num_heads_Q + h] - max_val);
+        sum_exp += attn[r * num_heads_Q + h];
+      }
+      for (int r = 0; r < num_rows; ++r)
+        attn[r * num_heads_Q + h] /= sum_exp;
+    }
+  };
+
+  // Use kcache_t1 for softmax (deterministic baseline)
+  softmax(kcache_t1, context_len);
+
+  // ---- Run vcache with different OMP thread counts ----
+  auto run_vcache_omp = [&](int nthreads,
+                            const std::vector<float> &attn) -> std::vector<float> {
+    int out_dim = num_heads_KV * gqa_size * head_dim;
+    std::vector<float> out(out_dim, 0.0f);
+    int row_num = context_len - 1;
+
+    omp_set_num_threads(nthreads);
+#pragma omp parallel for schedule(static)
+    for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
+      nntrainer::compute_vcache_packed4_v2(
+        row_num, attn.data(), packed_vcache.data(), vcache_norms.data(),
+        out.data(), num_heads_KV, gqa_size, head_dim, rot_signs.data(),
+        local_window_size, head_kv, head_kv + 1);
+    }
+    return out;
+  };
+
+  std::vector<float> vcache_t1 = run_vcache_omp(1, kcache_t1);
+  std::vector<float> vcache_t4 = run_vcache_omp(4, kcache_t1);
+  std::vector<float> vcache_t8 = run_vcache_omp(8, kcache_t1);
+
+  std::cout << "\n=== OMP Thread Count Determinism (vcache) ===" << std::endl;
+
+  int vcache_diffs_1v4 = 0, vcache_diffs_1v8 = 0, vcache_diffs_4v8 = 0;
+  float vmax_14 = 0, vmax_18 = 0, vmax_48 = 0;
+  for (size_t i = 0; i < vcache_t1.size(); ++i) {
+    float d14 = std::fabs(vcache_t1[i] - vcache_t4[i]);
+    float d18 = std::fabs(vcache_t1[i] - vcache_t8[i]);
+    float d48 = std::fabs(vcache_t4[i] - vcache_t8[i]);
+    if (d14 > 0)
+      vcache_diffs_1v4++;
+    if (d18 > 0)
+      vcache_diffs_1v8++;
+    if (d48 > 0)
+      vcache_diffs_4v8++;
+    vmax_14 = std::max(vmax_14, d14);
+    vmax_18 = std::max(vmax_18, d18);
+    vmax_48 = std::max(vmax_48, d48);
+  }
+
+  std::cout << "  1 vs 4 threads: " << vcache_diffs_1v4 << " diffs, max="
+            << vmax_14 << std::endl;
+  std::cout << "  1 vs 8 threads: " << vcache_diffs_1v8 << " diffs, max="
+            << vmax_18 << std::endl;
+  std::cout << "  4 vs 8 threads: " << vcache_diffs_4v8 << " diffs, max="
+            << vmax_48 << std::endl;
+
+  EXPECT_EQ(vcache_diffs_1v4, 0)
+    << "vcache results differ between 1 and 4 threads!";
+  EXPECT_EQ(vcache_diffs_1v8, 0)
+    << "vcache results differ between 1 and 8 threads!";
+  EXPECT_EQ(vcache_diffs_4v8, 0)
+    << "vcache results differ between 4 and 8 threads!";
+
+  // Restore default
+  omp_set_num_threads(omp_get_max_threads());
+}
+
+/**
+ * @brief Demonstrate that OpenBLAS sgemv produces different results with
+ *        different thread counts, and show that these differences get amplified
+ *        by 4-bit TurboQuant quantization.
+ *
+ *        This is the root cause of the reported OMP_NUM_THREADS sensitivity:
+ *        OpenBLAS (openblas-pthread) uses OMP_NUM_THREADS as fallback for its
+ *        internal thread count. Different thread counts → different FP
+ *        reduction orders → different sgemv results → different quantized
+ *        outputs.
+ */
+TEST(turboquant_mha_core_pipeline, openblas_quantization_amplification) {
+#ifdef USE_BLAS
+  constexpr int hidden = 2048; // Qwen3-1.7B hidden size
+  constexpr int head_dim = 128;
+  constexpr int num_heads_KV = 4;
+  constexpr int kv_width = num_heads_KV * head_dim;
+
+  std::mt19937 gen(77777);
+  std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+
+  // Simulate FP32 weight matrix (hidden × kv_width) for K projection
+  std::vector<float> weight(hidden * kv_width);
+  for (auto &w : weight)
+    w = dist(gen);
+
+  // Simulate FP32 input (1 × hidden)
+  std::vector<float> input(hidden);
+  for (auto &v : input)
+    v = dist(gen);
+
+  // rot_signs for TurboQuant
+  std::vector<float> rot_signs(head_dim);
+  for (int i = 0; i < head_dim; ++i)
+    rot_signs[i] = (gen() % 2) ? 1.0f : -1.0f;
+
+  auto run_sgemv_then_quantize = [&](int blas_threads) {
+    openblas_set_num_threads(blas_threads);
+
+    // sgemv: output = input * weight^T → (1 × kv_width)
+    std::vector<float> kv_out(kv_width, 0.0f);
+    nntrainer::sgemv(0 /* RowMajor */, false, kv_width, hidden, 1.0f,
+                     weight.data(), hidden, input.data(), 1, 0.0f,
+                     kv_out.data(), 1);
+
+    // Quantize with TurboQuant v2
+    std::vector<uint8_t> packed(kv_width / 2);
+    std::vector<float> norms(num_heads_KV);
+    nntrainer::quantize_kv_turboquant_v2(kv_out.data(), packed.data(),
+                                         norms.data(), rot_signs.data(),
+                                         head_dim, num_heads_KV);
+
+    return std::make_tuple(kv_out, packed, norms);
+  };
+
+  auto [kv_1t, packed_1t, norms_1t] = run_sgemv_then_quantize(1);
+  auto [kv_4t, packed_4t, norms_4t] = run_sgemv_then_quantize(4);
+  auto [kv_8t, packed_8t, norms_8t] = run_sgemv_then_quantize(8);
+
+  // Check sgemv result differences
+  int sgemv_diffs_1v4 = 0, sgemv_diffs_1v8 = 0;
+  float sgemv_maxdiff_1v4 = 0, sgemv_maxdiff_1v8 = 0;
+  for (int i = 0; i < kv_width; ++i) {
+    float d14 = std::fabs(kv_1t[i] - kv_4t[i]);
+    float d18 = std::fabs(kv_1t[i] - kv_8t[i]);
+    if (d14 > 0)
+      sgemv_diffs_1v4++;
+    if (d18 > 0)
+      sgemv_diffs_1v8++;
+    sgemv_maxdiff_1v4 = std::max(sgemv_maxdiff_1v4, d14);
+    sgemv_maxdiff_1v8 = std::max(sgemv_maxdiff_1v8, d18);
+  }
+
+  std::cout << "\n=== OpenBLAS sgemv Non-Determinism ===" << std::endl;
+  std::cout << "  1 vs 4 threads: " << sgemv_diffs_1v4
+            << " diffs, max=" << sgemv_maxdiff_1v4 << std::endl;
+  std::cout << "  1 vs 8 threads: " << sgemv_diffs_1v8
+            << " diffs, max=" << sgemv_maxdiff_1v8 << std::endl;
+
+  // Check quantized result differences (amplification)
+  int quant_diffs_1v4 = 0, quant_diffs_1v8 = 0;
+  for (size_t i = 0; i < packed_1t.size(); ++i) {
+    if (packed_1t[i] != packed_4t[i])
+      quant_diffs_1v4++;
+    if (packed_1t[i] != packed_8t[i])
+      quant_diffs_1v8++;
+  }
+
+  float norm_diffs_1v4 = 0, norm_diffs_1v8 = 0;
+  for (int i = 0; i < num_heads_KV; ++i) {
+    norm_diffs_1v4 += std::fabs(norms_1t[i] - norms_4t[i]);
+    norm_diffs_1v8 += std::fabs(norms_1t[i] - norms_8t[i]);
+  }
+
+  std::cout << "\n=== Quantization Amplification ===" << std::endl;
+  std::cout << "  Packed bytes differ (1v4): " << quant_diffs_1v4 << " / "
+            << packed_1t.size() << std::endl;
+  std::cout << "  Packed bytes differ (1v8): " << quant_diffs_1v8 << " / "
+            << packed_1t.size() << std::endl;
+  std::cout << "  Norm total abs diff (1v4): " << norm_diffs_1v4 << std::endl;
+  std::cout << "  Norm total abs diff (1v8): " << norm_diffs_1v8 << std::endl;
+
+  // Also test: does sgemm produce different results?
+  // (used for prefill with seq_len > 1)
+  constexpr int seq_len = 4;
+  std::vector<float> multi_input(seq_len * hidden);
+  for (auto &v : multi_input)
+    v = dist(gen);
+
+  auto run_sgemm = [&](int blas_threads) {
+    openblas_set_num_threads(blas_threads);
+    std::vector<float> out(seq_len * kv_width, 0.0f);
+    nntrainer::sgemm(0 /* RowMajor */, false, true, seq_len, kv_width, hidden,
+                     1.0f, multi_input.data(), hidden, weight.data(), hidden,
+                     0.0f, out.data(), kv_width);
+    return out;
+  };
+
+  auto gemm_1t = run_sgemm(1);
+  auto gemm_4t = run_sgemm(4);
+  auto gemm_8t = run_sgemm(8);
+
+  int gemm_diffs_1v4 = 0, gemm_diffs_1v8 = 0;
+  float gemm_maxdiff_1v4 = 0, gemm_maxdiff_1v8 = 0;
+  for (size_t i = 0; i < gemm_1t.size(); ++i) {
+    float d14 = std::fabs(gemm_1t[i] - gemm_4t[i]);
+    float d18 = std::fabs(gemm_1t[i] - gemm_8t[i]);
+    if (d14 > 0)
+      gemm_diffs_1v4++;
+    if (d18 > 0)
+      gemm_diffs_1v8++;
+    gemm_maxdiff_1v4 = std::max(gemm_maxdiff_1v4, d14);
+    gemm_maxdiff_1v8 = std::max(gemm_maxdiff_1v8, d18);
+  }
+
+  std::cout << "\n=== OpenBLAS sgemm Non-Determinism ===" << std::endl;
+  std::cout << "  1 vs 4 threads: " << gemm_diffs_1v4
+            << " diffs, max=" << gemm_maxdiff_1v4 << std::endl;
+  std::cout << "  1 vs 8 threads: " << gemm_diffs_1v8
+            << " diffs, max=" << gemm_maxdiff_1v8 << std::endl;
+
+  if (sgemv_diffs_1v4 > 0 || sgemv_diffs_1v8 > 0 || gemm_diffs_1v4 > 0 ||
+      gemm_diffs_1v8 > 0) {
+    std::cout << "\n  >>> ROOT CAUSE CONFIRMED: OpenBLAS sgemv produces "
+                 "different results\n"
+              << "      with different thread counts. 4-bit quantization "
+                 "amplifies these\n"
+              << "      tiny FP differences into different quantized "
+                 "representations.\n"
+              << "  >>> FIX: Set OPENBLAS_NUM_THREADS=<fixed> to decouple from "
+                 "OMP_NUM_THREADS,\n"
+              << "      or call openblas_set_num_threads(N) at init.\n";
+  } else {
+    std::cout << "\n  >>> OpenBLAS sgemv is deterministic on this platform "
+                 "(single-threaded BLAS?)\n";
+  }
+
+  // Restore
+  openblas_set_num_threads(1);
+#else
+  std::cout << "  [SKIPPED] No BLAS support compiled" << std::endl;
+#endif
 }
 
 GTEST_API_ int main(int argc, char **argv) {
