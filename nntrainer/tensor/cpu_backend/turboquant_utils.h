@@ -11,11 +11,13 @@
  *
  *         v1: 3-bit uniform quantization + 1-bit sign, per-group scale
  *         v2: Norm normalization + Hadamard rotation + Lloyd-Max codebook
- *             (paper Algorithm 1: MSE-optimal)
+ *             (paper Algorithm 1: MSE-optimal, 4-bit per coordinate)
  *
  * Packing layout (per byte):
- *   Lower nibble (bits 0-3): element[2i]   → [sign(1) | data(3)]
- *   Upper nibble (bits 4-7): element[2i+1] → [sign(1) | data(3)]
+ *   v1: Lower nibble (bits 0-3): element[2i]   → [sign(1) | data(3)]
+ *       Upper nibble (bits 4-7): element[2i+1] → [sign(1) | data(3)]
+ *   v2: Lower nibble (bits 0-3): element[2i]   → [data(4)]
+ *       Upper nibble (bits 4-7): element[2i+1] → [data(4)]
  */
 
 #ifndef __TURBOQUANT_UTILS_H__
@@ -86,24 +88,32 @@ inline void apply_inverse_rotation(float *data, const float *signs, int n) {
  ***********************************************************************/
 
 struct LloydMaxCodebook {
-  float centroids[8];
-  float boundaries[7];
+  float centroids[16];
+  float boundaries[15];
 };
 
-/** d=64, 3-bit (8 levels) */
+/** d=64, 4-bit (16 levels), Beta(31.5, 31.5) on [-1,1] */
 static constexpr LloydMaxCodebook CODEBOOK_D64 = {
-  {-0.26391393f, -0.16616786f, -0.09383226f, -0.03046918f,
-    0.03046918f,  0.09383226f,  0.16616786f,  0.26391393f},
-  {-0.21504089f, -0.13000006f, -0.06215072f, 0.0f,
-    0.06215072f,  0.13000006f,  0.21504089f}
+  {-0.33079493f, -0.25291211f, -0.19885445f, -0.15492391f,
+   -0.11648534f, -0.08131068f, -0.04808909f, -0.01591879f,
+    0.01591879f,  0.04808909f,  0.08131068f,  0.11648534f,
+    0.15492391f,  0.19885445f,  0.25291211f,  0.33079493f},
+  {-0.29185352f, -0.22588328f, -0.17688918f, -0.13570463f,
+   -0.09889801f, -0.06469988f, -0.03200394f, 0.0f,
+    0.03200394f,  0.06469988f,  0.09889801f,  0.13570463f,
+    0.17688918f,  0.22588328f,  0.29185352f}
 };
 
-/** d=128, 3-bit (8 levels) */
+/** d=128, 4-bit (16 levels), Beta(63.5, 63.5) on [-1,1] */
 static constexpr LloydMaxCodebook CODEBOOK_D128 = {
-  {-0.18839719f, -0.11813977f, -0.06658561f, -0.02160431f,
-    0.02160431f,  0.06658561f,  0.11813977f,  0.18839719f},
-  {-0.15326848f, -0.09236269f, -0.04409496f, 0.0f,
-    0.04409496f,  0.09236269f,  0.15326848f}
+  {-0.23766275f, -0.18083472f, -0.14180392f, -0.11028715f,
+   -0.08282740f, -0.05777148f, -0.03415105f, -0.01130232f,
+    0.01130232f,  0.03415105f,  0.05777148f,  0.08282740f,
+    0.11028715f,  0.14180392f,  0.18083472f,  0.23766275f},
+  {-0.20924874f, -0.16131932f, -0.12604554f, -0.09655728f,
+   -0.07029944f, -0.04596127f, -0.02272669f, 0.0f,
+    0.02272669f,  0.04596127f,  0.07029944f,  0.09655728f,
+    0.12604554f,  0.16131932f,  0.20924874f}
 };
 
 inline const LloydMaxCodebook &get_codebook(int head_dim) {
@@ -112,10 +122,10 @@ inline const LloydMaxCodebook &get_codebook(int head_dim) {
   return CODEBOOK_D128;
 }
 
-/** Lloyd-Max quantize: boundary search for optimal bin index. */
+/** Lloyd-Max quantize: boundary search for optimal bin index (4-bit). */
 inline uint8_t lloydmax_quantize(float val, const LloydMaxCodebook &cb) {
   int idx = 0;
-  for (int i = 0; i < 7; ++i) {
+  for (int i = 0; i < 15; ++i) {
     if (val > cb.boundaries[i])
       idx = i + 1;
   }
@@ -130,8 +140,8 @@ inline uint8_t lloydmax_quantize(float val, const LloydMaxCodebook &cb) {
  * @brief Full TurboQuant v2 quantize pipeline (paper Algorithm 1):
  *        1. Compute norm, normalize to unit vector
  *        2. Apply Hadamard rotation
- *        3. Lloyd-Max quantize each coordinate (3-bit)
- *        4. Pack into 4-bit (3-bit index + 1-bit sign, sign unused in v2)
+ *        3. Lloyd-Max quantize each coordinate (4-bit, 16 levels)
+ *        4. Pack into nibbles (2 elements per byte)
  */
 inline void turboquant_quantize_head(const float *input, int head_dim,
                                      uint8_t *out_packed, float *out_norm,
@@ -151,11 +161,10 @@ inline void turboquant_quantize_head(const float *input, int head_dim,
 
   for (int d = 0; d < head_dim; d += 2) {
     uint8_t q0 = lloydmax_quantize(rotated[d], cb);
-    uint8_t q1 = 4;
+    uint8_t q1 = 8; // midpoint default (near zero centroid)
     if (d + 1 < head_dim)
       q1 = lloydmax_quantize(rotated[d + 1], cb);
 
-    // Pack: 3-bit index in lower bits, bit[3] unused (set to 0)
     out_packed[d / 2] = (q1 << 4) | q0;
   }
 }
@@ -169,8 +178,8 @@ inline void turboquant_dequantize_head(const uint8_t *packed, float norm,
                                        const LloydMaxCodebook &cb) {
   for (int d = 0; d < head_dim; d += 2) {
     uint8_t byte = packed[d / 2];
-    uint8_t q0 = byte & 0x07;
-    uint8_t q1 = (byte >> 4) & 0x07;
+    uint8_t q0 = byte & 0x0F;
+    uint8_t q1 = (byte >> 4) & 0x0F;
     output[d] = cb.centroids[q0];
     if (d + 1 < head_dim)
       output[d + 1] = cb.centroids[q1];

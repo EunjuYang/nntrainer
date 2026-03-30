@@ -876,26 +876,39 @@ void __fallback_compute_kcaches_packed4_v2(
   int row_cnt =
     (size_t)num_rows < local_window_size ? num_rows : local_window_size;
   int packed_row_bytes = num_cache_head * head_dim / 2;
+  float inv_sqrt_d = 1.0f / std::sqrt((float)head_dim);
 
-  std::vector<float> tmp_dequant(head_dim);
+  // Pre-rotate queries: rotated_Q = H(D*Q).
+  // Math: Q · dequant(K) = Q · (norm * D * H * c) = norm * (H*D*Q)^T * c
+  // This eliminates per-row Hadamard transforms during dot product.
+  std::vector<float> rotated_queries(gqa_size * head_dim);
 
   for (int n = head_start; n < actual_head_end; ++n) {
+    for (int g = 0; g < gqa_size; ++g) {
+      const float *q_ptr = query + n * gqa_size * head_dim + g * head_dim;
+      float *rq = rotated_queries.data() + g * head_dim;
+      for (int i = 0; i < head_dim; ++i)
+        rq[i] = q_ptr[i] * rot_signs[i];
+      hadamard_transform(rq, head_dim);
+    }
+
     for (int t_row = 0; t_row < row_cnt; ++t_row) {
       int row = start_row + t_row;
       const uint8_t *packed_ptr =
         kcache_packed + row * packed_row_bytes + n * head_dim / 2;
       float norm = kcache_norms[row * num_cache_head + n];
 
-      turboquant_dequantize_head(packed_ptr, norm, head_dim, tmp_dequant.data(),
-                                 rot_signs, cb);
-
       for (int g = 0; g < gqa_size; ++g) {
-        const float *q_ptr = query + n * gqa_size * head_dim + g * head_dim;
+        const float *rq = rotated_queries.data() + g * head_dim;
         float sum = 0.0f;
-        for (int d = 0; d < head_dim; ++d)
-          sum += q_ptr[d] * tmp_dequant[d];
+        for (int d = 0; d < head_dim; d += 2) {
+          uint8_t byte = packed_ptr[d / 2];
+          sum += rq[d] * cb.centroids[byte & 0x0F];
+          if (d + 1 < head_dim)
+            sum += rq[d + 1] * cb.centroids[(byte >> 4) & 0x0F];
+        }
         output[t_row * num_cache_head * gqa_size + n * gqa_size + g] =
-          sum / std::sqrt((float)head_dim);
+          sum * norm * inv_sqrt_d;
       }
     }
   }
@@ -913,11 +926,14 @@ void __fallback_compute_vcache_packed4_v2(
                   ? 0
                   : row_num + 1 - (int)local_window_size;
 
-  std::vector<float> tmp_dequant(head_dim);
+  // Accumulate weighted centroids in rotated domain, then inverse-rotate once.
+  // Math: Σ attn[j]*dequant(V[j]) = D*H*Σ(attn[j]*norm[j]*c[j])
+  // This eliminates per-row Hadamard transforms.
+  std::vector<float> acc(head_dim);
 
   for (int n = head_start; n < actual_head_end; ++n) {
     for (int h = 0; h < gqa_size; ++h) {
-      std::vector<float> acc(head_dim, 0.0f);
+      std::fill(acc.begin(), acc.end(), 0.0f);
 
       for (int j = j_start; j <= row_num; ++j) {
         float a_val =
@@ -925,16 +941,21 @@ void __fallback_compute_vcache_packed4_v2(
         const uint8_t *packed_ptr =
           vcache_packed + j * packed_row_bytes + n * head_dim / 2;
         float norm = vcache_norms[j * num_cache_head + n];
+        float scale = a_val * norm;
 
-        turboquant_dequantize_head(packed_ptr, norm, head_dim,
-                                   tmp_dequant.data(), rot_signs, cb);
-        for (int d = 0; d < head_dim; ++d)
-          acc[d] += a_val * tmp_dequant[d];
+        for (int d = 0; d < head_dim; d += 2) {
+          uint8_t byte = packed_ptr[d / 2];
+          acc[d] += scale * cb.centroids[byte & 0x0F];
+          if (d + 1 < head_dim)
+            acc[d + 1] += scale * cb.centroids[(byte >> 4) & 0x0F];
+        }
       }
 
+      // Single inverse rotation: output = D * H * acc
+      hadamard_transform(acc.data(), head_dim);
       int out_base = (n * gqa_size + h) * head_dim;
       for (int d = 0; d < head_dim; ++d)
-        output[out_base + d] = acc[d];
+        output[out_base + d] = acc[d] * rot_signs[d];
     }
   }
 }
