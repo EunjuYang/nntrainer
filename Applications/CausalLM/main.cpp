@@ -42,70 +42,68 @@
 #include "qwen3_moe_causallm.h"
 #include "qwen3_slim_moe_causallm.h"
 #include <models/gemma3/function.h>
-#include <sys/resource.h>
+#include <cstdio>
 
 #include <atomic>
 #include <chrono>
+#include <iomanip>
 #include <thread>
 
 using json = nlohmann::json;
 
-std::atomic<size_t> peak_rss_kb{0};
-std::atomic<bool> tracking_enabled{true};
+/**
+ * @brief Per-phase peak RSS tracker.
+ *
+ * Reads VmRSS from /proc/self/status (actual physical memory used).
+ * Tracks peak independently for each phase so that weight-loading peak
+ * does not mask inference-phase memory changes.
+ */
+struct PeakRSSTracker {
+  std::atomic<size_t> peak_kb{0};
+  std::atomic<bool> running{false};
+  std::thread worker;
 
-void printMemoryUsage() {
-  struct rusage usage;
-  getrusage(RUSAGE_SELF, &usage);
-  std::cout << "Max Resident Set Size: " << usage.ru_maxrss << " KB"
-            << std::endl;
-}
-
-size_t read_vm_rss_kb() {
-  std::ifstream status("/proc/self/status");
-  std::string line;
-  while (std::getline(status, line)) {
-    if (line.find("VmRSS:") == 0) {
-      size_t kb = 0;
-      sscanf(line.c_str(), "VmRSS: %zu kB", &kb);
-      return kb;
-    }
-  }
-  return 0;
-}
-
-size_t read_private_rss_kb() {
-  std::ifstream smaps("/proc/self/smaps_rollup");
-  std::string line;
-  size_t total = 0;
-  while (std::getline(smaps, line)) {
-    if (line.find("Private_Clean:") == 0 || line.find("Private_Dirty:") == 0) {
-      size_t kb;
-      sscanf(line.c_str(), "%*s %zu", &kb);
-      total += kb;
-    }
-  }
-  return total;
-}
-
-void start_peak_tracker() {
-  std::thread([] {
-    while (tracking_enabled.load()) {
-      size_t current = read_private_rss_kb();
-      size_t prev = peak_rss_kb.load();
-      if (current > prev) {
-        peak_rss_kb.store(current);
+  static size_t current_rss_kb() {
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+      if (line.rfind("VmRSS:", 0) == 0) {
+        size_t kb = 0;
+        std::sscanf(line.c_str(), "VmRSS: %zu kB", &kb);
+        return kb;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-  }).detach();
-}
+    return 0;
+  }
 
-void stop_and_print_peak() {
-  tracking_enabled.store(false);
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
-  std::cout << "Peak memory usage (VmRSS): " << peak_rss_kb.load() << " KB"
-            << std::endl;
-}
+  void start() {
+    peak_kb.store(current_rss_kb());
+    running.store(true);
+    worker = std::thread([this] {
+      while (running.load()) {
+        size_t cur = current_rss_kb();
+        size_t prev = peak_kb.load();
+        if (cur > prev)
+          peak_kb.store(cur);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    });
+  }
+
+  size_t stop() {
+    running.store(false);
+    if (worker.joinable())
+      worker.join();
+    // final sample
+    size_t cur = current_rss_kb();
+    size_t prev = peak_kb.load();
+    if (cur > prev)
+      peak_kb.store(cur);
+    return peak_kb.load();
+  }
+
+  void reset() { peak_kb.store(current_rss_kb()); }
+};
 
 std::string resolve_architecture(std::string model_type,
                                  const std::string &architecture) {
@@ -264,38 +262,60 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    PeakRSSTracker tracker;
+
     auto model = causallm::Factory::Instance().create(architecture, cfg,
                                                       generation_cfg, nntr_cfg);
-    model->initialize();
-    fprintf(stderr, "[Memory] after initialize: VmRSS=%zu KB\n",
-            read_vm_rss_kb());
-    printMemoryUsage();
 
+    // --- Phase 1: initialize (pool calloc, lazy pages) ---
+    tracker.start();
+    model->initialize();
+    size_t init_peak = tracker.stop();
+    size_t init_rss = PeakRSSTracker::current_rss_kb();
+
+    // --- Phase 2: load_weight (mmap + copy into weight pool) ---
+    tracker.reset();
+    tracker.start();
     model->load_weight(weight_file);
-    fprintf(stderr, "[Memory] after load_weight: VmRSS=%zu KB\n",
-            read_vm_rss_kb());
-    printMemoryUsage();
+    size_t load_peak = tracker.stop();
+    size_t load_rss = PeakRSSTracker::current_rss_kb();
 
     bool do_sample = generation_cfg.value("do_sample", false);
 
-#ifdef PROFILE
-    start_peak_tracker();
-#endif
+    // --- Phase 3: inference ---
+    tracker.reset();
+    tracker.start();
 #if defined(_WIN32)
     model->run(input_text.c_str(), do_sample, system_head_prompt.c_str(),
                system_tail_prompt.c_str());
 #else
     model->run(input_text, do_sample, system_head_prompt, system_tail_prompt);
 #endif
-    fprintf(stderr, "[Memory] after run: VmRSS=%zu KB\n", read_vm_rss_kb());
-#ifdef PROFILE
-    stop_and_print_peak();
-#endif
+    size_t run_peak = tracker.stop();
+    size_t run_rss = PeakRSSTracker::current_rss_kb();
+
     auto finish_time = std::chrono::high_resolution_clock::now();
     auto e2e_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
       finish_time - start_time);
+
+    // --- Memory Report ---
+    std::cout << "\n===== Memory Report (VmRSS) =====\n";
+    std::cout << "Phase          | Peak (KB) | Peak (MB) | End (KB)  | End (MB)\n";
+    std::cout << "---------------|-----------|-----------|-----------|--------\n";
+    std::cout << "initialize     | " << std::setw(9) << init_peak
+              << " | " << std::setw(9) << std::fixed << std::setprecision(1)
+              << init_peak / 1024.0 << " | " << std::setw(9) << init_rss
+              << " | " << std::setw(6) << init_rss / 1024.0 << "\n";
+    std::cout << "load_weight    | " << std::setw(9) << load_peak
+              << " | " << std::setw(9) << load_peak / 1024.0
+              << " | " << std::setw(9) << load_rss
+              << " | " << std::setw(6) << load_rss / 1024.0 << "\n";
+    std::cout << "inference      | " << std::setw(9) << run_peak
+              << " | " << std::setw(9) << run_peak / 1024.0
+              << " | " << std::setw(9) << run_rss
+              << " | " << std::setw(6) << run_rss / 1024.0 << "\n";
+    std::cout << "=================================\n";
     std::cout << "[e2e time]: " << e2e_duration.count() << " ms \n";
-    printMemoryUsage();
 
   } catch (const std::exception &e) {
     std::cerr << "\n[!] FATAL ERROR: " << e.what() << "\n";
