@@ -429,6 +429,9 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       << "You may need this prompt lenth to set the \"sys_prompt_token_size\""
       << "\n==================================================\n"
       << std::endl;
+    for (auto *p : output)
+      delete[] p;
+    free(input_sample);
     return;
   }
 
@@ -444,6 +447,10 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   // post process of model output
   std::vector<unsigned int> id_list(generate_multi_tokens(
     output[0], NUM_VOCAB, BATCH_SIZE, 1, ids_history, _len));
+
+  for (auto *p : output)
+    delete[] p;
+  output.clear();
 
   if (init_len < INIT_SEQ_LEN)
     registerOutputs(tokenizer, id_list, init_len, eos_list);
@@ -474,6 +481,8 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
                                    token_generation_idx - 1 + global_token_len,
                                    token_generation_idx + global_token_len);
     std::vector<unsigned int> ids_list(generate(output_interval[0], do_sample));
+    for (auto *p : output_interval)
+      delete[] p;
     if (token_generation_idx < input_len) {
       for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
         input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
