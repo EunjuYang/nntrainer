@@ -1566,21 +1566,45 @@ void MHACoreLayer::updateTensorsByInputDimensions(
   ml::train::TensorDim kv_dim = input_dimensions[0];
   kv_dim.width(kv_dim.width() / (num_heads_Q / num_heads_KV));
 
-  ml::train::TensorDim kv_cache_dim = kv_dim;
-#ifdef ENABLE_FP16
-  kv_cache_dim.setDataType(ml::train::TensorDim::DataType::FP16);
-#else
-  kv_cache_dim.setDataType(ml::train::TensorDim::DataType::UINT16);
-#endif
-  kv_cache_dim.height(max_timestep);
-
   context.updateInput(INOUT_INDEX::QUERY, input_dimensions[0]);
   context.updateInput(INOUT_INDEX::KEY, kv_dim);
   context.updateInput(INOUT_INDEX::VALUE, kv_dim);
   context.updateOutput(0, input_dimensions[0]);
 
-  context.updateTensor(tensor_idx[AttentionParams::cache_key], kv_cache_dim);
-  context.updateTensor(tensor_idx[AttentionParams::cache_value], kv_cache_dim);
+  if (use_turboquant) {
+    unsigned int packed_width = num_heads_KV * head_dim / 2;
+    unsigned int batch = input_dimensions[0].batch();
+
+    ml::train::TensorDim packed_cache_dim(
+      {batch, 1, max_timestep, packed_width},
+      ml::train::TensorDim::TensorType(input_dimensions[0].getFormat(),
+                                        ml::train::TensorDim::DataType::UINT8));
+    context.updateTensor(tensor_idx[AttentionParams::cache_key],
+                         packed_cache_dim);
+    context.updateTensor(tensor_idx[AttentionParams::cache_value],
+                         packed_cache_dim);
+
+    ml::train::TensorDim norms_dim(
+      {batch, 1, max_timestep, (unsigned int)num_heads_KV},
+      ml::train::TensorDim::TensorType(input_dimensions[0].getFormat(),
+                                        ml::train::TensorDim::DataType::FP32));
+    context.updateTensor(tensor_idx[AttentionParams::cache_key_scales],
+                         norms_dim);
+    context.updateTensor(tensor_idx[AttentionParams::cache_value_scales],
+                         norms_dim);
+  } else {
+    ml::train::TensorDim kv_cache_dim = kv_dim;
+#ifdef ENABLE_FP16
+    kv_cache_dim.setDataType(ml::train::TensorDim::DataType::FP16);
+#else
+    kv_cache_dim.setDataType(ml::train::TensorDim::DataType::UINT16);
+#endif
+    kv_cache_dim.height(max_timestep);
+
+    context.updateTensor(tensor_idx[AttentionParams::cache_key], kv_cache_dim);
+    context.updateTensor(tensor_idx[AttentionParams::cache_value],
+                         kv_cache_dim);
+  }
 }
 
 void MHACoreLayer::calcDerivative(nntrainer::RunLayerContext &context) {}
