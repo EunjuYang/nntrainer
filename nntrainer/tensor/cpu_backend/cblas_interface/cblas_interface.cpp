@@ -11,6 +11,9 @@
  *
  */
 
+#include <algorithm>
+#include <thread>
+
 #include <cblas.h>
 #include <cblas_interface.h>
 
@@ -26,12 +29,17 @@ void __openblas_set_num_threads(int num_threads) {
   #ifdef BLAS_NUM_THREADS
     openblas_set_num_threads(BLAS_NUM_THREADS);
   #else
-    /// Without openblas_set_num_threads,
-    /// it's set std::thread::hardware_concurrency()
-    /// It can be too high especially when the given blas function is small
-    /// or if there are other threads already created (nntrainer thread pool)
-    /// With big-little & threadboost, hardware_concurrency might be not good.
-    /// @todo configure this! (4? num of big cores? ...)
+    /// Pin OpenBLAS to a fixed thread count so it does not inherit
+    /// OMP_NUM_THREADS from the environment. Without this, openblas-pthread
+    /// falls back to OMP_NUM_THREADS, and different thread counts cause
+    /// non-deterministic FP results in sgemv/sgemm parallel reductions.
+    /// This is critical when downstream ops (e.g. TurboQuant 4-bit
+    /// quantization) amplify tiny FP differences at quantization boundaries.
+    {
+      unsigned int hw = std::thread::hardware_concurrency();
+      int fixed_threads = std::max(1u, hw / 2);
+      openblas_set_num_threads(fixed_threads);
+    }
   #endif
   } else {
     openblas_set_num_threads(num_threads);
