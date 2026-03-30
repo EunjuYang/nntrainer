@@ -981,6 +981,36 @@ void compute_vcache_packed4_transposed(int row_num, const float *attn_weights,
                                        size_t local_window_size = UINT_MAX,
                                        int head_start = 0, int head_end = -1);
 
+/**
+ * @brief TurboQuant v2: norm + rotation + Lloyd-Max quantize (NEON)
+ */
+void quantize_kv_turboquant_v2(const float *input, uint8_t *out_packed,
+                               float *out_norms, const float *rot_signs,
+                               int head_dim, int num_heads);
+
+/**
+ * @brief Compute Q*K^T with TurboQuant v2 packed key cache (NEON)
+ */
+void compute_kcaches_packed4_v2(const float *query,
+                                const uint8_t *kcache_packed,
+                                const float *kcache_norms, float *output,
+                                int num_rows, int num_cache_head, int head_dim,
+                                int gqa_size, int tile_size,
+                                const float *rot_signs,
+                                size_t local_window_size = UINT_MAX,
+                                int head_start = 0, int head_end = -1);
+
+/**
+ * @brief Compute attention-weighted value with TurboQuant v2 cache (NEON)
+ */
+void compute_vcache_packed4_v2(int row_num, const float *attn_weights,
+                               const uint8_t *vcache_packed,
+                               const float *vcache_norms, float *output,
+                               int num_cache_head, int gqa_size, int head_dim,
+                               const float *rot_signs,
+                               size_t local_window_size = UINT_MAX,
+                               int head_start = 0, int head_end = -1);
+
 #endif
 } // namespace nntrainer::neon
 

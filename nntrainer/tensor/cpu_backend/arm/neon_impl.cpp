@@ -32,6 +32,7 @@
 #endif
 #include "nntr_ggml_impl_common.h"
 #include <fallback_internal.h>
+#include <turboquant_utils.h>
 #include <util_func.h>
 
 #include "nntr_ggml_impl_common.h"
@@ -2416,6 +2417,313 @@ void compute_vcache_packed4_transposed(int row_num, const float *attn_weights,
       for (int r = 0; r < rem; ++r) {
         output[out_base + num_blocks * 4 + r] = sumRem[r];
       }
+    }
+  }
+}
+
+/***********************************************************************
+ * TurboQuant v2 NEON implementations
+ ***********************************************************************/
+
+/**
+ * @brief NEON-accelerated Hadamard transform (in-place, orthogonal).
+ */
+static inline void hadamard_transform_neon(float *x, int n) {
+  for (int len = 1; len < n; len <<= 1) {
+    for (int i = 0; i < n; i += len << 1) {
+      int j = 0;
+      for (; j + 4 <= len; j += 4) {
+        float32x4_t u = vld1q_f32(x + i + j);
+        float32x4_t v = vld1q_f32(x + i + j + len);
+        vst1q_f32(x + i + j, vaddq_f32(u, v));
+        vst1q_f32(x + i + j + len, vsubq_f32(u, v));
+      }
+      for (; j < len; ++j) {
+        float u = x[i + j];
+        float v = x[i + j + len];
+        x[i + j] = u + v;
+        x[i + j + len] = u - v;
+      }
+    }
+  }
+  float inv_sqrt_n = 1.0f / std::sqrt((float)n);
+  float32x4_t vinv = vdupq_n_f32(inv_sqrt_n);
+  int i = 0;
+  for (; i + 4 <= n; i += 4) {
+    float32x4_t v = vld1q_f32(x + i);
+    vst1q_f32(x + i, vmulq_f32(v, vinv));
+  }
+  for (; i < n; ++i)
+    x[i] *= inv_sqrt_n;
+}
+
+/**
+ * @brief Lloyd-Max quantize using NEON: boundary search for 4-bit bin index.
+ *        Processes 4 values at once.
+ */
+static inline void lloydmax_quantize_4x(const float *vals, uint8_t *out,
+                                        const float *boundaries) {
+  for (int k = 0; k < 4; ++k) {
+    float val = vals[k];
+    int idx = 0;
+    for (int i = 0; i < 15; ++i) {
+      if (val > boundaries[i])
+        idx = i + 1;
+    }
+    out[k] = (uint8_t)idx;
+  }
+}
+
+void quantize_kv_turboquant_v2(const float *input, uint8_t *out_packed,
+                               float *out_norms, const float *rot_signs,
+                               int head_dim, int num_heads) {
+  const auto &cb =
+    (head_dim == 64) ? CODEBOOK_D64 : CODEBOOK_D128;
+
+  std::vector<float> rotated(head_dim);
+
+  for (int h = 0; h < num_heads; ++h) {
+    const float *head_input = input + h * head_dim;
+
+    // 1. Compute L2 norm with NEON
+    float32x4_t norm_acc = vdupq_n_f32(0.0f);
+    int d = 0;
+    for (; d + 4 <= head_dim; d += 4) {
+      float32x4_t v = vld1q_f32(head_input + d);
+      norm_acc = vfmaq_f32(norm_acc, v, v);
+    }
+    float norm_sq = vaddvq_f32(norm_acc);
+    for (; d < head_dim; ++d)
+      norm_sq += head_input[d] * head_input[d];
+
+    float norm = std::sqrt(norm_sq);
+    out_norms[h] = norm;
+
+    // 2. Normalize + apply sign rotation
+    float inv_norm = (norm > 1e-10f) ? (1.0f / norm) : 0.0f;
+    float32x4_t vinv = vdupq_n_f32(inv_norm);
+    d = 0;
+    for (; d + 4 <= head_dim; d += 4) {
+      float32x4_t v = vld1q_f32(head_input + d);
+      float32x4_t s = vld1q_f32(rot_signs + d);
+      vst1q_f32(rotated.data() + d, vmulq_f32(vmulq_f32(v, vinv), s));
+    }
+    for (; d < head_dim; ++d)
+      rotated[d] = head_input[d] * inv_norm * rot_signs[d];
+
+    // 3. Hadamard transform
+    hadamard_transform_neon(rotated.data(), head_dim);
+
+    // 4. Lloyd-Max quantize + pack nibbles
+    uint8_t *dst = out_packed + h * head_dim / 2;
+    for (d = 0; d < head_dim; d += 2) {
+      uint8_t q0 = 0;
+      for (int i = 0; i < 15; ++i)
+        if (rotated[d] > cb.boundaries[i])
+          q0 = (uint8_t)(i + 1);
+
+      uint8_t q1 = 8;
+      if (d + 1 < head_dim) {
+        q1 = 0;
+        for (int i = 0; i < 15; ++i)
+          if (rotated[d + 1] > cb.boundaries[i])
+            q1 = (uint8_t)(i + 1);
+      }
+      dst[d / 2] = (q1 << 4) | q0;
+    }
+  }
+}
+
+void compute_kcaches_packed4_v2(const float *query,
+                                const uint8_t *kcache_packed,
+                                const float *kcache_norms, float *output,
+                                int num_rows, int num_cache_head, int head_dim,
+                                int gqa_size, int tile_size,
+                                const float *rot_signs,
+                                size_t local_window_size, int head_start,
+                                int head_end) {
+  const auto &cb =
+    (head_dim == 64) ? CODEBOOK_D64 : CODEBOOK_D128;
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int start_row =
+    (size_t)num_rows < local_window_size ? 0 : num_rows - local_window_size;
+  int row_cnt =
+    (size_t)num_rows < local_window_size ? num_rows : local_window_size;
+  int packed_row_bytes = num_cache_head * head_dim / 2;
+  float inv_sqrt_d = 1.0f / std::sqrt((float)head_dim);
+
+  // Pre-rotate queries: rotated_Q = H(D*Q)
+  std::vector<float> rotated_queries(gqa_size * head_dim);
+
+  // Preload centroids into NEON-friendly layout (16 floats = 4 × float32x4_t)
+  float32x4_t cent0 = vld1q_f32(cb.centroids);
+  float32x4_t cent1 = vld1q_f32(cb.centroids + 4);
+  float32x4_t cent2 = vld1q_f32(cb.centroids + 8);
+  float32x4_t cent3 = vld1q_f32(cb.centroids + 12);
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    // Rotate all queries for this KV head
+    for (int g = 0; g < gqa_size; ++g) {
+      const float *q_ptr = query + n * gqa_size * head_dim + g * head_dim;
+      float *rq = rotated_queries.data() + g * head_dim;
+
+      int d = 0;
+      for (; d + 4 <= head_dim; d += 4) {
+        float32x4_t q = vld1q_f32(q_ptr + d);
+        float32x4_t s = vld1q_f32(rot_signs + d);
+        vst1q_f32(rq + d, vmulq_f32(q, s));
+      }
+      for (; d < head_dim; ++d)
+        rq[d] = q_ptr[d] * rot_signs[d];
+
+      hadamard_transform_neon(rq, head_dim);
+    }
+
+    // Dot product: rotated_Q · centroids[packed_K] * norm
+    for (int t_row = 0; t_row < row_cnt; ++t_row) {
+      int row = start_row + t_row;
+      const uint8_t *packed_ptr =
+        kcache_packed + row * packed_row_bytes + n * head_dim / 2;
+      float norm = kcache_norms[row * num_cache_head + n];
+      float scale = norm * inv_sqrt_d;
+
+      for (int g = 0; g < gqa_size; ++g) {
+        const float *rq = rotated_queries.data() + g * head_dim;
+
+        // NEON-accelerated dot product with centroid lookup
+        float32x4_t acc = vdupq_n_f32(0.0f);
+        int d = 0;
+        for (; d + 8 <= head_dim; d += 8) {
+          // Load 4 packed bytes → 8 centroid indices
+          uint8_t b0 = packed_ptr[d / 2];
+          uint8_t b1 = packed_ptr[d / 2 + 1];
+          uint8_t b2 = packed_ptr[d / 2 + 2];
+          uint8_t b3 = packed_ptr[d / 2 + 3];
+
+          // Lookup centroids for 8 elements
+          float c[8];
+          c[0] = cb.centroids[b0 & 0x0F];
+          c[1] = cb.centroids[(b0 >> 4) & 0x0F];
+          c[2] = cb.centroids[b1 & 0x0F];
+          c[3] = cb.centroids[(b1 >> 4) & 0x0F];
+          c[4] = cb.centroids[b2 & 0x0F];
+          c[5] = cb.centroids[(b2 >> 4) & 0x0F];
+          c[6] = cb.centroids[b3 & 0x0F];
+          c[7] = cb.centroids[(b3 >> 4) & 0x0F];
+
+          float32x4_t q0 = vld1q_f32(rq + d);
+          float32x4_t q1 = vld1q_f32(rq + d + 4);
+          float32x4_t cv0 = vld1q_f32(c);
+          float32x4_t cv1 = vld1q_f32(c + 4);
+
+          acc = vfmaq_f32(acc, q0, cv0);
+          acc = vfmaq_f32(acc, q1, cv1);
+        }
+
+        float sum = vaddvq_f32(acc);
+
+        // Handle remainder
+        for (; d + 2 <= head_dim; d += 2) {
+          uint8_t byte = packed_ptr[d / 2];
+          sum += rq[d] * cb.centroids[byte & 0x0F];
+          if (d + 1 < head_dim)
+            sum += rq[d + 1] * cb.centroids[(byte >> 4) & 0x0F];
+        }
+
+        output[t_row * num_cache_head * gqa_size + n * gqa_size + g] =
+          sum * scale;
+      }
+    }
+  }
+}
+
+void compute_vcache_packed4_v2(int row_num, const float *attn_weights,
+                               const uint8_t *vcache_packed,
+                               const float *vcache_norms, float *output,
+                               int num_cache_head, int gqa_size, int head_dim,
+                               const float *rot_signs,
+                               size_t local_window_size, int head_start,
+                               int head_end) {
+  const auto &cb =
+    (head_dim == 64) ? CODEBOOK_D64 : CODEBOOK_D128;
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int packed_row_bytes = num_cache_head * head_dim / 2;
+  int j_start = (size_t)row_num < local_window_size
+                  ? 0
+                  : row_num + 1 - (int)local_window_size;
+
+  // Accumulate in rotated domain, then inverse-rotate once
+  std::vector<float> acc(head_dim);
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    for (int h = 0; h < gqa_size; ++h) {
+      // Zero accumulator with NEON
+      {
+        float32x4_t zero = vdupq_n_f32(0.0f);
+        int d = 0;
+        for (; d + 4 <= head_dim; d += 4)
+          vst1q_f32(acc.data() + d, zero);
+        for (; d < head_dim; ++d)
+          acc[d] = 0.0f;
+      }
+
+      for (int j = j_start; j <= row_num; ++j) {
+        float a_val =
+          attn_weights[((j - j_start) * num_cache_head + n) * gqa_size + h];
+        const uint8_t *packed_ptr =
+          vcache_packed + j * packed_row_bytes + n * head_dim / 2;
+        float norm = vcache_norms[j * num_cache_head + n];
+        float scale = a_val * norm;
+
+        float32x4_t vscale = vdupq_n_f32(scale);
+
+        // Accumulate: acc[d] += scale * centroid[packed[d]]
+        int d = 0;
+        for (; d + 8 <= head_dim; d += 8) {
+          uint8_t b0 = packed_ptr[d / 2];
+          uint8_t b1 = packed_ptr[d / 2 + 1];
+          uint8_t b2 = packed_ptr[d / 2 + 2];
+          uint8_t b3 = packed_ptr[d / 2 + 3];
+
+          float c[8];
+          c[0] = cb.centroids[b0 & 0x0F];
+          c[1] = cb.centroids[(b0 >> 4) & 0x0F];
+          c[2] = cb.centroids[b1 & 0x0F];
+          c[3] = cb.centroids[(b1 >> 4) & 0x0F];
+          c[4] = cb.centroids[b2 & 0x0F];
+          c[5] = cb.centroids[(b2 >> 4) & 0x0F];
+          c[6] = cb.centroids[b3 & 0x0F];
+          c[7] = cb.centroids[(b3 >> 4) & 0x0F];
+
+          float32x4_t a0 = vld1q_f32(acc.data() + d);
+          float32x4_t a1 = vld1q_f32(acc.data() + d + 4);
+          float32x4_t cv0 = vld1q_f32(c);
+          float32x4_t cv1 = vld1q_f32(c + 4);
+
+          vst1q_f32(acc.data() + d, vfmaq_f32(a0, vscale, cv0));
+          vst1q_f32(acc.data() + d + 4, vfmaq_f32(a1, vscale, cv1));
+        }
+
+        for (; d + 2 <= head_dim; d += 2) {
+          uint8_t byte = packed_ptr[d / 2];
+          acc[d] += scale * cb.centroids[byte & 0x0F];
+          if (d + 1 < head_dim)
+            acc[d + 1] += scale * cb.centroids[(byte >> 4) & 0x0F];
+        }
+      }
+
+      // Inverse rotation: H(acc) then multiply by signs
+      hadamard_transform_neon(acc.data(), head_dim);
+
+      int out_base = (n * gqa_size + h) * head_dim;
+      int d = 0;
+      for (; d + 4 <= head_dim; d += 4) {
+        float32x4_t a = vld1q_f32(acc.data() + d);
+        float32x4_t s = vld1q_f32(rot_signs + d);
+        vst1q_f32(&output[out_base + d], vmulq_f32(a, s));
+      }
+      for (; d < head_dim; ++d)
+        output[out_base + d] = acc[d] * rot_signs[d];
     }
   }
 }
