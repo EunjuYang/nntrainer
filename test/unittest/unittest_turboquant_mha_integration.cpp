@@ -1183,6 +1183,617 @@ TEST(turboquant_qwen3_sim, prefill_decode_1_7b_like) {
     << "Qwen3-1.7B prefill+decode cosine too low: " << avg_cosine;
 }
 
+/**
+ * @brief Step-by-step MHA pipeline comparison that mirrors mha_core.cpp EXACTLY.
+ *
+ *  This test calls compute_kcaches_packed4_v2 and compute_vcache_packed4_v2
+ *  the SAME way mha_core.cpp does:
+ *    - Per KV-head loop (head_start, head_end) for OpenMP-like parallelization
+ *    - Explicit local_window_size parameter
+ *    - Same output tensor layout: [row * num_heads_Q + head_q]
+ *
+ *  Compares intermediate results:
+ *    Step 1: Q*K^T scores (before softmax)
+ *    Step 2: Softmax weights
+ *    Step 3: V*attn output (final)
+ */
+TEST(turboquant_mha_core_pipeline, single_token_stepwise_comparison) {
+  constexpr int num_heads_Q = 16;
+  constexpr int num_heads_KV = 4;
+  constexpr int head_dim = 128;
+  constexpr int gqa_size = num_heads_Q / num_heads_KV;
+  constexpr int tile_size = 4;
+  constexpr int context_len = 64;
+  constexpr size_t local_window_size = 4096; // typical Qwen3 config
+
+  constexpr int kv_width = num_heads_KV * head_dim;
+  constexpr int q_width = num_heads_Q * head_dim;
+  constexpr int packed_row = kv_width / 2;
+
+  std::mt19937 gen(20260330);
+  std::normal_distribution<float> normal(0.0f, 0.3f);
+  std::uniform_real_distribution<float> outlier(-4.0f, 4.0f);
+
+  auto gen_llm = [&](float *dst, int n) {
+    for (int i = 0; i < n; ++i)
+      dst[i] = normal(gen);
+    for (int i = 0; i < n / 20; ++i)
+      dst[std::abs((int)gen()) % n] = outlier(gen);
+  };
+
+  std::vector<float> rot_signs(head_dim);
+  nntrainer::generate_random_signs(rot_signs.data(), head_dim, 0xDEADBEEF);
+
+  // Generate KV data (same for both paths)
+  std::vector<float> fp32_keys(context_len * kv_width);
+  std::vector<float> fp32_values(context_len * kv_width);
+  for (int t = 0; t < context_len; ++t) {
+    gen_llm(fp32_keys.data() + t * kv_width, kv_width);
+    gen_llm(fp32_values.data() + t * kv_width, kv_width);
+  }
+
+  // TurboQuant v2 cache
+  std::vector<uint8_t> tq_kc(context_len * packed_row);
+  std::vector<float> tq_kn(context_len * num_heads_KV);
+  std::vector<uint8_t> tq_vc(context_len * packed_row);
+  std::vector<float> tq_vn(context_len * num_heads_KV);
+
+  for (int t = 0; t < context_len; ++t) {
+    nntrainer::quantize_kv_turboquant_v2(
+      fp32_keys.data() + t * kv_width, tq_kc.data() + t * packed_row,
+      tq_kn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
+      num_heads_KV);
+    nntrainer::quantize_kv_turboquant_v2(
+      fp32_values.data() + t * kv_width, tq_vc.data() + t * packed_row,
+      tq_vn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
+      num_heads_KV);
+  }
+
+  // Decode at position (context_len - 1) looking at all context
+  int from = context_len - 1;
+  int to = context_len;
+  int row_to_compute = from + 1; // causal: from + 1
+
+  std::vector<float> query(q_width);
+  gen_llm(query.data(), q_width);
+
+  // ======== STEP 1: Q*K^T scores ========
+  // FP32 reference
+  float scale = 1.0f / std::sqrt((float)head_dim);
+  std::vector<float> ref_scores(row_to_compute * num_heads_Q, 0.0f);
+  for (int n = 0; n < num_heads_KV; ++n) {
+    for (int g = 0; g < gqa_size; ++g) {
+      int qh = n * gqa_size + g;
+      const float *q = query.data() + qh * head_dim;
+      for (int r = 0; r < row_to_compute; ++r) {
+        const float *k = fp32_keys.data() + (r * num_heads_KV + n) * head_dim;
+        float dot = 0.0f;
+        for (int d = 0; d < head_dim; ++d)
+          dot += q[d] * k[d];
+        ref_scores[r * num_heads_Q + qh] = dot * scale;
+      }
+    }
+  }
+
+  // TQ v2 scores - per KV-head loop (matching mha_core.cpp OpenMP pattern)
+  std::vector<float> tq_scores(row_to_compute * num_heads_Q, 0.0f);
+  for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
+    nntrainer::compute_kcaches_packed4_v2(
+      query.data(), tq_kc.data(), tq_kn.data(), tq_scores.data(),
+      row_to_compute, num_heads_KV, head_dim, gqa_size, tile_size,
+      rot_signs.data(), local_window_size, head_kv, head_kv + 1);
+  }
+
+  // Compare scores
+  float score_max_diff = 0, score_sq = 0;
+  for (int i = 0; i < row_to_compute * num_heads_Q; ++i) {
+    float diff = std::fabs(ref_scores[i] - tq_scores[i]);
+    score_max_diff = std::max(score_max_diff, diff);
+    score_sq += diff * diff;
+  }
+  float score_rmse = std::sqrt(score_sq / (row_to_compute * num_heads_Q));
+
+  // ======== STEP 2: Softmax ========
+  // FP32 ref softmax
+  std::vector<float> ref_attn = ref_scores;
+  for (int h = 0; h < num_heads_Q; ++h) {
+    float mx = -1e30f;
+    for (int r = 0; r < row_to_compute; ++r)
+      mx = std::max(mx, ref_attn[r * num_heads_Q + h]);
+    float se = 0;
+    for (int r = 0; r < row_to_compute; ++r) {
+      ref_attn[r * num_heads_Q + h] =
+        std::exp(ref_attn[r * num_heads_Q + h] - mx);
+      se += ref_attn[r * num_heads_Q + h];
+    }
+    for (int r = 0; r < row_to_compute; ++r)
+      ref_attn[r * num_heads_Q + h] /= se;
+  }
+
+  // TQ softmax
+  std::vector<float> tq_attn = tq_scores;
+  for (int h = 0; h < num_heads_Q; ++h) {
+    float mx = -1e30f;
+    for (int r = 0; r < row_to_compute; ++r)
+      mx = std::max(mx, tq_attn[r * num_heads_Q + h]);
+    float se = 0;
+    for (int r = 0; r < row_to_compute; ++r) {
+      tq_attn[r * num_heads_Q + h] =
+        std::exp(tq_attn[r * num_heads_Q + h] - mx);
+      se += tq_attn[r * num_heads_Q + h];
+    }
+    for (int r = 0; r < row_to_compute; ++r)
+      tq_attn[r * num_heads_Q + h] /= se;
+  }
+
+  // Compare softmax weights
+  float attn_max_diff = 0, attn_sq = 0;
+  for (int i = 0; i < row_to_compute * num_heads_Q; ++i) {
+    float diff = std::fabs(ref_attn[i] - tq_attn[i]);
+    attn_max_diff = std::max(attn_max_diff, diff);
+    attn_sq += diff * diff;
+  }
+  float attn_rmse = std::sqrt(attn_sq / (row_to_compute * num_heads_Q));
+
+  // ======== STEP 3: V*attn output ========
+  // FP32 reference
+  std::vector<float> ref_out(q_width, 0.0f);
+  for (int n = 0; n < num_heads_KV; ++n) {
+    for (int g = 0; g < gqa_size; ++g) {
+      int qh = n * gqa_size + g;
+      float *out = ref_out.data() + qh * head_dim;
+      for (int r = 0; r < row_to_compute; ++r) {
+        float w = ref_attn[r * num_heads_Q + qh];
+        const float *v = fp32_values.data() + (r * num_heads_KV + n) * head_dim;
+        for (int d = 0; d < head_dim; ++d)
+          out[d] += w * v[d];
+      }
+    }
+  }
+
+  // TQ v2 output - per KV-head loop (matching mha_core.cpp)
+  std::vector<float> tq_out(q_width, 0.0f);
+  int row_num = to - 1;
+  for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
+    nntrainer::compute_vcache_packed4_v2(
+      row_num, tq_attn.data(), tq_vc.data(), tq_vn.data(), tq_out.data(),
+      num_heads_KV, gqa_size, head_dim, rot_signs.data(), local_window_size,
+      head_kv, head_kv + 1);
+  }
+
+  // Compare final output
+  float out_max_diff = 0, out_sq = 0, dot_ab = 0, dot_aa = 0, dot_bb = 0;
+  for (int i = 0; i < q_width; ++i) {
+    ASSERT_TRUE(std::isfinite(tq_out[i])) << "Non-finite at " << i;
+    float diff = std::fabs(ref_out[i] - tq_out[i]);
+    out_max_diff = std::max(out_max_diff, diff);
+    out_sq += diff * diff;
+    dot_ab += ref_out[i] * tq_out[i];
+    dot_aa += ref_out[i] * ref_out[i];
+    dot_bb += tq_out[i] * tq_out[i];
+  }
+  float out_rmse = std::sqrt(out_sq / q_width);
+  float cosine = (dot_aa > 0 && dot_bb > 0)
+                   ? dot_ab / (std::sqrt(dot_aa) * std::sqrt(dot_bb))
+                   : 0.0f;
+
+  std::cout << "\n=== MHA Core Pipeline Step-by-Step (single-token decode) ===\n"
+            << "  Config: heads_Q=" << num_heads_Q << ", heads_KV="
+            << num_heads_KV << ", dim=" << head_dim << ", ctx=" << context_len
+            << "\n"
+            << "  Step 1 (Q*K^T scores):  max_diff=" << score_max_diff
+            << "  rmse=" << score_rmse << "\n"
+            << "  Step 2 (softmax wts):   max_diff=" << attn_max_diff
+            << "  rmse=" << attn_rmse << "\n"
+            << "  Step 3 (V*attn output): max_diff=" << out_max_diff
+            << "  rmse=" << out_rmse << "  cosine=" << cosine << "\n";
+
+  // Per-head breakdown of final output
+  std::cout << "  Per-head output error:\n";
+  for (int h = 0; h < num_heads_Q; ++h) {
+    float h_max = 0, h_sq = 0;
+    for (int d = 0; d < head_dim; ++d) {
+      float diff = std::fabs(ref_out[h * head_dim + d] - tq_out[h * head_dim + d]);
+      h_max = std::max(h_max, diff);
+      h_sq += diff * diff;
+    }
+    float h_rmse = std::sqrt(h_sq / head_dim);
+    if (h < 4 || h == num_heads_Q - 1)
+      printf("    head %2d: max_diff=%.6f  rmse=%.6f\n", h, h_max, h_rmse);
+    else if (h == 4)
+      printf("    ...\n");
+  }
+
+  EXPECT_GT(cosine, 0.98f) << "Pipeline cosine too low";
+  EXPECT_LT(out_rmse, 0.05f) << "Pipeline RMSE too high";
+}
+
+/**
+ * @brief Test with small local_window_size to verify windowed attention
+ *        consistency between TQ v2 compute functions and the expected
+ *        mha_core.cpp softmax_triangle behavior.
+ *
+ *  When local_window_size < context_len, kcache only computes scores
+ *  for the last local_window_size rows. Softmax should only process
+ *  those rows. This test verifies the output is correct.
+ */
+TEST(turboquant_mha_core_pipeline, windowed_attention_consistency) {
+  constexpr int num_heads_Q = 8;
+  constexpr int num_heads_KV = 2;
+  constexpr int head_dim = 128;
+  constexpr int gqa_size = num_heads_Q / num_heads_KV;
+  constexpr int tile_size = 4;
+  constexpr int context_len = 64;
+  constexpr size_t local_window_size = 16; // small window
+
+  constexpr int kv_width = num_heads_KV * head_dim;
+  constexpr int q_width = num_heads_Q * head_dim;
+  constexpr int packed_row = kv_width / 2;
+
+  std::mt19937 gen(12345);
+  std::normal_distribution<float> normal(0.0f, 0.3f);
+
+  std::vector<float> rot_signs(head_dim);
+  nntrainer::generate_random_signs(rot_signs.data(), head_dim, 0xDEADBEEF);
+
+  // Build KV cache
+  std::vector<float> fp32_keys(context_len * kv_width);
+  std::vector<float> fp32_values(context_len * kv_width);
+  for (auto &v : fp32_keys) v = normal(gen);
+  for (auto &v : fp32_values) v = normal(gen);
+
+  std::vector<uint8_t> tq_kc(context_len * packed_row);
+  std::vector<float> tq_kn(context_len * num_heads_KV);
+  std::vector<uint8_t> tq_vc(context_len * packed_row);
+  std::vector<float> tq_vn(context_len * num_heads_KV);
+
+  for (int t = 0; t < context_len; ++t) {
+    nntrainer::quantize_kv_turboquant_v2(
+      fp32_keys.data() + t * kv_width, tq_kc.data() + t * packed_row,
+      tq_kn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
+      num_heads_KV);
+    nntrainer::quantize_kv_turboquant_v2(
+      fp32_values.data() + t * kv_width, tq_vc.data() + t * packed_row,
+      tq_vn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
+      num_heads_KV);
+  }
+
+  // Decode at the last position
+  int from = context_len - 1;
+  int row_to_compute = from + 1; // causal
+
+  std::vector<float> query(q_width);
+  for (auto &v : query) v = normal(gen);
+
+  // ---- TQ path with windowing (as mha_core.cpp does) ----
+  // Allocate out_ like mha_core.cpp: size = row_to_compute * num_heads_Q
+  // But setZero (critical for windowed case!)
+  std::vector<float> tq_scores(row_to_compute * num_heads_Q, 0.0f);
+
+  for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
+    nntrainer::compute_kcaches_packed4_v2(
+      query.data(), tq_kc.data(), tq_kn.data(), tq_scores.data(),
+      row_to_compute, num_heads_KV, head_dim, gqa_size, tile_size,
+      rot_signs.data(), local_window_size, head_kv, head_kv + 1);
+  }
+
+  // Verify layout: compute_kcaches_packed4_v2 writes scores at indices
+  // 0..row_cnt-1 (compacted), where row_cnt = min(row_to_compute, LWS).
+  // Indices row_cnt..row_to_compute-1 should still be 0 (from our setZero).
+  int row_cnt = row_to_compute < (int)local_window_size
+                  ? row_to_compute
+                  : (int)local_window_size;
+  ASSERT_LT(row_cnt, row_to_compute) << "Test requires context > window";
+
+  bool zeros_after_window = true;
+  for (int r = row_cnt; r < row_to_compute; ++r) {
+    for (int h = 0; h < num_heads_Q; ++h) {
+      if (tq_scores[r * num_heads_Q + h] != 0.0f) {
+        zeros_after_window = false;
+        break;
+      }
+    }
+  }
+  EXPECT_TRUE(zeros_after_window)
+    << "Scores after row_cnt should be 0 (from setZero)";
+
+  // Softmax: mimic softmax_triangle for row==1, causal
+  // end_row = from < local_window_size ? from + 1 : local_window_size
+  int end_row = from < (int)local_window_size ? from + 1 : (int)local_window_size;
+
+  // Only softmax the first end_row elements (matching mha_core.cpp)
+  for (int h = 0; h < num_heads_Q; ++h) {
+    float mx = -1e30f;
+    for (int r = 0; r < end_row; ++r)
+      mx = std::max(mx, tq_scores[r * num_heads_Q + h]);
+    float se = 0;
+    for (int r = 0; r < end_row; ++r) {
+      tq_scores[r * num_heads_Q + h] =
+        std::exp(tq_scores[r * num_heads_Q + h] - mx);
+      se += tq_scores[r * num_heads_Q + h];
+    }
+    for (int r = 0; r < end_row; ++r)
+      tq_scores[r * num_heads_Q + h] /= se;
+  }
+
+  // V computation with windowing
+  std::vector<float> tq_out(q_width, 0.0f);
+  for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
+    nntrainer::compute_vcache_packed4_v2(
+      from, tq_scores.data(), tq_vc.data(), tq_vn.data(), tq_out.data(),
+      num_heads_KV, gqa_size, head_dim, rot_signs.data(), local_window_size,
+      head_kv, head_kv + 1);
+  }
+
+  // ---- FP32 windowed reference ----
+  // Only attend to the last local_window_size positions
+  int ws = row_to_compute < (int)local_window_size
+             ? 0
+             : row_to_compute - (int)local_window_size;
+  std::vector<float> ref_out(q_width, 0.0f);
+  float scale = 1.0f / std::sqrt((float)head_dim);
+
+  for (int n = 0; n < num_heads_KV; ++n) {
+    for (int g = 0; g < gqa_size; ++g) {
+      int qh = n * gqa_size + g;
+      const float *q = query.data() + qh * head_dim;
+
+      // Q*K^T for window only
+      std::vector<float> scores;
+      for (int r = ws; r < row_to_compute; ++r) {
+        const float *k = fp32_keys.data() + (r * num_heads_KV + n) * head_dim;
+        float dot = 0.0f;
+        for (int d = 0; d < head_dim; ++d)
+          dot += q[d] * k[d];
+        scores.push_back(dot * scale);
+      }
+
+      // Softmax
+      float mx = *std::max_element(scores.begin(), scores.end());
+      float se = 0;
+      for (auto &s : scores) { s = std::exp(s - mx); se += s; }
+      for (auto &s : scores) s /= se;
+
+      // V aggregation
+      float *out = ref_out.data() + qh * head_dim;
+      for (int r = ws; r < row_to_compute; ++r) {
+        float w = scores[r - ws];
+        const float *v = fp32_values.data() + (r * num_heads_KV + n) * head_dim;
+        for (int d = 0; d < head_dim; ++d)
+          out[d] += w * v[d];
+      }
+    }
+  }
+
+  // Compare
+  float max_diff = 0, sum_sq = 0, dot_ab = 0, dot_aa = 0, dot_bb = 0;
+  for (int i = 0; i < q_width; ++i) {
+    ASSERT_TRUE(std::isfinite(tq_out[i]));
+    float diff = std::fabs(ref_out[i] - tq_out[i]);
+    max_diff = std::max(max_diff, diff);
+    sum_sq += diff * diff;
+    dot_ab += ref_out[i] * tq_out[i];
+    dot_aa += ref_out[i] * ref_out[i];
+    dot_bb += tq_out[i] * tq_out[i];
+  }
+  float rmse = std::sqrt(sum_sq / q_width);
+  float cosine = dot_ab / (std::sqrt(dot_aa) * std::sqrt(dot_bb));
+
+  std::cout << "\n=== Windowed Attention (window=" << local_window_size
+            << ", ctx=" << context_len << ") ===\n"
+            << "  max_diff=" << max_diff << "  rmse=" << rmse
+            << "  cosine=" << cosine << "\n";
+
+  EXPECT_GT(cosine, 0.98f) << "Windowed attention cosine too low";
+}
+
+/**
+ * @brief Multi-step decode test with per-head parallelization.
+ *        Verifies that calling compute_kcaches_packed4_v2 per KV-head
+ *        produces the same result as calling it all-at-once.
+ */
+TEST(turboquant_mha_core_pipeline, per_head_vs_allheads) {
+  constexpr int num_heads_Q = 16;
+  constexpr int num_heads_KV = 4;
+  constexpr int head_dim = 128;
+  constexpr int gqa_size = num_heads_Q / num_heads_KV;
+  constexpr int context_len = 32;
+  constexpr size_t local_window_size = UINT_MAX;
+
+  constexpr int kv_width = num_heads_KV * head_dim;
+  constexpr int q_width = num_heads_Q * head_dim;
+  constexpr int packed_row = kv_width / 2;
+
+  std::mt19937 gen(77777);
+  std::normal_distribution<float> normal(0.0f, 0.5f);
+
+  std::vector<float> rot_signs(head_dim);
+  nntrainer::generate_random_signs(rot_signs.data(), head_dim, 0xDEADBEEF);
+
+  // Build cache
+  std::vector<uint8_t> tq_kc(context_len * packed_row);
+  std::vector<float> tq_kn(context_len * num_heads_KV);
+  std::vector<uint8_t> tq_vc(context_len * packed_row);
+  std::vector<float> tq_vn(context_len * num_heads_KV);
+
+  std::vector<float> kv_data(kv_width);
+  for (int t = 0; t < context_len; ++t) {
+    for (auto &v : kv_data) v = normal(gen);
+    nntrainer::quantize_kv_turboquant_v2(
+      kv_data.data(), tq_kc.data() + t * packed_row,
+      tq_kn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
+      num_heads_KV);
+    for (auto &v : kv_data) v = normal(gen);
+    nntrainer::quantize_kv_turboquant_v2(
+      kv_data.data(), tq_vc.data() + t * packed_row,
+      tq_vn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
+      num_heads_KV);
+  }
+
+  std::vector<float> query(q_width);
+  for (auto &v : query) v = normal(gen);
+
+  int row_to_compute = context_len;
+
+  // All-at-once (default: head_start=0, head_end=-1)
+  std::vector<float> scores_all(row_to_compute * num_heads_Q, 0.0f);
+  nntrainer::compute_kcaches_packed4_v2(
+    query.data(), tq_kc.data(), tq_kn.data(), scores_all.data(),
+    row_to_compute, num_heads_KV, head_dim, gqa_size, 4, rot_signs.data(),
+    local_window_size);
+
+  // Per KV-head (matching mha_core.cpp OpenMP pattern)
+  std::vector<float> scores_per(row_to_compute * num_heads_Q, 0.0f);
+  for (int hkv = 0; hkv < num_heads_KV; ++hkv) {
+    nntrainer::compute_kcaches_packed4_v2(
+      query.data(), tq_kc.data(), tq_kn.data(), scores_per.data(),
+      row_to_compute, num_heads_KV, head_dim, gqa_size, 4, rot_signs.data(),
+      local_window_size, hkv, hkv + 1);
+  }
+
+  // Should be bit-exact
+  float max_diff = 0;
+  for (int i = 0; i < row_to_compute * num_heads_Q; ++i) {
+    float diff = std::fabs(scores_all[i] - scores_per[i]);
+    max_diff = std::max(max_diff, diff);
+  }
+
+  std::cout << "\n=== Per-head vs All-heads (kcache scores) ===\n"
+            << "  max_diff = " << max_diff << " (should be 0 or near-0)\n";
+  EXPECT_LT(max_diff, 1e-6f) << "Per-head and all-heads should match exactly";
+
+  // Same for V computation
+  // First softmax the scores
+  std::vector<float> attn_all = scores_all;
+  std::vector<float> attn_per = scores_per;
+  for (auto *attn : {&attn_all, &attn_per}) {
+    for (int h = 0; h < num_heads_Q; ++h) {
+      float mx = -1e30f;
+      for (int r = 0; r < row_to_compute; ++r)
+        mx = std::max(mx, (*attn)[r * num_heads_Q + h]);
+      float se = 0;
+      for (int r = 0; r < row_to_compute; ++r) {
+        (*attn)[r * num_heads_Q + h] =
+          std::exp((*attn)[r * num_heads_Q + h] - mx);
+        se += (*attn)[r * num_heads_Q + h];
+      }
+      for (int r = 0; r < row_to_compute; ++r)
+        (*attn)[r * num_heads_Q + h] /= se;
+    }
+  }
+
+  std::vector<float> vout_all(q_width, 0.0f);
+  nntrainer::compute_vcache_packed4_v2(
+    context_len - 1, attn_all.data(), tq_vc.data(), tq_vn.data(),
+    vout_all.data(), num_heads_KV, gqa_size, head_dim, rot_signs.data(),
+    local_window_size);
+
+  std::vector<float> vout_per(q_width, 0.0f);
+  for (int hkv = 0; hkv < num_heads_KV; ++hkv) {
+    nntrainer::compute_vcache_packed4_v2(
+      context_len - 1, attn_per.data(), tq_vc.data(), tq_vn.data(),
+      vout_per.data(), num_heads_KV, gqa_size, head_dim, rot_signs.data(),
+      local_window_size, hkv, hkv + 1);
+  }
+
+  float vmax_diff = 0;
+  for (int i = 0; i < q_width; ++i) {
+    float diff = std::fabs(vout_all[i] - vout_per[i]);
+    vmax_diff = std::max(vmax_diff, diff);
+  }
+
+  std::cout << "  vcache per-head vs all-heads max_diff = " << vmax_diff << "\n";
+  EXPECT_LT(vmax_diff, 1e-5f) << "V per-head and all-heads should match";
+}
+
+/**
+ * @brief Dequantize-then-recompute test: verify that TQ v2 quantization
+ *        + dequantization preserves vectors within expected error bounds.
+ *        This isolates quantization error from the attention computation.
+ */
+TEST(turboquant_mha_core_pipeline, quantize_dequantize_fidelity) {
+  constexpr int num_heads_KV = 4;
+  constexpr int head_dim = 128;
+  constexpr int kv_width = num_heads_KV * head_dim;
+  constexpr int packed_row = kv_width / 2;
+
+  std::mt19937 gen(42);
+  std::normal_distribution<float> normal(0.0f, 0.3f);
+  std::uniform_real_distribution<float> outlier(-5.0f, 5.0f);
+
+  std::vector<float> rot_signs(head_dim);
+  nntrainer::generate_random_signs(rot_signs.data(), head_dim, 0xDEADBEEF);
+
+  int num_samples = 100;
+  float total_cosine = 0, worst_cosine = 1.0f;
+  float total_rel_error = 0, worst_rel_error = 0;
+
+  for (int s = 0; s < num_samples; ++s) {
+    // Generate one KV vector
+    std::vector<float> orig(kv_width);
+    for (auto &v : orig) v = normal(gen);
+    if (s % 5 == 0) { // add outliers
+      for (int i = 0; i < kv_width / 20; ++i)
+        orig[std::abs((int)gen()) % kv_width] = outlier(gen);
+    }
+
+    // Quantize
+    std::vector<uint8_t> packed(packed_row);
+    std::vector<float> norms(num_heads_KV);
+    nntrainer::quantize_kv_turboquant_v2(
+      orig.data(), packed.data(), norms.data(), rot_signs.data(), head_dim,
+      num_heads_KV);
+
+    // Dequantize (use turboquant_utils.h dequantize function)
+    std::vector<float> recon(kv_width, 0.0f);
+    for (int h = 0; h < num_heads_KV; ++h) {
+      nntrainer::turboquant_dequantize_head(
+        packed.data() + h * head_dim / 2, norms[h], head_dim,
+        recon.data() + h * head_dim, rot_signs.data(),
+        nntrainer::get_codebook(head_dim));
+    }
+
+    // Compare
+    float dot_ab = 0, dot_aa = 0, dot_bb = 0;
+    for (int i = 0; i < kv_width; ++i) {
+      dot_ab += orig[i] * recon[i];
+      dot_aa += orig[i] * orig[i];
+      dot_bb += recon[i] * recon[i];
+    }
+    float cosine = (dot_aa > 0 && dot_bb > 0)
+                     ? dot_ab / (std::sqrt(dot_aa) * std::sqrt(dot_bb))
+                     : 0.0f;
+    float norm_orig = std::sqrt(dot_aa);
+    float norm_diff = 0;
+    for (int i = 0; i < kv_width; ++i) {
+      float d = orig[i] - recon[i];
+      norm_diff += d * d;
+    }
+    norm_diff = std::sqrt(norm_diff);
+    float rel_err = norm_orig > 0 ? norm_diff / norm_orig : 0;
+
+    total_cosine += cosine;
+    worst_cosine = std::min(worst_cosine, cosine);
+    total_rel_error += rel_err;
+    worst_rel_error = std::max(worst_rel_error, rel_err);
+  }
+
+  float avg_cosine = total_cosine / num_samples;
+  float avg_rel = total_rel_error / num_samples;
+
+  std::cout << "\n=== Quantize-Dequantize Fidelity (v2, " << num_samples
+            << " samples) ===\n"
+            << "  Config: heads_KV=" << num_heads_KV << ", dim=" << head_dim
+            << "\n"
+            << "  avg_cosine   = " << avg_cosine << "\n"
+            << "  worst_cosine = " << worst_cosine << "\n"
+            << "  avg_rel_err  = " << (avg_rel * 100) << "%\n"
+            << "  worst_rel_err= " << (worst_rel_error * 100) << "%\n";
+
+  EXPECT_GT(avg_cosine, 0.95f) << "Average quant-dequant cosine too low";
+  EXPECT_GT(worst_cosine, 0.85f) << "Worst-case quant-dequant cosine too low";
+}
+
 GTEST_API_ int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
