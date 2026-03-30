@@ -60,6 +60,7 @@ test_target = [
   ['unittest_nntrainer_fallback', []],
   ['unittest_turboquant', []],
   ['unittest_turboquant_mha_integration', []],
+  ['unittest_turboquant_bench', []],
   ['unittest_nntrainer_tensor_types', []],
   ['unittest_nntrainer_tensor_advanced', []],
   ['unittest_nntrainer_exe_order', []],

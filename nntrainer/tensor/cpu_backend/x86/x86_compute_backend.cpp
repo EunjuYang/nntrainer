@@ -19,9 +19,13 @@
 #endif
 #include <fallback_internal.h>
 #include <ggml_interface.h>
+#include <immintrin.h>
 #include <nntrainer_error.h>
 #include <q4_0_utils.h>
+#include <turboquant_utils.h>
 #include <x86_compute_backend.h>
+
+#include <vector>
 
 #define ROW_MAJOR 0
 #define COL_MAJOR 1
@@ -575,30 +579,278 @@ void compute_vcache_packed4_transposed_rotated(
     gqa_size, head_dim, signs, local_window_size, head_start, head_end);
 }
 
+/** AVX2 horizontal sum helper (local to this file). */
+static inline float hsum_avx2(__m256 v) {
+  __m128 lo = _mm256_castps256_ps128(v);
+  __m128 hi = _mm256_extractf128_ps(v, 1);
+  lo = _mm_add_ps(lo, hi);
+  __m128 shuf = _mm_movehdup_ps(lo);
+  __m128 sums = _mm_add_ps(lo, shuf);
+  shuf = _mm_movehl_ps(shuf, sums);
+  sums = _mm_add_ss(sums, shuf);
+  return _mm_cvtss_f32(sums);
+}
+
+/**
+ * AVX2 Hadamard transform for power-of-2 sizes.
+ * Uses AVX2 for the inner butterfly when block size >= 8.
+ */
+static void hadamard_transform_avx2(float *x, int n) {
+  for (int len = 1; len < 8 && len < n; len <<= 1) {
+    for (int i = 0; i < n; i += len << 1) {
+      for (int j = 0; j < len; ++j) {
+        float u = x[i + j];
+        float v = x[i + j + len];
+        x[i + j] = u + v;
+        x[i + j + len] = u - v;
+      }
+    }
+  }
+  for (int len = 8; len < n; len <<= 1) {
+    for (int i = 0; i < n; i += len << 1) {
+      for (int j = 0; j < len; j += 8) {
+        __m256 u = _mm256_loadu_ps(x + i + j);
+        __m256 v = _mm256_loadu_ps(x + i + j + len);
+        _mm256_storeu_ps(x + i + j, _mm256_add_ps(u, v));
+        _mm256_storeu_ps(x + i + j + len, _mm256_sub_ps(u, v));
+      }
+    }
+  }
+  float inv_sqrt_n = 1.0f / std::sqrt((float)n);
+  __m256 vinv = _mm256_set1_ps(inv_sqrt_n);
+  int i = 0;
+  for (; i + 8 <= n; i += 8) {
+    __m256 v = _mm256_loadu_ps(x + i);
+    _mm256_storeu_ps(x + i, _mm256_mul_ps(v, vinv));
+  }
+  for (; i < n; ++i)
+    x[i] *= inv_sqrt_n;
+}
+
+/**
+ * AVX2 nibble unpack: 4 packed bytes → 8 x int32 nibble indices.
+ */
+static inline __m256i avx2_unpack_nibbles_4bytes(const uint8_t *packed) {
+  uint32_t raw;
+  std::memcpy(&raw, packed, 4);
+  return _mm256_setr_epi32(
+    raw & 0x0F, (raw >> 4) & 0x0F, (raw >> 8) & 0x0F, (raw >> 12) & 0x0F,
+    (raw >> 16) & 0x0F, (raw >> 20) & 0x0F, (raw >> 24) & 0x0F,
+    (raw >> 28) & 0x0F);
+}
+
+/** AVX2 centroid lookup using gather instruction. */
+static inline __m256 avx2_centroid_lookup(__m256i idx,
+                                          const float *centroids) {
+  return _mm256_i32gather_ps(centroids, idx, 4);
+}
+
+/**
+ * AVX2 centroid dot product with dual accumulators for ILP.
+ */
+static inline float avx2_centroid_dot(const float *rq, const uint8_t *packed,
+                                      const float *centroids, int head_dim) {
+  __m256 acc0 = _mm256_setzero_ps();
+  __m256 acc1 = _mm256_setzero_ps();
+
+  int d = 0;
+  for (; d + 16 <= head_dim; d += 16) {
+    __m256i idx0 = avx2_unpack_nibbles_4bytes(packed + d / 2);
+    __m256i idx1 = avx2_unpack_nibbles_4bytes(packed + d / 2 + 4);
+    __m256 vals0 = avx2_centroid_lookup(idx0, centroids);
+    __m256 vals1 = avx2_centroid_lookup(idx1, centroids);
+    acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(rq + d), vals0, acc0);
+    acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(rq + d + 8), vals1, acc1);
+  }
+  for (; d + 8 <= head_dim; d += 8) {
+    __m256i idx = avx2_unpack_nibbles_4bytes(packed + d / 2);
+    __m256 vals = avx2_centroid_lookup(idx, centroids);
+    acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(rq + d), vals, acc0);
+  }
+
+  float sum = hsum_avx2(_mm256_add_ps(acc0, acc1));
+  for (; d + 2 <= head_dim; d += 2) {
+    uint8_t byte = packed[d / 2];
+    sum += rq[d] * centroids[byte & 0x0F];
+    sum += rq[d + 1] * centroids[(byte >> 4) & 0x0F];
+  }
+  return sum;
+}
+
 void quantize_kv_turboquant_v2(const float *input, uint8_t *out_packed,
                                float *out_norms, const float *rot_signs,
                                int head_dim, int num_heads) {
-  __fallback_quantize_kv_turboquant_v2(input, out_packed, out_norms, rot_signs,
-                                       head_dim, num_heads);
+  const LloydMaxCodebook &cb = get_codebook(head_dim);
+  std::vector<float> rotated(head_dim);
+
+  for (int h = 0; h < num_heads; ++h) {
+    const float *head_in = input + h * head_dim;
+    uint8_t *head_out = out_packed + h * head_dim / 2;
+
+    // 1. Compute norm with AVX2
+    __m256 norm_acc = _mm256_setzero_ps();
+    int i = 0;
+    for (; i + 8 <= head_dim; i += 8) {
+      __m256 v = _mm256_loadu_ps(head_in + i);
+      norm_acc = _mm256_fmadd_ps(v, v, norm_acc);
+    }
+    float norm_sq = hsum_avx2(norm_acc);
+    for (; i < head_dim; ++i)
+      norm_sq += head_in[i] * head_in[i];
+    float norm = std::sqrt(norm_sq);
+    out_norms[h] = norm;
+
+    // 2. Normalize + multiply by rot_signs (AVX2)
+    float inv_norm = (norm > 1e-10f) ? (1.0f / norm) : 0.0f;
+    __m256 vinv = _mm256_set1_ps(inv_norm);
+    i = 0;
+    for (; i + 8 <= head_dim; i += 8) {
+      __m256 v = _mm256_loadu_ps(head_in + i);
+      __m256 s = _mm256_loadu_ps(rot_signs + i);
+      _mm256_storeu_ps(rotated.data() + i, _mm256_mul_ps(_mm256_mul_ps(v, vinv), s));
+    }
+    for (; i < head_dim; ++i)
+      rotated[i] = head_in[i] * inv_norm * rot_signs[i];
+
+    // 3. Hadamard transform (AVX2)
+    hadamard_transform_avx2(rotated.data(), head_dim);
+
+    // 4. Lloyd-Max quantize + pack (scalar, since boundary search is branchy)
+    for (int d = 0; d < head_dim; d += 2) {
+      uint8_t q0 = lloydmax_quantize(rotated[d], cb);
+      uint8_t q1 = 8;
+      if (d + 1 < head_dim)
+        q1 = lloydmax_quantize(rotated[d + 1], cb);
+      head_out[d / 2] = (q1 << 4) | q0;
+    }
+  }
 }
+
 void compute_kcaches_packed4_v2(
   const float *query, const uint8_t *kcache_packed, const float *kcache_norms,
   float *output, int num_rows, int num_cache_head, int head_dim, int gqa_size,
   int tile_size, const float *rot_signs, size_t local_window_size,
   int head_start, int head_end) {
-  __fallback_compute_kcaches_packed4_v2(
-    query, kcache_packed, kcache_norms, output, num_rows, num_cache_head,
-    head_dim, gqa_size, tile_size, rot_signs, local_window_size, head_start,
-    head_end);
+  const LloydMaxCodebook &cb = get_codebook(head_dim);
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int start_row =
+    (size_t)num_rows < local_window_size ? 0 : num_rows - local_window_size;
+  int row_cnt =
+    (size_t)num_rows < local_window_size ? num_rows : local_window_size;
+  int packed_row_bytes = num_cache_head * head_dim / 2;
+  float inv_sqrt_d = 1.0f / std::sqrt((float)head_dim);
+
+  // Pre-rotate queries: rotated_Q = H(D*Q)
+  std::vector<float> rotated_queries(gqa_size * head_dim);
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    // Rotate all GQA queries for this KV head
+    for (int g = 0; g < gqa_size; ++g) {
+      const float *q_ptr = query + n * gqa_size * head_dim + g * head_dim;
+      float *rq = rotated_queries.data() + g * head_dim;
+
+      // AVX2 element-wise multiply by rot_signs
+      int i = 0;
+      for (; i + 8 <= head_dim; i += 8) {
+        __m256 vq = _mm256_loadu_ps(q_ptr + i);
+        __m256 vs = _mm256_loadu_ps(rot_signs + i);
+        _mm256_storeu_ps(rq + i, _mm256_mul_ps(vq, vs));
+      }
+      for (; i < head_dim; ++i)
+        rq[i] = q_ptr[i] * rot_signs[i];
+
+      hadamard_transform_avx2(rq, head_dim);
+    }
+
+    for (int t_row = 0; t_row < row_cnt; ++t_row) {
+      int row = start_row + t_row;
+      const uint8_t *packed_ptr =
+        kcache_packed + row * packed_row_bytes + n * head_dim / 2;
+      float norm = kcache_norms[row * num_cache_head + n];
+
+      for (int g = 0; g < gqa_size; ++g) {
+        const float *rq = rotated_queries.data() + g * head_dim;
+        float sum = avx2_centroid_dot(rq, packed_ptr, cb.centroids, head_dim);
+        output[t_row * num_cache_head * gqa_size + n * gqa_size + g] =
+          sum * norm * inv_sqrt_d;
+      }
+    }
+  }
 }
 void compute_vcache_packed4_v2(
   int row_num, const float *attn_weights, const uint8_t *vcache_packed,
   const float *vcache_norms, float *output, int num_cache_head, int gqa_size,
   int head_dim, const float *rot_signs, size_t local_window_size,
   int head_start, int head_end) {
-  __fallback_compute_vcache_packed4_v2(
-    row_num, attn_weights, vcache_packed, vcache_norms, output, num_cache_head,
-    gqa_size, head_dim, rot_signs, local_window_size, head_start, head_end);
+  const LloydMaxCodebook &cb = get_codebook(head_dim);
+  int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  int packed_row_bytes = num_cache_head * head_dim / 2;
+  int j_start = (size_t)row_num < local_window_size
+                  ? 0
+                  : row_num + 1 - (int)local_window_size;
+
+  int num_blocks = head_dim / 8;
+  int rem = head_dim % 8;
+
+  std::vector<float> acc(head_dim);
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    for (int h = 0; h < gqa_size; ++h) {
+      // AVX2 accumulators
+      std::vector<__m256> sumVec(num_blocks, _mm256_setzero_ps());
+      // Scalar accumulators for remainder
+      float sumRem[8] = {};
+
+      for (int j = j_start; j <= row_num; ++j) {
+        float a_val =
+          attn_weights[((j - j_start) * num_cache_head + n) * gqa_size + h];
+        float norm = vcache_norms[j * num_cache_head + n];
+        float scale = a_val * norm;
+        __m256 vscale = _mm256_set1_ps(scale);
+
+        const uint8_t *packed_ptr =
+          vcache_packed + j * packed_row_bytes + n * head_dim / 2;
+
+        for (int b = 0; b < num_blocks; ++b) {
+          int d = b * 8;
+          __m256i idx = avx2_unpack_nibbles_4bytes(packed_ptr + d / 2);
+          __m256 vals = avx2_centroid_lookup(idx, cb.centroids);
+          sumVec[b] = _mm256_fmadd_ps(vscale, vals, sumVec[b]);
+        }
+
+        // Scalar remainder
+        for (int r = 0; r < rem; r += 2) {
+          int dd = num_blocks * 8 + r;
+          uint8_t byte = packed_ptr[dd / 2];
+          sumRem[r] += scale * cb.centroids[byte & 0x0F];
+          if (r + 1 < rem)
+            sumRem[r + 1] += scale * cb.centroids[(byte >> 4) & 0x0F];
+        }
+      }
+
+      // Store accumulated centroids into acc buffer for Hadamard
+      for (int b = 0; b < num_blocks; ++b) {
+        _mm256_storeu_ps(acc.data() + b * 8, sumVec[b]);
+      }
+      for (int r = 0; r < rem; ++r) {
+        acc[num_blocks * 8 + r] = sumRem[r];
+      }
+
+      // Single inverse rotation: output = D * H * acc
+      hadamard_transform_avx2(acc.data(), head_dim);
+      int out_base = (n * gqa_size + h) * head_dim;
+
+      // AVX2 multiply by rot_signs and store
+      int i = 0;
+      for (; i + 8 <= head_dim; i += 8) {
+        __m256 va = _mm256_loadu_ps(acc.data() + i);
+        __m256 vs = _mm256_loadu_ps(rot_signs + i);
+        _mm256_storeu_ps(output + out_base + i, _mm256_mul_ps(va, vs));
+      }
+      for (; i < head_dim; ++i)
+        output[out_base + i] = acc[i] * rot_signs[i];
+    }
+  }
 }
 
 } /* namespace nntrainer */
