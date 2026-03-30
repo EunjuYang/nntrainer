@@ -767,16 +767,14 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
   // 1. Apply RoPE to query (in-place)
   apply_rotary_emb_tensor_v2(query_step, query_step, head_dim, _from, false);
 
-  // 2. Apply RoPE to key into a temporary FP32 buffer, then quantize+pack
+  // 2. Apply RoPE to key (in-place for FP32)
   unsigned int seq_len = to - from;
-  nntrainer::Tensor key_rope(1, 1, seq_len, kv_width,
-                             query_step.getTensorType());
-  apply_rotary_emb_tensor_v2(key_step, key_rope, head_dim, _from, false);
+  apply_rotary_emb_tensor_v2(key_step, key_step, head_dim, _from, false);
 
   // 3. Quantize key with v2 (norm + rotation + Lloyd-Max) per head
   for (unsigned int s = 0; s < seq_len; ++s) {
     unsigned int cache_row = from + s;
-    const float *key_data = key_rope.getData<float>() + s * kv_width;
+    const float *key_data = key_step.getData<float>() + s * kv_width;
     uint8_t *packed_dst =
       cache_key.getData<uint8_t>() +
       batch * cache_key_dim.getFeatureLen() + cache_row * packed_width;
