@@ -122,8 +122,28 @@ inline const LloydMaxCodebook &get_codebook(int head_dim) {
   return CODEBOOK_D128;
 }
 
+/**
+ * @brief Stabilize FP32 value by truncating lower mantissa bits.
+ *        This ensures that tiny FP differences from multi-threaded BLAS
+ *        reductions (order ~1e-7 ULP) do not cause different quantization
+ *        decisions at Lloyd-Max boundaries.
+ *
+ * @param val Input FP32 value.
+ * @param bits Number of mantissa bits to clear (default 12).
+ *             12 bits gives ~1e-4 resolution, well below the smallest
+ *             codebook boundary gap (~0.02).
+ */
+inline float stabilize_fp32(float val, int bits = 12) {
+  uint32_t u;
+  std::memcpy(&u, &val, sizeof(u));
+  u &= ~((1u << bits) - 1u);
+  std::memcpy(&val, &u, sizeof(val));
+  return val;
+}
+
 /** Lloyd-Max quantize: boundary search for optimal bin index (4-bit). */
 inline uint8_t lloydmax_quantize(float val, const LloydMaxCodebook &cb) {
+  val = stabilize_fp32(val);
   int idx = 0;
   for (int i = 0; i < 15; ++i) {
     if (val > cb.boundaries[i])

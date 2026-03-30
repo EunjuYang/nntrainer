@@ -501,7 +501,7 @@ void MHACoreLayer::compute_kcaches(
       const uint16_t *cache_data = cache.getData<uint16_t>();
       float *out_data = out.getData<float>();
 
-#pragma omp parallel for schedule(static) num_threads(num_cache_head)
+#pragma omp parallel for schedule(static)
       for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
         nntrainer::compute_kcaches<uint16_t>(
           in_data, cache_data, out_data, row_to_compute, num_cache_head,
@@ -549,7 +549,7 @@ void MHACoreLayer::compute_kcaches(
       const _FP16 *cache_data = cache.getData<_FP16>();
       _FP16 *out_data = out.getData<_FP16>();
 
-#pragma omp parallel for schedule(static) num_threads(num_cache_head)
+#pragma omp parallel for schedule(static)
       for (unsigned int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
         nntrainer::compute_kcaches(
           in_data, cache_data, out_data, num_rows, num_cache_head, head_dim,
@@ -824,7 +824,7 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
       batch * cache_key_scales.getDim().getFeatureLen();
     float *out_data = out_.getData<float>();
 
-#pragma omp parallel for schedule(static) num_threads(num_heads_KV)
+#pragma omp parallel for schedule(static)
     for (unsigned int head_kv = 0;
          head_kv < (unsigned int)(num_heads_Q / gqa_size); ++head_kv) {
       nntrainer::compute_kcaches_packed4_v2(
@@ -847,7 +847,7 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
     int row_num = to - 1;
     const float *attn_data = out_.getData<float>();
 
-#pragma omp parallel for schedule(static) num_threads(num_heads_KV)
+#pragma omp parallel for schedule(static)
     for (int head_kv = 0; head_kv < (int)num_heads_KV; ++head_kv) {
       nntrainer::compute_vcache_packed4_v2(
         row_num, attn_data, vc_packed, vc_norms, attn_out, num_heads_KV,
@@ -1474,7 +1474,7 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       const uint16_t *vcache_data = vcache.getData<uint16_t>();
       float *output_data = output.getData<float>();
 
-#pragma omp parallel for schedule(static) num_threads(num_cache_head)
+#pragma omp parallel for schedule(static)
       for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
         nntrainer::compute_fp16vcache_fp32_transposed(
           row_num, in_data, vcache_data, output_data, num_cache_head, gqa_size,
@@ -1521,7 +1521,7 @@ void MHACoreLayer::compute_fp16vcache_transposed(
       const _FP16 *vcache_data = vcache.getData<_FP16>();
       _FP16 *output_data = output.getData<_FP16>();
 
-#pragma omp parallel for schedule(static) num_threads(num_cache_head)
+#pragma omp parallel for schedule(static)
       for (int head_kv = 0; head_kv < num_cache_head; ++head_kv) {
         nntrainer::compute_fp16vcache_transposed(
           row_num, in_data, vcache_data, output_data, num_cache_head, gqa_size,
