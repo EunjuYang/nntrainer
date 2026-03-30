@@ -177,6 +177,10 @@ void TensorPool::finalize(const MemoryPlanner &planner,
     if (isTensorLongTerm(details->lifespan)) {
       validity_start = start_order;
       validity_end = end_order;
+      fprintf(stderr, "[TensorPool] LONG_TERM tensor: %s, bytes=%zu, dtype=%d\n",
+              spec.tensor->getName().c_str(),
+              spec.tensor->getMemoryBytes(),
+              (int)spec.tensor->getDataType());
     }
 
     /** 2. for each tensor request if it is in the provided range */
@@ -203,6 +207,8 @@ void TensorPool::finalize(const MemoryPlanner &planner,
   if (bytes_requested > 0) {
     double efficiency = mem_pool->planLayout(planner);
     ml_logd("Memory layout efficiency = %lf", efficiency);
+    fprintf(stderr, "[TensorPool] bytes_requested=%u, pool_size=%zu, efficiency=%.2f%%\n",
+            bytes_requested, mem_pool->size(), efficiency * 100.0);
   }
 }
 

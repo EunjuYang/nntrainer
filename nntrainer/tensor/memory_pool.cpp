@@ -125,6 +125,8 @@ void MemoryPool::allocate() {
     throw std::runtime_error("Memory pool is already allocated");
 
   ml_logi("MemoryPool::allocate size: %zu", pool_size);
+  fprintf(stderr, "[MemoryPool] allocating %zu bytes (%.2f MB)\n",
+          pool_size, pool_size / (1024.0 * 1024.0));
 
 #if defined(__ANDROID__) && ENABLE_NPU
   int i = 0;
