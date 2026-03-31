@@ -377,16 +377,16 @@ public:
               weight.getDataType() == dtype)
             weight.save(file);
           else {
-            if (dtype == TensorDim::DataType::Q4_0) {
-              NNTR_THROW_IF(weight.getDataType() != TensorDim::DataType::FP32,
-                            std::runtime_error)
-                << "Save with quantization only supports for FP32 weight.";
-              ///@note The codelines below can be replaced with quantizer's
-              /// quantize()
-              TensorDim dim = weight.getDim();
-              unsigned int K = dim.height();
-              unsigned int N = dim.width();
+            NNTR_THROW_IF(weight.getDataType() != TensorDim::DataType::FP32,
+                          std::runtime_error)
+              << "Save with quantization only supports for FP32 weight.";
+            ///@note The codelines below can be replaced with quantizer's
+            /// quantize()
+            TensorDim dim = weight.getDim();
+            unsigned int K = dim.height();
+            unsigned int N = dim.width();
 
+            if (dtype == TensorDim::DataType::Q4_0) {
               // Skip quantization for bias-like tensors (1D with height == 1)
               // as they are not suitable for Q4_0 block quantization
               if (K == 1) {
@@ -406,6 +406,33 @@ public:
                               nullptr);
                 repack_q4_0(quant_weight.getData<uint8_t>(), tmp.data(),
                             quant_weight.size(), N, K);
+                quant_weight.save(file);
+              }
+            } else if (dtype == TensorDim::DataType::Q4_K) {
+              if (K == 1) {
+                weight.save(file);
+              } else {
+                Tensor weight_t = weight.transpose("0:2:1");
+                Tensor quant_weight(dim.batch(), dim.channel(), K, N,
+                                    {Tformat::NCHW, dtype});
+                std::vector<char> tmp(quant_weight.size());
+
+                quantize_q4_K(weight_t.getData<float>(), tmp.data(), N, K,
+                              nullptr);
+                repack_q4_K(quant_weight.getData<uint8_t>(), tmp.data(),
+                            quant_weight.size(), N, K);
+                quant_weight.save(file);
+              }
+            } else if (dtype == TensorDim::DataType::Q6_K) {
+              if (K == 1) {
+                weight.save(file);
+              } else {
+                Tensor weight_t = weight.transpose("0:2:1");
+                Tensor quant_weight(dim.batch(), dim.channel(), K, N,
+                                    {Tformat::NCHW, dtype});
+
+                quantize_q6_K(weight_t.getData<float>(),
+                              quant_weight.getData<uint8_t>(), N, K, nullptr);
                 quant_weight.save(file);
               }
             } else {
