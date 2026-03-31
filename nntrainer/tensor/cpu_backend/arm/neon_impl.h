@@ -510,16 +510,6 @@ void tanh_gelu(const unsigned int N, const float *X, float *Y);
 void tanh_gelu_v2(const unsigned int N, const float *X, float *Y);
 
 /**
- * @brief gelu function with neon but with polynomial approximation
- *
- * @param N number of elements in X
- * @param X float * for Vector X (input)
- * @param Y float * for Vector Y (output)
- */
-
-void gelu_v2(const unsigned int N, const float *X, float *Y);
-
-/**
  * @brief tanh_gelu function with neon but as
  * Y = X / (1 + exp(-pi/4*(X + 0.04
  *      4715X^3)) with multiplication with loop unrolling x4
@@ -963,6 +953,64 @@ void compute_rotary_emb_value_uint16(unsigned int width, unsigned int dim,
                                      void *output, const float *cos_,
                                      const float *sin_,
                                      bool only_convert_to_fp16);
+/**
+ * @brief Quantize FP32 KV values and pack into TurboQuant 4-bit format (NEON)
+ */
+void quantize_kv_turboquant(const float *input, size_t num_elements,
+                            uint8_t *out_packed, float *out_scales);
+
+/**
+ * @brief Compute Q*K^T with TurboQuant 4-bit packed key cache (NEON)
+ */
+void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
+                             const float *kcache_scales, float *output,
+                             int num_rows, int num_cache_head, int head_dim,
+                             int gqa_size, int tile_size,
+                             size_t local_window_size = UINT_MAX,
+                             int head_start = 0, int head_end = -1);
+
+/**
+ * @brief Compute attention-weighted value aggregation with TurboQuant 4-bit
+ *        packed value cache (NEON)
+ */
+void compute_vcache_packed4_transposed(int row_num, const float *attn_weights,
+                                       const uint8_t *vcache_packed,
+                                       const float *vcache_scales,
+                                       float *output, int num_cache_head,
+                                       int gqa_size, int head_dim,
+                                       size_t local_window_size = UINT_MAX,
+                                       int head_start = 0, int head_end = -1);
+
+/**
+ * @brief TurboQuant v2: norm + rotation + Lloyd-Max quantize (NEON)
+ */
+void quantize_kv_turboquant_v2(const float *input, uint8_t *out_packed,
+                               float *out_norms, const float *rot_signs,
+                               int head_dim, int num_heads);
+
+/**
+ * @brief Compute Q*K^T with TurboQuant v2 packed key cache (NEON)
+ */
+void compute_kcaches_packed4_v2(const float *query,
+                                const uint8_t *kcache_packed,
+                                const float *kcache_norms, float *output,
+                                int num_rows, int num_cache_head, int head_dim,
+                                int gqa_size, int tile_size,
+                                const float *rot_signs,
+                                size_t local_window_size = UINT_MAX,
+                                int head_start = 0, int head_end = -1);
+
+/**
+ * @brief Compute attention-weighted value with TurboQuant v2 cache (NEON)
+ */
+void compute_vcache_packed4_v2(int row_num, const float *attn_weights,
+                               const uint8_t *vcache_packed,
+                               const float *vcache_norms, float *output,
+                               int num_cache_head, int gqa_size, int head_dim,
+                               const float *rot_signs,
+                               size_t local_window_size = UINT_MAX,
+                               int head_start = 0, int head_end = -1);
+
 #endif
 } // namespace nntrainer::neon
 

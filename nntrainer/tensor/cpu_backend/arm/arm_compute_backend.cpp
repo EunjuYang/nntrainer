@@ -66,13 +66,6 @@ void tanh_gelu_v2(const unsigned int N, const float *X, float *Y) {
 #endif
 }
 
-void gelu_v2(const unsigned int N, const float *X, float *Y) {
-#ifdef __ARM_NEON
-  nntrainer::neon::gelu_v2(N, X, Y);
-#endif
-  __fallback_gelu_v2(N, X, Y);
-}
-
 void tanh_gelu_mul(const unsigned int N, float *X, float *Y, float *Z) {
 #ifdef __ARM_NEON
   nntrainer::neon::tanh_gelu_mul(N, X, Y, Z);
@@ -456,19 +449,19 @@ template <> void dequantize_row_q8_K(const void *x, float *y, int64_t k) {
   __ggml_dequantize_row_q8_K(x, y, k);
 }
 
-void repack_q4_0_to_q4_0_8(void *dst, void *src, size_t data_size,
+void repack_q4_0_to_q4_0_8(void *W, void *repacked_W, size_t data_size,
                            const unsigned int M, const unsigned int N) {
-  __ggml_repack_q4_0_to_q4_0_8(dst, src, data_size, M, N);
+  __ggml_repack_q4_0_to_q4_0_8(W, repacked_W, data_size, M, N);
 }
 
-void repack_q4_0(void *dst, void *src, size_t data_size, const unsigned int M,
-                 const unsigned int N) {
-  __ggml_repack_q4_0_to_q4_0_4(dst, src, data_size, M, N);
+void repack_q4_0(void *W, void *repacked_W, size_t data_size,
+                 const unsigned int M, const unsigned int N) {
+  __ggml_repack_q4_0_to_q4_0_4(W, repacked_W, data_size, M, N);
 }
 
-void repack_q4_K(void *dst, void *src, size_t data_size, const unsigned int M,
-                 const unsigned int N) {
-  __ggml_repack_q4_K_to_q4_K_8(dst, src, data_size, M, N);
+void repack_q4_K(void *W, void *repacked_W, size_t data_size,
+                 const unsigned int M, const unsigned int N) {
+  __ggml_repack_q4_K_to_q4_K_8(W, repacked_W, data_size, M, N);
 }
 
 void unpack_q4_0(const void *in_q4_0x, void *out_q4_0, size_t data_size,
@@ -583,6 +576,126 @@ void transform_int4_osv32_isv2_to_q4_0(size_t N, size_t K,
 #else
   __fallback_transform_int4_osv32_isv2_to_q4_0(
     N, K, osv32_weights, osv32_scales, scale_group_size, 4, dst_q4_0x);
+#endif
+}
+
+void quantize_kv_turboquant(const float *input, size_t num_elements,
+                            uint8_t *out_packed, float *out_scales) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  neon::quantize_kv_turboquant(input, num_elements, out_packed, out_scales);
+#else
+  __fallback_quantize_kv_turboquant(input, num_elements, out_packed, out_scales);
+#endif
+}
+
+void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
+                             const float *kcache_scales, float *output,
+                             int num_rows, int num_cache_head, int head_dim,
+                             int gqa_size, int tile_size,
+                             size_t local_window_size, int head_start,
+                             int head_end) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  neon::compute_kcaches_packed4(query, kcache_packed, kcache_scales, output,
+                                num_rows, num_cache_head, head_dim, gqa_size,
+                                tile_size, local_window_size, head_start,
+                                head_end);
+#else
+  __fallback_compute_kcaches_packed4(query, kcache_packed, kcache_scales, output,
+                                     num_rows, num_cache_head, head_dim,
+                                     gqa_size, tile_size, local_window_size,
+                                     head_start, head_end);
+#endif
+}
+
+void compute_vcache_packed4_transposed(int row_num, const float *attn_weights,
+                                       const uint8_t *vcache_packed,
+                                       const float *vcache_scales,
+                                       float *output, int num_cache_head,
+                                       int gqa_size, int head_dim,
+                                       size_t local_window_size, int head_start,
+                                       int head_end) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  neon::compute_vcache_packed4_transposed(
+    row_num, attn_weights, vcache_packed, vcache_scales, output, num_cache_head,
+    gqa_size, head_dim, local_window_size, head_start, head_end);
+#else
+  __fallback_compute_vcache_packed4_transposed(
+    row_num, attn_weights, vcache_packed, vcache_scales, output, num_cache_head,
+    gqa_size, head_dim, local_window_size, head_start, head_end);
+#endif
+}
+
+void quantize_kv_turboquant_rotated(const float *input, size_t num_elements,
+                                    uint8_t *out_packed, float *out_scales,
+                                    const float *signs, int head_dim,
+                                    int num_heads) {
+  __fallback_quantize_kv_turboquant_rotated(input, num_elements, out_packed,
+                                            out_scales, signs, head_dim,
+                                            num_heads);
+}
+
+void compute_kcaches_packed4_rotated(
+  const float *query, const uint8_t *kcache_packed, const float *kcache_scales,
+  float *output, int num_rows, int num_cache_head, int head_dim, int gqa_size,
+  int tile_size, const float *signs, size_t local_window_size, int head_start,
+  int head_end) {
+  __fallback_compute_kcaches_packed4_rotated(
+    query, kcache_packed, kcache_scales, output, num_rows, num_cache_head,
+    head_dim, gqa_size, tile_size, signs, local_window_size, head_start,
+    head_end);
+}
+
+void compute_vcache_packed4_transposed_rotated(
+  int row_num, const float *attn_weights, const uint8_t *vcache_packed,
+  const float *vcache_scales, float *output, int num_cache_head, int gqa_size,
+  int head_dim, const float *signs, size_t local_window_size, int head_start,
+  int head_end) {
+  __fallback_compute_vcache_packed4_transposed_rotated(
+    row_num, attn_weights, vcache_packed, vcache_scales, output, num_cache_head,
+    gqa_size, head_dim, signs, local_window_size, head_start, head_end);
+}
+
+void quantize_kv_turboquant_v2(const float *input, uint8_t *out_packed,
+                               float *out_norms, const float *rot_signs,
+                               int head_dim, int num_heads) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  neon::quantize_kv_turboquant_v2(input, out_packed, out_norms, rot_signs,
+                                  head_dim, num_heads);
+#else
+  __fallback_quantize_kv_turboquant_v2(input, out_packed, out_norms, rot_signs,
+                                       head_dim, num_heads);
+#endif
+}
+void compute_kcaches_packed4_v2(
+  const float *query, const uint8_t *kcache_packed, const float *kcache_norms,
+  float *output, int num_rows, int num_cache_head, int head_dim, int gqa_size,
+  int tile_size, const float *rot_signs, size_t local_window_size,
+  int head_start, int head_end) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  neon::compute_kcaches_packed4_v2(
+    query, kcache_packed, kcache_norms, output, num_rows, num_cache_head,
+    head_dim, gqa_size, tile_size, rot_signs, local_window_size, head_start,
+    head_end);
+#else
+  __fallback_compute_kcaches_packed4_v2(
+    query, kcache_packed, kcache_norms, output, num_rows, num_cache_head,
+    head_dim, gqa_size, tile_size, rot_signs, local_window_size, head_start,
+    head_end);
+#endif
+}
+void compute_vcache_packed4_v2(
+  int row_num, const float *attn_weights, const uint8_t *vcache_packed,
+  const float *vcache_norms, float *output, int num_cache_head, int gqa_size,
+  int head_dim, const float *rot_signs, size_t local_window_size,
+  int head_start, int head_end) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  neon::compute_vcache_packed4_v2(
+    row_num, attn_weights, vcache_packed, vcache_norms, output, num_cache_head,
+    gqa_size, head_dim, rot_signs, local_window_size, head_start, head_end);
+#else
+  __fallback_compute_vcache_packed4_v2(
+    row_num, attn_weights, vcache_packed, vcache_norms, output, num_cache_head,
+    gqa_size, head_dim, rot_signs, local_window_size, head_start, head_end);
 #endif
 }
 
