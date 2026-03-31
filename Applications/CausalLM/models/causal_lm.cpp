@@ -408,12 +408,20 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   if (log_output)
     std::wcout << system_prompt << prompt << tail_prompt << std::endl;
 
-  // In SAVE_KVCACHE mode tokenise only the system_prompt (the user prompt
-  // will be handled in the next call after the cache is available).
-  std::wstring prompt_ = prompt;
-  if (!SAVE_KVCACHE)
-    prompt_ += tail_prompt;
+  std::wstring prompt_;
+
+  if (USE_KVCACHE) {
+    prompt_ = SAVE_KVCACHE ? system_prompt : (prompt + tail_prompt);
+  } else {
+    prompt_ = system_prompt + prompt + tail_prompt;
+  }
+
   std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+  // If SYS_PROMP_LEN was not supplied in the config, derive it by tokenising
+  // the system_prompt string (only needed once per session when loading cache).
+  if (USE_KVCACHE && !SAVE_KVCACHE && SYS_PROMP_LEN == 0)
+    SYS_PROMP_LEN = tokenizer->Encode(converter.to_bytes(system_prompt)).size();
+
   auto _input = tokenizer->Encode(converter.to_bytes(prompt_));
 #else
   // Print the full text that will be processed in this call.
