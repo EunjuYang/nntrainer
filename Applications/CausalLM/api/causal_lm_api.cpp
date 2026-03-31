@@ -21,16 +21,20 @@
 #include <vector>
 
 #include "causal_lm.h"
+#include "embedding_gemma.h"
 #include "gemma3_causallm.h"
 #include "gptoss_cached_slim_causallm.h"
 #include "gptoss_causallm.h"
 #include "json.hpp"
 #include "model_config_internal.h"
 #include "qwen2_causallm.h"
+#include "qwen2_embedding.h"
 #include "qwen3_cached_slim_moe_causallm.h"
 #include "qwen3_causallm.h"
+#include "qwen3_embedding.h"
 #include "qwen3_moe_causallm.h"
 #include "qwen3_slim_moe_causallm.h"
+#include "sentence_transformer.h"
 #include <factory.h>
 #include <fstream>
 #include <sys/stat.h>
@@ -49,6 +53,9 @@ static double g_initialization_duration_ms = 0.0;
 
 static std::map<std::string, std::string> g_model_path_map = {
   {"QWEN3-0.6B", "qwen3-0.6b"},
+  {"QWEN3-EMBEDDING", "qwen3-embedding"},
+  {"QWEN2-EMBEDDING", "qwen2-embedding"},
+  {"GEMMA-EMBEDDING", "gemma-embedding"},
 };
 
 /**
@@ -118,6 +125,23 @@ static void register_models() {
                                                           nntr_cfg);
       });
 
+    // Register Sentence Transformer (Embedding) models
+    causallm::Factory::Instance().registerModel(
+      "Qwen3Embedding", [](json cfg, json generation_cfg, json nntr_cfg) {
+        return std::make_unique<causallm::Qwen3Embedding>(cfg, generation_cfg,
+                                                          nntr_cfg);
+      });
+    causallm::Factory::Instance().registerModel(
+      "Qwen2Embedding", [](json cfg, json generation_cfg, json nntr_cfg) {
+        return std::make_unique<causallm::Qwen2Embedding>(cfg, generation_cfg,
+                                                          nntr_cfg);
+      });
+    causallm::Factory::Instance().registerModel(
+      "EmbeddingGemma", [](json cfg, json generation_cfg, json nntr_cfg) {
+        return std::make_unique<causallm::EmbeddingGemma>(cfg, generation_cfg,
+                                                          nntr_cfg);
+      });
+
     // Register built-in configurations
     register_builtin_model_configs();
   });
@@ -127,6 +151,12 @@ static const char *get_model_name_from_type(ModelType type) {
   switch (type) {
   case CAUSAL_LM_MODEL_QWEN3_0_6B:
     return "QWEN3-0.6B";
+  case CAUSAL_LM_MODEL_QWEN3_EMBEDDING:
+    return "QWEN3-EMBEDDING";
+  case CAUSAL_LM_MODEL_QWEN2_EMBEDDING:
+    return "QWEN2-EMBEDDING";
+  case CAUSAL_LM_MODEL_GEMMA_EMBEDDING:
+    return "GEMMA-EMBEDDING";
   default:
     return nullptr;
   }
@@ -154,6 +184,29 @@ static std::string apply_chat_template(const std::string &architecture,
            "<end_of_turn>\n<start_of_turn>model\n";
   }
   return input;
+}
+
+static std::string resolve_architecture(const std::string &model_type,
+                                        const std::string &architecture) {
+  std::string mt = model_type;
+  std::transform(mt.begin(), mt.end(), mt.begin(),
+                 [](unsigned char c) { return std::tolower(c); });
+
+  if (mt == "embedding") {
+    if (architecture == "Qwen3ForCausalLM") {
+      return "Qwen3Embedding";
+    } else if (architecture == "Gemma3ForCausalLM" ||
+               architecture == "Gemma3TextModel") {
+      return "EmbeddingGemma";
+    } else if (architecture == "Qwen2Model") {
+      return "Qwen2Embedding";
+    } else {
+      throw std::invalid_argument(
+        "Unsupported architecture for embedding model: " + architecture);
+    }
+  }
+
+  return architecture;
 }
 
 static std::string get_quantization_suffix(ModelQuantizationType type) {
@@ -492,6 +545,22 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
       return CAUSAL_LM_ERROR_INVALID_PARAMETER;
     }
 
+    // Resolve architecture for embedding models
+    if (nntr_cfg.contains("model_type")) {
+      std::string model_type_str = nntr_cfg["model_type"].get<std::string>();
+      architecture = resolve_architecture(model_type_str, architecture);
+    }
+
+    // Resolve module_config_path relative to model directory for embedding
+    // models
+    if (nntr_cfg.contains("module_config_path")) {
+      std::string module_path =
+        nntr_cfg["module_config_path"].get<std::string>();
+      if (module_path.find('/') == std::string::npos) {
+        nntr_cfg["module_config_path"] = model_dir_path + "/" + module_path;
+      }
+    }
+
     g_model = causallm::Factory::Instance().create(architecture, cfg,
                                                    generation_cfg, nntr_cfg);
     if (!g_model) {
@@ -549,6 +618,10 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
     g_last_output = ""; // Reset last output
     if (causal_lm_model) {
       g_last_output = causal_lm_model->getOutput(0);
+    } else {
+      std::cerr << "runModel() is not supported for this model type. "
+                << "Use runEmbeddingModel() for embedding models." << std::endl;
+      return CAUSAL_LM_ERROR_INVALID_PARAMETER;
     }
 
     *outputText = g_last_output.c_str();
@@ -571,18 +644,16 @@ ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
 
   try {
     std::lock_guard<std::mutex> lock(g_mutex);
-    auto causal_lm_model = dynamic_cast<causallm::CausalLM *>(g_model.get());
 
-    if (causal_lm_model) {
-      if (!causal_lm_model->hasRun()) {
-        return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
-      }
-      *metrics = causal_lm_model->getPerformanceMetrics();
-      // Overwrite init duration with the one measured in loadModel API
-      metrics->initialization_duration_ms = g_initialization_duration_ms;
-    } else {
-      return CAUSAL_LM_ERROR_UNKNOWN;
+    // Check hasRun() for CausalLM models
+    auto causal_lm_model = dynamic_cast<causallm::CausalLM *>(g_model.get());
+    if (causal_lm_model && !causal_lm_model->hasRun()) {
+      return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
     }
+
+    // getPerformanceMetrics() is available on the Transformer base class
+    *metrics = g_model->getPerformanceMetrics();
+    metrics->initialization_duration_ms = g_initialization_duration_ms;
 
   } catch (const std::exception &e) {
     std::cerr << "Exception in getPerformanceMetrics: " << e.what()
@@ -591,4 +662,62 @@ ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
   }
 
   return CAUSAL_LM_ERROR_NONE;
+}
+
+ErrorCode runEmbeddingModel(const char *inputTextPrompt,
+                            EmbeddingResult *result) {
+  if (!g_initialized || !g_model) {
+    return CAUSAL_LM_ERROR_NOT_INITIALIZED;
+  }
+  if (inputTextPrompt == nullptr || result == nullptr) {
+    return CAUSAL_LM_ERROR_INVALID_PARAMETER;
+  }
+
+  try {
+    std::lock_guard<std::mutex> lock(g_mutex);
+
+    auto st_model =
+      dynamic_cast<causallm::SentenceTransformer *>(g_model.get());
+    if (!st_model) {
+      std::cerr
+        << "runEmbeddingModel() requires a Sentence Transformer model. "
+        << "Use runModel() for CausalLM models." << std::endl;
+      return CAUSAL_LM_ERROR_INVALID_PARAMETER;
+    }
+
+    std::string input(inputTextPrompt);
+
+#if defined(_WIN32)
+    std::vector<float *> embeddings =
+      st_model->encode(std::wstring(input.begin(), input.end()));
+#else
+    std::vector<float *> embeddings = st_model->encode(input);
+#endif
+
+    result->embedding_dim =
+      static_cast<unsigned int>(g_model->getEmbeddingDim());
+    result->batch_size = g_model->getBatchSize();
+    unsigned int total_size = result->batch_size * result->embedding_dim;
+    result->embeddings = (float *)malloc(sizeof(float) * total_size);
+    memcpy(result->embeddings, embeddings[0], sizeof(float) * total_size);
+
+    for (auto out : embeddings) {
+      delete[] out;
+    }
+
+  } catch (const std::exception &e) {
+    std::cerr << "Exception in runEmbeddingModel: " << e.what() << std::endl;
+    return CAUSAL_LM_ERROR_INFERENCE_FAILED;
+  }
+
+  return CAUSAL_LM_ERROR_NONE;
+}
+
+void freeEmbeddingResult(EmbeddingResult *result) {
+  if (result && result->embeddings) {
+    free(result->embeddings);
+    result->embeddings = nullptr;
+    result->embedding_dim = 0;
+    result->batch_size = 0;
+  }
 }
