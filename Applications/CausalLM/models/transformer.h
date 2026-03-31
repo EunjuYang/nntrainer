@@ -109,6 +109,16 @@ public:
     return performance_metrics;
   }
 
+  /**
+   * @brief Get the batch size
+   */
+  unsigned int getBatchSize() const { return BATCH_SIZE; }
+
+  /**
+   * @brief Get the embedding/hidden dimension
+   */
+  int getEmbeddingDim() const { return DIM; }
+
 protected:
   /**
    * @brief Setup the parameters for the Transformer model
