@@ -166,3 +166,40 @@ LOCAL_C_INCLUDES += $(NNTRAINER_INCLUDES) $(CAUSALLM_COMMON_INCLUDES) \
     $(LOCAL_PATH)/../api
 
 include $(BUILD_EXECUTABLE)
+
+# Build Google Test library
+include $(CLEAR_VARS)
+LOCAL_MODULE := gtest
+LOCAL_SRC_FILES := $(ANDROID_NDK)/sources/third_party/googletest/lib/libgtest.a
+LOCAL_EXPORT_C_INCLUDES := $(ANDROID_NDK)/sources/third_party/googletest/include
+include $(PREBUILT_STATIC_LIBRARY)
+
+include $(CLEAR_VARS)
+LOCAL_MODULE := gtest_main
+LOCAL_SRC_FILES := $(ANDROID_NDK)/sources/third_party/googletest/lib/libgtest_main.a
+LOCAL_EXPORT_C_INCLUDES := $(ANDROID_NDK)/sources/third_party/googletest/include
+include $(PREBUILT_STATIC_LIBRARY)
+
+# Build unittest_causallm_api executable
+include $(CLEAR_VARS)
+
+LOCAL_ARM_NEON := true
+LOCAL_CFLAGS += -std=c++17 -Ofast -mcpu=cortex-a53 -DENABLE_FP16=1 -DUSE__FP16=1 -D__ARM_NEON__=1 -march=armv8.2-a+fp16+dotprod+i8mm -DUSE_NEON=1 -mtune=cortex-a76 -O3 -ffast-math
+LOCAL_CXXFLAGS += -std=c++17 -frtti
+LOCAL_CFLAGS += -pthread -fexceptions -fopenmp -static-openmp -DENABLE_FP16=1 -DUSE__FP16=1 -D__ARM_NEON__=1 -march=armv8.2-a+fp16+dotprod+i8mm -DUSE_NEON=1 -mtune=cortex-a76 -O3 -ffast-math
+LOCAL_LDFLAGS += -fexceptions -fopenmp -static-openmp -DENABLE_FP16=1 -DUSE__FP16=1 -D__ARM_NEON__=1 -march=armv8.2-a+fp16+dotprod+i8mm -DUSE_NEON=1 -mtune=cortex-a76 -O3 -ffast-math
+LOCAL_MODULE_TAGS := optional
+LOCAL_ARM_MODE := arm
+LOCAL_MODULE := unittest_causallm_api
+LOCAL_LDLIBS := -llog -landroid -fopenmp -static-openmp -DENABLE_FP16=1 -DUSE__FP16=1 -D__ARM_NEON__=1 -march=armv8.2-a+fp16+dotprod+i8mm -DUSE_NEON=1
+
+LOCAL_SRC_FILES := ../test/unittest_causallm_api.cpp
+
+LOCAL_SHARED_LIBRARIES := causallm_api causallm_core nntrainer ccapi-nntrainer
+LOCAL_STATIC_LIBRARIES := gtest gtest_main tokenizers_c
+
+LOCAL_C_INCLUDES += $(NNTRAINER_INCLUDES) $(CAUSALLM_COMMON_INCLUDES) \
+    $(LOCAL_PATH)/../api \
+    $(ANDROID_NDK)/sources/third_party/googletest/include
+
+include $(BUILD_EXECUTABLE)

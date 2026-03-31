@@ -115,3 +115,8 @@ test_api = executable('test_api',
     build_by_default: true,
     install: false,
 )
+
+# 5. Unit tests (GTest-based)
+if get_option('enable-test')
+    subdir('test')
+endif
