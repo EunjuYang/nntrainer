@@ -112,26 +112,6 @@ void transpose_matrix(const unsigned int M, const unsigned int N,
 void swiglu(const unsigned int N, float *X, const float *Y, const float *Z);
 
 /**
- * @brief swiglu function with AVX : X = (Y / (1 + exp( -Y ))) * Z
- *
- * @param N number of elements in X
- * @param X float * for Vector X
- * @param Y float * for Vector Y
- * @param Z float * for Vector Z
- */
-void tanh_gelu_v2(const unsigned int N, const float *X, float *Y);
-
-/**
- * @brief swiglu function with AVX : X = (Y / (1 + exp( -Y ))) * Z
- *
- * @param N number of elements in X
- * @param X float * for Vector X
- * @param Y float * for Vector Y
- * @param Z float * for Vector Z
- */
-void gelu_v2(const unsigned int N, const float *X, float *Y);
-
-/**
  * @brief swiglu function with alpha and AVX : X = (Y / (1 + exp(- alpha * Y)))
  * * Z
  * @param N number of elements in X
@@ -186,7 +166,7 @@ template <typename T = float>
 void softmax_row_inplace(T *qk_out, size_t start_row, size_t end_row,
                          size_t num_heads, T *sink = nullptr);
 
-/**f
+/**
  * @brief Multihead softmax, exp(x_i) / sum(exp(x_i))
  * @param[in/out] qk_out float* input/output values
  * @param[in] start_row start row number
@@ -349,6 +329,34 @@ void transform_int4_osv32_isv2_to_q4_0x8(size_t N, size_t K,
                                          const uint16_t *osv32_scales,
                                          size_t scale_group_size,
                                          void *dst_q4_0x);
+
+/**
+ * @brief Quantize FP32 KV values and pack into TurboQuant 4-bit format (AVX2)
+ */
+void quantize_kv_turboquant(const float *input, size_t num_elements,
+                            uint8_t *out_packed, float *out_scales);
+
+/**
+ * @brief Compute Q*K^T with TurboQuant 4-bit packed key cache (AVX2)
+ */
+void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
+                             const float *kcache_scales, float *output,
+                             int num_rows, int num_cache_head, int head_dim,
+                             int gqa_size, int tile_size,
+                             size_t local_window_size = UINT_MAX,
+                             int head_start = 0, int head_end = -1);
+
+/**
+ * @brief Compute attention-weighted value aggregation with TurboQuant 4-bit
+ *        packed value cache (AVX2)
+ */
+void compute_vcache_packed4_transposed(int row_num, const float *attn_weights,
+                                       const uint8_t *vcache_packed,
+                                       const float *vcache_scales,
+                                       float *output, int num_cache_head,
+                                       int gqa_size, int head_dim,
+                                       size_t local_window_size = UINT_MAX,
+                                       int head_start = 0, int head_end = -1);
 
 } // namespace nntrainer::avx2
 
