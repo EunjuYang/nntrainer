@@ -86,3 +86,8 @@ test_api = executable('test_api',
     build_by_default: true,
     install: false,
 )
+
+# Unit tests for CausalLM models
+if gtest_dep.found()
+  subdir('test')
+endif
