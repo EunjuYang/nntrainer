@@ -400,12 +400,9 @@ public:
                 Tensor weight_t = weight.transpose("0:2:1");
                 Tensor quant_weight(dim.batch(), dim.channel(), K, N,
                                     {Tformat::NCHW, dtype});
-                std::vector<char> tmp(quant_weight.size());
 
-                quantize_q4_0(weight_t.getData<float>(), tmp.data(), N, K,
-                              nullptr);
-                repack_q4_0(quant_weight.getData<uint8_t>(), tmp.data(),
-                            quant_weight.size(), N, K);
+                quantize_q4_0(weight_t.getData<float>(),
+                              quant_weight.getData<uint8_t>(), N, K, nullptr);
                 quant_weight.save(file);
               }
             } else if (dtype == TensorDim::DataType::Q4_K) {
@@ -415,12 +412,9 @@ public:
                 Tensor weight_t = weight.transpose("0:2:1");
                 Tensor quant_weight(dim.batch(), dim.channel(), K, N,
                                     {Tformat::NCHW, dtype});
-                std::vector<char> tmp(quant_weight.size());
 
-                quantize_q4_K(weight_t.getData<float>(), tmp.data(), N, K,
-                              nullptr);
-                repack_q4_K(quant_weight.getData<uint8_t>(), tmp.data(),
-                            quant_weight.size(), N, K);
+                quantize_q4_K(weight_t.getData<float>(),
+                              quant_weight.getData<uint8_t>(), N, K, nullptr);
                 quant_weight.save(file);
               }
             } else if (dtype == TensorDim::DataType::Q6_K) {
@@ -485,6 +479,21 @@ public:
           if (run_context.isGradientFirstAccess(i)) {
             run_context.getWeight(i).read(file, start_offset, read_from_offset,
                                           file_fd);
+            auto &w = run_context.getWeight(i);
+            auto wdt = w.getDataType();
+            if ((wdt == TensorDim::DataType::Q4_0 ||
+                 wdt == TensorDim::DataType::Q4_K) &&
+                w.height() > 1) {
+              unsigned int N = w.width();
+              unsigned int K = w.height();
+              size_t data_size = w.size();
+              std::vector<uint8_t> tmp(data_size);
+              std::memcpy(tmp.data(), w.getData(), data_size);
+              if (wdt == TensorDim::DataType::Q4_0)
+                repack_q4_0(w.getData(), tmp.data(), data_size, N, K);
+              else
+                repack_q4_K(w.getData(), tmp.data(), data_size, N, K);
+            }
             if (run_context.isMixedPrecision(i) && trainable &&
                 !run_context.getWeightFP32(i).empty()) {
               run_context.getWeightFP32(i).copyData(run_context.getWeight(i));
@@ -533,6 +542,21 @@ public:
           /// @note shared weights are only be read at the first acecss
           if (run_context.isGradientFirstAccess(i)) {
             run_context.getWeight(i).read(src, start_offset, read_from_offset);
+            auto &w = run_context.getWeight(i);
+            auto wdt = w.getDataType();
+            if ((wdt == TensorDim::DataType::Q4_0 ||
+                 wdt == TensorDim::DataType::Q4_K) &&
+                w.height() > 1) {
+              unsigned int N = w.width();
+              unsigned int K = w.height();
+              size_t data_size = w.size();
+              std::vector<uint8_t> tmp(data_size);
+              std::memcpy(tmp.data(), w.getData(), data_size);
+              if (wdt == TensorDim::DataType::Q4_0)
+                repack_q4_0(w.getData(), tmp.data(), data_size, N, K);
+              else
+                repack_q4_K(w.getData(), tmp.data(), data_size, N, K);
+            }
             if (run_context.isMixedPrecision(i) && trainable &&
                 !run_context.getWeightFP32(i).empty()) {
               run_context.getWeightFP32(i).copyData(run_context.getWeight(i));
