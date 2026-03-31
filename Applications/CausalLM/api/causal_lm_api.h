@@ -53,6 +53,9 @@ typedef enum {
  */
 typedef enum {
   CAUSAL_LM_MODEL_QWEN3_0_6B = 0,
+  CAUSAL_LM_MODEL_QWEN3_EMBEDDING = 1,
+  CAUSAL_LM_MODEL_QWEN2_EMBEDDING = 2,
+  CAUSAL_LM_MODEL_GEMMA_EMBEDDING = 3,
 } ModelType;
 
 /**
@@ -101,13 +104,38 @@ WIN_EXPORT ErrorCode loadModel(BackendType compute, ModelType modeltype,
 WIN_EXPORT ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics);
 
 /**
- * @brief Run inference
+ * @brief Run inference (CausalLM text generation)
  * @param inputTextPrompt Input prompt
  * @param outputText Buffer to store output text
  * @return ErrorCode
  */
 WIN_EXPORT ErrorCode runModel(const char *inputTextPrompt,
                               const char **outputText);
+
+/**
+ * @brief Embedding result structure for Sentence Transformer models
+ */
+typedef struct {
+  float *embeddings;           ///< Embedding vector data (batch_size *
+                               ///< embedding_dim)
+  unsigned int embedding_dim;  ///< Embedding dimension
+  unsigned int batch_size;     ///< Batch size
+} EmbeddingResult;
+
+/**
+ * @brief Run embedding inference (Sentence Transformer)
+ * @param inputTextPrompt Input prompt
+ * @param result Pointer to EmbeddingResult struct to be filled
+ * @return ErrorCode
+ */
+WIN_EXPORT ErrorCode runEmbeddingModel(const char *inputTextPrompt,
+                                       EmbeddingResult *result);
+
+/**
+ * @brief Free embedding result memory
+ * @param result Pointer to EmbeddingResult struct to free
+ */
+WIN_EXPORT void freeEmbeddingResult(EmbeddingResult *result);
 
 #ifdef __cplusplus
 }
