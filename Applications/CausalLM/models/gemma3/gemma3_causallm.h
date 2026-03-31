@@ -49,7 +49,7 @@ public:
                                            std::string value_name) override;
 
   std::vector<LayerHandle>
-  createTransformerDecoderBlock(const int layer_id, std::string input_name);
+  createTransformerDecoderBlock(const int layer_id, std::string input_name) override;
 
   void setupParameters(json &cfg, json &generation_cfg,
                        json &nntr_cfg) override;

@@ -31,7 +31,7 @@
 namespace causallm {
 
 std::vector<LayerHandle> Qwen3Transformer::createAttention(
-  const int layer_id, int seq_len, int n_heads, int head_dim,
+  const int layer_id, int /*seq_len*/, int n_heads, int head_dim,
   std::string query_name, std::string key_name, std::string value_name) {
 
   std::vector<LayerHandle> layers;

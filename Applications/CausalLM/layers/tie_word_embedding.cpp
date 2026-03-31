@@ -170,24 +170,23 @@ void TieWordEmbedding::setProperty(const std::vector<std::string> &values) {
   LayerImpl::setProperty(remain_props);
 }
 
-void TieWordEmbedding::forwarding(nntrainer::RunLayerContext &context,
-                                  bool training) {}
+void TieWordEmbedding::forwarding(nntrainer::RunLayerContext & /*context*/,
+                                  bool /*training*/) {}
 
 void TieWordEmbedding::incremental_forwarding(
   nntrainer::RunLayerContext &context, unsigned int from, unsigned int to,
-  bool training) {
+  bool /*training*/) {
 
   if (mode_ == mode::embedding)
-    incremental_forwarding_embedding(context, from, to, training);
+    incremental_forwarding_embedding(context, from, to);
   else if (mode_ == mode::lm_head)
-    incremental_forwarding_lmhead(context, from, to, training);
+    incremental_forwarding_lmhead(context, from, to);
   else
     throw std::invalid_argument("lm_head is not supported yet");
 }
 
 void TieWordEmbedding::incremental_forwarding_embedding(
-  nntrainer::RunLayerContext &context, unsigned int from, unsigned int to,
-  bool training) {
+  nntrainer::RunLayerContext &context, unsigned int from, unsigned int to) {
   /// @todo get input and output dimension from input_ and hidden itself
   unsigned int in_dim =
     std::get<nntrainer::props::InDim>(tieword_embedding_props);
@@ -197,8 +196,6 @@ void TieWordEmbedding::incremental_forwarding_embedding(
     std::get<nntrainer::props::Scale>(tieword_embedding_props).empty()
       ? 1.0f
       : std::get<nntrainer::props::Scale>(tieword_embedding_props).get();
-  unsigned int _from = from;
-
   nntrainer::Tensor &weight =
     context.getWeight(weight_idx[TieWordEmbeddingParams::weight]);
   nntrainer::Tensor &hidden_ = context.getOutput(SINGLE_INOUT_IDX);
@@ -258,8 +255,7 @@ void TieWordEmbedding::incremental_forwarding_embedding(
 }
 
 void TieWordEmbedding::incremental_forwarding_lmhead(
-  nntrainer::RunLayerContext &context, unsigned int from, unsigned int to,
-  bool training) {
+  nntrainer::RunLayerContext &context, unsigned int from, unsigned int to) {
   nntrainer::Tensor weight =
     context.getWeight(weight_idx[TieWordEmbeddingParams::weight]);
 
@@ -304,12 +300,12 @@ void TieWordEmbedding::incremental_forwarding_lmhead(
   }
 }
 
-void TieWordEmbedding::calcDerivative(nntrainer::RunLayerContext &context) {
+void TieWordEmbedding::calcDerivative(nntrainer::RunLayerContext & /*context*/) {
   throw nntrainer::exception::not_supported(
     "calcDerivative for Embedding layer is not supported");
 }
 
-void TieWordEmbedding::calcGradient(nntrainer::RunLayerContext &context) {}
+void TieWordEmbedding::calcGradient(nntrainer::RunLayerContext & /*context*/) {}
 
 void TieWordEmbedding::exportTo(nntrainer::Exporter &exporter,
                                 const ml::train::ExportMethods &method) const {
@@ -337,10 +333,10 @@ void TieWordEmbedding::updateTensorsByInputDimensions(
 }
 
 void TieWordEmbedding::read(
-  std::ifstream &file, nntrainer::RunLayerContext &context, bool opt_var,
-  ml::train::ExecutionMode mode, bool trainable,
-  nntrainer::TensorDim::DataType definedWeightDataType, bool fsu,
-  size_t start_offset, bool read_from_offset, int file_fd) {
+  std::ifstream &file, nntrainer::RunLayerContext &context, bool /*opt_var*/,
+  ml::train::ExecutionMode /*mode*/, bool trainable,
+  nntrainer::TensorDim::DataType /*definedWeightDataType*/, bool /*fsu*/,
+  size_t /*start_offset*/, bool /*read_from_offset*/, int /*file_fd*/) {
 
   // Only read when mode is embedding
   if (mode_ == mode::embedding) {
@@ -358,10 +354,10 @@ void TieWordEmbedding::read(
 }
 
 void TieWordEmbedding::read(
-  nntrainer::ReadSource src, nntrainer::RunLayerContext &context, bool opt_var,
-  ml::train::ExecutionMode mode, bool trainable,
-  nntrainer::TensorDim::DataType definedWeightDataType, bool fsu,
-  size_t start_offset, bool read_from_offset) {
+  nntrainer::ReadSource src, nntrainer::RunLayerContext &context, bool /*opt_var*/,
+  ml::train::ExecutionMode /*mode*/, bool trainable,
+  nntrainer::TensorDim::DataType /*definedWeightDataType*/, bool /*fsu*/,
+  size_t /*start_offset*/, bool /*read_from_offset*/) {
 
   // Only read when mode is embedding
   if (mode_ == mode::embedding) {
@@ -380,8 +376,8 @@ void TieWordEmbedding::read(
 
 void TieWordEmbedding::save(std::ofstream &file,
                             nntrainer::RunLayerContext &run_context,
-                            bool opt_var, ml::train::ExecutionMode mode,
-                            bool trainable,
+                            bool /*opt_var*/, ml::train::ExecutionMode /*mode*/,
+                            bool /*trainable*/,
                             nntrainer::TensorDim::DataType dtype) const {
   // Only read when mode is embedding
   if (mode_ == mode::embedding) {

@@ -53,7 +53,6 @@ void EmbeddingPoolingLayer::finalize(nntrainer::InitLayerContext &context) {
   context.setOutputDimensions({output_dim});
 
   bool mode_cls = std::get<props::PoolingModeClsToken>(pooling_props);
-  bool mode_mean = std::get<props::PoolingModeMeanTokens>(pooling_props);
   bool mode_max = std::get<props::PoolingModeMaxTokens>(pooling_props);
   bool mode_mean_sqrt =
     std::get<props::PoolingModeMeanSqrtLenTokens>(pooling_props);
@@ -74,7 +73,7 @@ void EmbeddingPoolingLayer::setProperty(
 }
 
 void EmbeddingPoolingLayer::forwarding(nntrainer::RunLayerContext &context,
-                                       bool training) {
+                                       bool /*training*/) {
   nntrainer::Tensor &input = context.getInput(SINGLE_INOUT_IDX);
   nntrainer::Tensor &output = context.getOutput(SINGLE_INOUT_IDX);
 
@@ -112,7 +111,7 @@ void EmbeddingPoolingLayer::forwarding(nntrainer::RunLayerContext &context,
 
 void EmbeddingPoolingLayer::incremental_forwarding(
   nntrainer::RunLayerContext &context, unsigned int from, unsigned int to,
-  bool training) {
+  bool /*training*/) {
   nntrainer::Tensor &input = context.getInput(SINGLE_INOUT_IDX);
   nntrainer::Tensor &output = context.getOutput(SINGLE_INOUT_IDX);
 
@@ -153,12 +152,12 @@ void EmbeddingPoolingLayer::incremental_forwarding(
 }
 
 void EmbeddingPoolingLayer::calcDerivative(
-  nntrainer::RunLayerContext &context) {
+  nntrainer::RunLayerContext & /*context*/) {
   throw nntrainer::exception::not_supported(
     "calcDerivative for EmbeddingPooling layer is not supported");
 }
 
-void EmbeddingPoolingLayer::calcGradient(nntrainer::RunLayerContext &context) {
+void EmbeddingPoolingLayer::calcGradient(nntrainer::RunLayerContext & /*context*/) {
   throw nntrainer::exception::not_supported(
     "calcGradient for EmbeddingPooling layer is not supported");
 }

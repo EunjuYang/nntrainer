@@ -110,15 +110,15 @@ void LmHeadLayer::setProperty(const std::vector<std::string> &values) {
   LayerImpl::setProperty(remain_props);
 }
 
-void LmHeadLayer::forwarding(nntrainer::RunLayerContext &context,
-                             bool training) {
+void LmHeadLayer::forwarding(nntrainer::RunLayerContext & /*context*/,
+                             bool /*training*/) {
   throw nntrainer::exception::not_supported(
     "Forwarding for LMHead layer is not supported");
 }
 
 void LmHeadLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
                                          unsigned int from, unsigned int to,
-                                         bool training) {
+                                         bool /*training*/) {
 
   nntrainer::Tensor weight =
     context.getWeight(weight_idx[LmHeadParams::weight]);
@@ -157,12 +157,12 @@ void LmHeadLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   }
 }
 
-void LmHeadLayer::calcDerivative(nntrainer::RunLayerContext &context) {
+void LmHeadLayer::calcDerivative(nntrainer::RunLayerContext & /*context*/) {
   throw nntrainer::exception::not_supported(
     "calcDerivative for LMHead layer is not supported");
 }
 
-void LmHeadLayer::calcGradient(nntrainer::RunLayerContext &context) {
+void LmHeadLayer::calcGradient(nntrainer::RunLayerContext & /*context*/) {
   throw nntrainer::exception::not_supported(
     "calcGradient for LMHead layer is not supported");
 }

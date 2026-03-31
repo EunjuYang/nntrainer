@@ -310,7 +310,6 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
    * Variables for Log
    */
   unsigned int generation_cnt = 0;
-  int64_t total_generation_duration = 0;
 
   /**
    * INPUT PREPARATION

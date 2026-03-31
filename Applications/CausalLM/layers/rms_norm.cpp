@@ -32,12 +32,12 @@ void RMSNormLayer::finalize(nntrainer::InitLayerContext &context) {
     nntrainer::WeightRegularizer::NONE, 1.0f, 0.0f, "gamma", false);
 }
 
-void RMSNormLayer::forwarding(nntrainer::RunLayerContext &context,
-                              bool training) {}
+void RMSNormLayer::forwarding(nntrainer::RunLayerContext & /*context*/,
+                              bool /*training*/) {}
 
 void RMSNormLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
                                           unsigned int from, unsigned int to,
-                                          bool training) {
+                                          bool /*training*/) {
   auto &epsilon = std::get<nntrainer::props::Epsilon>(rms_props).get();
 
   nntrainer::Tensor &in = context.getInput(SINGLE_INOUT_IDX);
@@ -49,8 +49,6 @@ void RMSNormLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
 
   ml::train::TensorDim in_step_dim = in_dim;
   ml::train::TensorDim out_step_dim = out_dim;
-
-  unsigned int _from = from;
 
   in_step_dim.batch(1);
   in_step_dim.height(to - from);
@@ -89,7 +87,7 @@ void RMSNormLayer::updateTensorsByInputDimensions(
   context.updateOutput(SINGLE_INOUT_IDX, input_dimensions[0]);
 }
 
-void RMSNormLayer::calcDerivative(nntrainer::RunLayerContext &context) {
+void RMSNormLayer::calcDerivative(nntrainer::RunLayerContext & /*context*/) {
   std::throw_with_nested(std::runtime_error("Training is not supported yet."));
 }
 
