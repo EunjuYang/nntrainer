@@ -28,12 +28,44 @@ void RMSNormLayer::finalize(nntrainer::InitLayerContext &context) {
     nntrainer::TensorDim::TensorType(context.getFormat(),
                                      context.getWeightDataType()));
   wt_idx[RMSParams::gamma] = context.requestWeight(
-    gamma_dim, nntrainer::props::InitializerInfo::Enum::NONE,
+    gamma_dim, nntrainer::Initializer::ONES,
     nntrainer::WeightRegularizer::NONE, 1.0f, 0.0f, "gamma", false);
+
+  // Cache inv_rms for backward pass: shape (batch, channel, height, 1)
+  nntrainer::TensorDim inv_rms_dim(
+    dim[0].batch(), dim[0].channel(), dim[0].height(), 1,
+    nntrainer::TensorDim::TensorType(context.getFormat(),
+                                     context.getWeightDataType()));
+  wt_idx[RMSParams::inv_rms] = context.requestTensor(
+    inv_rms_dim, "inv_rms", nntrainer::Initializer::NONE, false,
+    nntrainer::TensorLifespan::ITERATION_LIFESPAN);
+
+  // Temp tensor for calcDerivative: same shape as input
+  wt_idx[RMSParams::temp_full] = context.requestTensor(
+    dim[0], "temp_full", nntrainer::Initializer::NONE, false,
+    nntrainer::TensorLifespan::CALC_DERIV_LIFESPAN);
 }
 
 void RMSNormLayer::forwarding(nntrainer::RunLayerContext &context,
-                              bool training) {}
+                              bool training) {
+  auto &epsilon = std::get<nntrainer::props::Epsilon>(rms_props).get();
+
+  nntrainer::Tensor &in = context.getInput(SINGLE_INOUT_IDX);
+  nntrainer::Tensor &out = context.getOutput(SINGLE_INOUT_IDX);
+  nntrainer::Tensor &gamma = context.getWeight(wt_idx[RMSParams::gamma]);
+  nntrainer::Tensor &inv_rms = context.getTensor(wt_idx[RMSParams::inv_rms]);
+
+  // inv_rms = 1 / sqrt(mean(x^2) + eps)
+  // average along width axis (axis 3)
+  in.multiply(in, out);         // out = x^2 (temp use)
+  out.average(3, inv_rms);      // inv_rms = mean(x^2)
+  inv_rms.add_i(epsilon);       // inv_rms = mean(x^2) + eps
+  inv_rms.inv_sqrt_i();         // inv_rms = 1/sqrt(mean(x^2) + eps)
+
+  // out = x * inv_rms * gamma
+  in.multiply(inv_rms, out);    // out = x * inv_rms
+  out.multiply_i(gamma);        // out = x * inv_rms * gamma
+}
 
 void RMSNormLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
                                           unsigned int from, unsigned int to,
@@ -90,7 +122,46 @@ void RMSNormLayer::updateTensorsByInputDimensions(
 }
 
 void RMSNormLayer::calcDerivative(nntrainer::RunLayerContext &context) {
-  std::throw_with_nested(std::runtime_error("Training is not supported yet."));
+  const nntrainer::Tensor &incoming_deriv =
+    context.getIncomingDerivative(SINGLE_INOUT_IDX);
+  nntrainer::Tensor &outgoing_deriv =
+    context.getOutgoingDerivative(SINGLE_INOUT_IDX);
+  const nntrainer::Tensor &input = context.getInput(SINGLE_INOUT_IDX);
+  nntrainer::Tensor &gamma = context.getWeight(wt_idx[RMSParams::gamma]);
+  nntrainer::Tensor &inv_rms = context.getTensor(wt_idx[RMSParams::inv_rms]);
+  nntrainer::Tensor &temp = context.getTensor(wt_idx[RMSParams::temp_full]);
+
+  unsigned int width = input.getDim().width();
+
+  // gamma_dy = gamma * incoming_derivative (element-wise)
+  incoming_deriv.multiply(gamma, temp);
+
+  // c = mean(gamma_dy * x) along width axis → shape (..., 1)
+  // Reuse inv_rms shape for storing c: we need a temp scalar-per-row tensor
+  // But inv_rms is needed, so use outgoing_deriv as temp for c computation
+  // c_full = gamma_dy * x
+  // c = sum(c_full) / width
+  // dx = inv_rms * (gamma_dy - x * c * inv_rms^2)
+
+  // outgoing_deriv = gamma_dy * x (element-wise)
+  temp.multiply(input, outgoing_deriv);
+
+  // sum along width → need a reduced tensor
+  // We can compute mean manually: sum and divide
+  // mean_val shape = (batch, channel, height, 1)
+  nntrainer::Tensor mean_val = outgoing_deriv.average(3);
+
+  // inv_rms^2
+  nntrainer::Tensor inv_rms_sq = inv_rms.multiply(inv_rms);
+
+  // x * mean(gamma_dy * x) * inv_rms^2
+  // outgoing_deriv = x * mean_val * inv_rms_sq
+  input.multiply(mean_val, outgoing_deriv);
+  outgoing_deriv.multiply_i(inv_rms_sq);
+
+  // dx = inv_rms * (gamma_dy - x * mean(gamma_dy * x) * inv_rms^2)
+  temp.subtract(outgoing_deriv, outgoing_deriv);
+  outgoing_deriv.multiply_i(inv_rms);
 }
 
 #ifdef PLUGGABLE
