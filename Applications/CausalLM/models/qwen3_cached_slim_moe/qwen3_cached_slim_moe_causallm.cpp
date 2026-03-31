@@ -47,7 +47,7 @@ void Qwen3CachedSlimMoECausalLM::setupParameters(json &cfg,
 }
 
 std::vector<LayerHandle>
-Qwen3CachedSlimMoECausalLM::createMlp(const int layer_id, int dim,
+Qwen3CachedSlimMoECausalLM::createMlp(const int layer_id, int /*dim*/,
                                       int hidden_dim, std::string input_name) {
 
   std::vector<LayerHandle> layers;

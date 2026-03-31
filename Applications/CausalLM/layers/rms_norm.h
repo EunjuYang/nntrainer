@@ -84,8 +84,8 @@ public:
    * @copydoc Layer::exportTo(Exporter &exporter, ExportMethods method)
    */
   WIN_EXPORT void
-  exportTo(nntrainer::Exporter &exporter,
-           const ml::train::ExportMethods &method) const override{};
+  exportTo(nntrainer::Exporter & /*exporter*/,
+           const ml::train::ExportMethods & /*method*/) const override{};
 
   /**
    * @copydoc Layer::getType()

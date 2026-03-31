@@ -83,12 +83,12 @@ void EmbeddingLayer::setProperty(const std::vector<std::string> &values) {
   LayerImpl::setProperty(remain_props);
 }
 
-void EmbeddingLayer::forwarding(nntrainer::RunLayerContext &context,
-                                bool training) {}
+void EmbeddingLayer::forwarding(nntrainer::RunLayerContext & /*context*/,
+                                bool /*training*/) {}
 
 void EmbeddingLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
                                             unsigned int from, unsigned int to,
-                                            bool training) {
+                                            bool /*training*/) {
 
   /// @todo get input and output dimension from input_ and hidden itself
   unsigned int in_dim = std::get<nntrainer::props::InDim>(embedding_props);
@@ -96,8 +96,6 @@ void EmbeddingLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   float scale = std::get<nntrainer::props::Scale>(embedding_props).empty()
                   ? 1.0f
                   : std::get<nntrainer::props::Scale>(embedding_props).get();
-  unsigned int _from = from;
-
   nntrainer::Tensor &weight = context.getWeight(weight_idx);
   nntrainer::Tensor &hidden_ = context.getOutput(SINGLE_INOUT_IDX);
   nntrainer::Tensor &input_ = context.getInput(SINGLE_INOUT_IDX);
@@ -157,12 +155,12 @@ void EmbeddingLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   }
 }
 
-void EmbeddingLayer::calcDerivative(nntrainer::RunLayerContext &context) {
+void EmbeddingLayer::calcDerivative(nntrainer::RunLayerContext & /*context*/) {
   throw nntrainer::exception::not_supported(
     "calcDerivative for Embedding layer is not supported");
 }
 
-void EmbeddingLayer::calcGradient(nntrainer::RunLayerContext &context) {}
+void EmbeddingLayer::calcGradient(nntrainer::RunLayerContext & /*context*/) {}
 
 void EmbeddingLayer::exportTo(nntrainer::Exporter &exporter,
                               const ml::train::ExportMethods &method) const {
@@ -171,8 +169,10 @@ void EmbeddingLayer::exportTo(nntrainer::Exporter &exporter,
 }
 
 void EmbeddingLayer::save(std::ofstream &file,
-                          nntrainer::RunLayerContext &run_context, bool opt_var,
-                          ml::train::ExecutionMode mode, bool trainable,
+                          nntrainer::RunLayerContext &run_context,
+                          bool /*opt_var*/,
+                          ml::train::ExecutionMode /*mode*/,
+                          bool /*trainable*/,
                           nntrainer::TensorDim::DataType dtype) const {
   // @note shared weights are only be saved at the first access
   for (unsigned int i = 0; i < run_context.getNumWeights(); ++i) {

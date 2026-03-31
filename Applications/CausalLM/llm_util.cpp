@@ -71,8 +71,8 @@ void applyBadWordsPenalty(float *logits, unsigned int *bad_words_ids,
  * @brief Apply temperature & top-k & top-p to logits
  * @return Max logit for softmax
  */
-float applyTKP(float *logits, int len, float temperature, unsigned int top_k,
-               float top_p) {
+float applyTKP(float *logits, int len, float temperature, unsigned int /*top_k*/,
+               float /*top_p*/) {
 
   // Apply temperature & Sort logits
   std::vector<std::pair<int, float>> top_indices_and_logits;

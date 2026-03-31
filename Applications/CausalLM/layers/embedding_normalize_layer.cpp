@@ -37,7 +37,7 @@ void EmbeddingNormalizeLayer::finalize(nntrainer::InitLayerContext &context) {
 }
 
 void EmbeddingNormalizeLayer::forwarding(nntrainer::RunLayerContext &context,
-                                         bool training) {
+                                         bool /*training*/) {
   nntrainer::Tensor &input = context.getInput(SINGLE_INOUT_IDX);
   nntrainer::Tensor &output = context.getOutput(SINGLE_INOUT_IDX);
 
@@ -48,8 +48,8 @@ void EmbeddingNormalizeLayer::forwarding(nntrainer::RunLayerContext &context,
 }
 
 void EmbeddingNormalizeLayer::incremental_forwarding(
-  nntrainer::RunLayerContext &context, unsigned int from, unsigned int to,
-  bool training) {
+  nntrainer::RunLayerContext &context, unsigned int /*from*/,
+  unsigned int /*to*/, bool training) {
   // Incremental forwarding for element-wise/row-wise normalization is typically
   // identical to forwarding if the input shape matches the processing chunk.
   // However, often incremental_forwarding is used when we process a chunk of
@@ -63,13 +63,13 @@ void EmbeddingNormalizeLayer::incremental_forwarding(
 }
 
 void EmbeddingNormalizeLayer::calcDerivative(
-  nntrainer::RunLayerContext &context) {
+  nntrainer::RunLayerContext & /*context*/) {
   throw nntrainer::exception::not_supported(
     "calcDerivative for EmbeddingNormalize layer is not supported");
 }
 
 void EmbeddingNormalizeLayer::calcGradient(
-  nntrainer::RunLayerContext &context) {
+  nntrainer::RunLayerContext & /*context*/) {
   throw nntrainer::exception::not_supported(
     "calcGradient for EmbeddingNormalize layer is not supported");
 }

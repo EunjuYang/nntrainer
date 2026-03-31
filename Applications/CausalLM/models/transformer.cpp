@@ -87,7 +87,7 @@ Transformer::Transformer(json &cfg, json &generation_cfg, json &nntr_cfg,
     LoadBytesFromFile(nntr_cfg["tokenizer_file"]));
 };
 
-void Transformer::setupParameters(json &cfg, json &generation_cfg,
+void Transformer::setupParameters(json &cfg, json &/*generation_cfg*/,
                                   json &nntr_cfg) {
 
   /** Initialize nntr prameters */
@@ -252,9 +252,9 @@ void Transformer::save_weight(const std::string &weight_path) {
   }
 };
 
-void Transformer::run(const WSTR prompt, bool do_sample,
-                      const WSTR system_prompt, const WSTR tail_prompt,
-                      bool log_output) {
+void Transformer::run(const WSTR /*prompt*/, bool /*do_sample*/,
+                      const WSTR /*system_prompt*/, const WSTR /*tail_prompt*/,
+                      bool /*log_output*/) {
   if (!is_initialized) {
     throw std::runtime_error(
       "Transformer model is not initialized. Please call "
@@ -314,7 +314,7 @@ Transformer::createTransformerDecoderBlock(const int layer_id,
 }
 
 std::vector<LayerHandle>
-Transformer::createAttention(const int layer_id, int seq_len, int n_heads,
+Transformer::createAttention(const int layer_id, int /*seq_len*/, int n_heads,
                              int head_dim, std::string query_name,
                              std::string key_name, std::string value_name) {
 

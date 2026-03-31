@@ -162,12 +162,10 @@ private:
   WIN_EXPORT void finalize_lmhead(nntrainer::InitLayerContext &context);
   WIN_EXPORT void
   incremental_forwarding_embedding(nntrainer::RunLayerContext &context,
-                                   unsigned int from, unsigned int to,
-                                   bool training);
+                                   unsigned int from, unsigned int to);
   WIN_EXPORT void
   incremental_forwarding_lmhead(nntrainer::RunLayerContext &context,
-                                unsigned int from, unsigned int to,
-                                bool training);
+                                unsigned int from, unsigned int to);
 };
 } // namespace causallm
 

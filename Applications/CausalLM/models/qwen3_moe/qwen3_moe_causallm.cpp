@@ -46,7 +46,7 @@ void Qwen3MoECausalLM::setupParameters(json &cfg, json &generation_cfg,
 }
 
 std::vector<LayerHandle> Qwen3MoECausalLM::createMlp(const int layer_id,
-                                                     int dim, int hidden_dim,
+                                                     int /*dim*/, int hidden_dim,
                                                      std::string input_name) {
 
   std::vector<LayerHandle> layers;

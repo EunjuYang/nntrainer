@@ -318,7 +318,7 @@ ErrorCode registerModel(const char *model_name, const char *arch_name,
   return CAUSAL_LM_ERROR_NONE;
 }
 
-ErrorCode loadModel(BackendType compute, ModelType modeltype,
+ErrorCode loadModel(BackendType /*compute*/, ModelType modeltype,
                     ModelQuantizationType quant_type) {
 
   auto start_init = std::chrono::high_resolution_clock::now();

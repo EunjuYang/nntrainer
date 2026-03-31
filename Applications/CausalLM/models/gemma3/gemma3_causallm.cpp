@@ -125,7 +125,7 @@ Gemma3Transformer::createTransformerDecoderBlock(const int layer_id,
 }
 
 std::vector<LayerHandle> Gemma3Transformer::createAttention(
-  const int layer_id, int seq_len, int n_heads, int head_dim,
+  const int layer_id, int /*seq_len*/, int n_heads, int head_dim,
   std::string query_name, std::string key_name, std::string value_name) {
   std::vector<LayerHandle> layers;
 
@@ -183,7 +183,7 @@ std::vector<LayerHandle> Gemma3Transformer::createAttention(
   // Attention core layer
   unsigned int window_size = UINT_MAX;
   if (!layer_types.empty()) {
-    if (layer_id < layer_types.size()) {
+    if (static_cast<size_t>(layer_id) < layer_types.size()) {
       if (layer_types[layer_id] == "sliding_attention") {
         window_size = SLIDING_WINDOW;
       }
@@ -193,7 +193,7 @@ std::vector<LayerHandle> Gemma3Transformer::createAttention(
   }
 
   float rope_theta = ROPE_THETA; // Default global
-  if (!layer_types.empty() && layer_id < layer_types.size()) {
+  if (!layer_types.empty() && static_cast<size_t>(layer_id) < layer_types.size()) {
     if (layer_types[layer_id] == "sliding_attention") {
       rope_theta = 10000.0f;
     }

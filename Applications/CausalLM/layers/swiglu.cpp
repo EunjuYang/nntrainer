@@ -34,19 +34,17 @@ void SwiGLULayer::finalize(nntrainer::InitLayerContext &context) {
   context.setOutputDimensions({context.getInputDimensions()[0]});
 }
 
-void SwiGLULayer::forwarding(nntrainer::RunLayerContext &context,
-                             bool training) {}
+void SwiGLULayer::forwarding(nntrainer::RunLayerContext & /*context*/,
+                             bool /*training*/) {}
 
 void SwiGLULayer::incremental_forwarding(nntrainer::RunLayerContext &context,
                                          unsigned int from, unsigned int to,
-                                         bool training) {
+                                         bool /*training*/) {
   nntrainer::Tensor &in1 = context.getInput(INPUT_IDX_1);
   nntrainer::Tensor &in2 = context.getInput(INPUT_IDX_2);
   nntrainer::Tensor &out = context.getOutput(OUT_IDX);
 
-  unsigned int _from = from;
-
-  int iter = to - from;
+  unsigned int iter = to - from;
 
   if (in1.getDataType() == ml::train::TensorDim::DataType::FP32) {
     for (unsigned int b = 0; b < in1.batch(); b++) {
@@ -93,7 +91,7 @@ void SwiGLULayer::updateTensorsByInputDimensions(
   context.updateOutput(OUT_IDX, output_dim);
 }
 
-void SwiGLULayer::calcDerivative(nntrainer::RunLayerContext &context) {
+void SwiGLULayer::calcDerivative(nntrainer::RunLayerContext & /*context*/) {
   // std::throw_with_nested(std::runtime_error("Training is not supported
   // yet."));
 }
