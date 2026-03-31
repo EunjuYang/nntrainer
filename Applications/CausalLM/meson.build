@@ -1,10 +1,16 @@
-causallm_src = [
+# Common source files (tokenizer, utilities)
+causallm_common_src = [
     meson.current_source_dir() / 'huggingface_tokenizer.cpp',
     meson.current_source_dir() / 'llm_util.cpp',
+]
+
+# API source files (C API layer)
+causallm_api_src = [
     meson.current_source_dir() / 'api' / 'causal_lm_api.cpp',
     meson.current_source_dir() / 'api' / 'model_config.cpp',
 ]
 
+# Main application source
 executable_src = [
     meson.current_source_dir() / 'main.cpp',
 ]
@@ -48,12 +54,13 @@ if get_option('default_library') == 'shared'
     cpp_args += [ '-DPLUGGABLE' ]
 endif
 
+# 1. Core library: models, transformer, tokenizer, utilities
 causallm = shared_library('causallm',
-    causallm_src,
+    causallm_common_src,
     dependencies: [
         nntrainer_dep,
         nntrainer_ccapi_dep,
-        causallm_layer_dependencies, 
+        causallm_layer_dependencies,
         tokenizer_dependencies,
         openmp_dep
     ],
@@ -69,12 +76,34 @@ causallm_dep = declare_dependency(
     include_directories: causallm_inc
 )
 
+# 2. API library: C API layer (links to core library)
+causallm_api = shared_library('causallm_api',
+    causallm_api_src,
+    dependencies: [
+        nntrainer_dep,
+        nntrainer_ccapi_dep,
+        causallm_layer_dependencies,
+        causallm_dep,
+    ],
+    include_directories: causallm_inc,
+    install: true,
+    install_dir: application_install_dir,
+    cpp_args: cpp_args
+)
+
+causallm_api_dep = declare_dependency(
+    link_with: [causallm_api],
+    include_directories: causallm_inc
+)
+
+# 3. Main application: standalone CLI (uses core library directly)
 e = executable('nntr_causallm',
     executable_src,
     include_directories: causallm_inc,
     dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
 )
 
+# 4. API test application (uses API library)
 test_api_src = [
     meson.current_source_dir() / 'api' / 'test_api.cpp',
 ]
@@ -82,7 +111,7 @@ test_api_src = [
 test_api = executable('test_api',
     test_api_src,
     include_directories: causallm_inc,
-    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
+    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep, causallm_api_dep],
     build_by_default: true,
     install: false,
 )
