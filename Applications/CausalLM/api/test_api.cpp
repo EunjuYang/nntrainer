@@ -110,7 +110,13 @@ void printUsage(const char *program_name) {
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
             << " QWEN3-0.6B \"Tell me a joke\" 1 W4A32\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
-            << " QWEN3-0.6B \"Write a poem\" 1 W32A32 1\n\n";
+            << " QWEN3-0.6B \"Write a poem\" 1 W32A32 1\n";
+  std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
+            << " QWEN3-EMBEDDING \"What is AI?\" 0 UNKNOWN\n\n";
+}
+
+bool isEmbeddingModel(const std::string &name) {
+  return name.find("EMBEDDING") != std::string::npos;
 }
 } // namespace
 
@@ -181,11 +187,19 @@ int main(int argc, char *argv[]) {
   std::string model_name_str(model_name);
   if (model_name_str == "QWEN3-0.6B") {
     model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
+  } else if (model_name_str == "QWEN3-EMBEDDING") {
+    model_type = CAUSAL_LM_MODEL_QWEN3_EMBEDDING;
+  } else if (model_name_str == "QWEN2-EMBEDDING") {
+    model_type = CAUSAL_LM_MODEL_QWEN2_EMBEDDING;
+  } else if (model_name_str == "GEMMA-EMBEDDING") {
+    model_type = CAUSAL_LM_MODEL_GEMMA_EMBEDDING;
   } else {
-    std::cout << COLOR_YELLOW << "⚠ Warning: Unknown model name '"
+    std::cout << COLOR_YELLOW << "Warning: Unknown model name '"
               << model_name_str << "'. Defaulting to QWEN3-0.6B." << COLOR_RESET
               << "\n";
   }
+
+  bool is_embedding = isEmbeddingModel(model_name_str);
 
   err = loadModel(CAUSAL_LM_BACKEND_CPU, model_type, quant_type);
 
@@ -197,53 +211,91 @@ int main(int argc, char *argv[]) {
   printSuccess("Model loaded successfully");
 
   printSection("Inference");
-  std::cout << COLOR_CYAN << "📝 " << COLOR_RESET << "Input Prompt:\n";
-  std::cout << COLOR_BOLD << COLOR_YELLOW << "  " << prompt << COLOR_RESET
-            << "\n\n";
+  std::cout << COLOR_CYAN << "  Mode:" << COLOR_RESET << " "
+            << (is_embedding ? "Embedding (Sentence Transformer)" : "Text Generation (CausalLM)")
+            << "\n";
+  std::cout << COLOR_CYAN << "  Prompt:" << COLOR_RESET << " " << COLOR_BOLD
+            << COLOR_YELLOW << prompt << COLOR_RESET << "\n\n";
 
-  std::cout << COLOR_CYAN << "⚡ " << COLOR_RESET << "Running inference...\n\n";
+  std::cout << COLOR_CYAN << "  " << COLOR_RESET << "Running inference...\n\n";
 
-  const char *outputText = nullptr;
+  if (is_embedding) {
+    // --- Embedding model inference ---
+    EmbeddingResult emb_result;
+    memset(&emb_result, 0, sizeof(EmbeddingResult));
 
-  if (verbose) {
-    std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Streaming Output:\n";
-    std::cout << COLOR_BOLD << COLOR_GRAY;
-  }
+    err = runEmbeddingModel(prompt, &emb_result);
 
-  err = runModel(prompt, &outputText);
-
-  if (verbose) {
-    std::cout << COLOR_RESET << "\n\n";
-  }
-
-  if (err != CAUSAL_LM_ERROR_NONE) {
-    printError("Failed to run model");
-    std::cerr << "  Error code: " << static_cast<int>(err) << "\n";
-    return 1;
-  }
-
-  if (outputText) {
-    std::cout << COLOR_CYAN << "💬 " << COLOR_RESET << "Output:\n";
-    std::cout << COLOR_BOLD << COLOR_GREEN << "  ";
-    std::string out(outputText);
-    size_t pos = 0;
-    while (pos < out.length()) {
-      size_t newlinePos = out.find('\n', pos);
-      if (newlinePos == std::string::npos) {
-        newlinePos = out.length();
-      }
-      std::string line = out.substr(pos, newlinePos - pos);
-      std::cout << line;
-      if (newlinePos < out.length()) {
-        std::cout << "\n  ";
-        pos = newlinePos + 1;
-      } else {
-        pos = out.length();
-      }
+    if (err != CAUSAL_LM_ERROR_NONE) {
+      printError("Failed to run embedding model");
+      std::cerr << "  Error code: " << static_cast<int>(err) << "\n";
+      return 1;
     }
-    std::cout << COLOR_RESET << "\n\n";
+
+    std::cout << COLOR_CYAN << "  " << COLOR_RESET << "Embedding Result ("
+              << emb_result.batch_size << " batch(es), dim="
+              << emb_result.embedding_dim << "):\n";
+    for (unsigned int b = 0; b < emb_result.batch_size; ++b) {
+      std::cout << COLOR_GREEN << "  Batch " << b << ": [";
+      int print_dim =
+        (emb_result.embedding_dim > 10) ? 10 : emb_result.embedding_dim;
+      for (int i = 0; i < print_dim; ++i) {
+        std::cout << std::fixed << std::setprecision(6)
+                  << emb_result.embeddings[b * emb_result.embedding_dim + i]
+                  << (i == print_dim - 1 ? "" : ", ");
+      }
+      if (emb_result.embedding_dim > 10)
+        std::cout << ", ...";
+      std::cout << "]" << COLOR_RESET << "\n";
+    }
+    std::cout << "\n";
+
+    freeEmbeddingResult(&emb_result);
+
   } else {
-    printWarning("No output generated");
+    // --- CausalLM text generation inference ---
+    const char *outputText = nullptr;
+
+    if (verbose) {
+      std::cout << COLOR_CYAN << "  " << COLOR_RESET << "Streaming Output:\n";
+      std::cout << COLOR_BOLD << COLOR_GRAY;
+    }
+
+    err = runModel(prompt, &outputText);
+
+    if (verbose) {
+      std::cout << COLOR_RESET << "\n\n";
+    }
+
+    if (err != CAUSAL_LM_ERROR_NONE) {
+      printError("Failed to run model");
+      std::cerr << "  Error code: " << static_cast<int>(err) << "\n";
+      return 1;
+    }
+
+    if (outputText) {
+      std::cout << COLOR_CYAN << "  " << COLOR_RESET << "Output:\n";
+      std::cout << COLOR_BOLD << COLOR_GREEN << "  ";
+      std::string out(outputText);
+      size_t pos = 0;
+      while (pos < out.length()) {
+        size_t newlinePos = out.find('\n', pos);
+        if (newlinePos == std::string::npos) {
+          newlinePos = out.length();
+        }
+        std::string line = out.substr(pos, newlinePos - pos);
+        std::cout << line;
+        if (newlinePos < out.length()) {
+          std::cout << "\n  ";
+          pos = newlinePos + 1;
+        } else {
+          pos = out.length();
+        }
+      }
+      std::cout << COLOR_RESET << "\n\n";
+    } else {
+      printWarning("No output generated");
+    }
   }
 
   printSection("Performance Metrics");
