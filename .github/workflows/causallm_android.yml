@@ -44,3 +44,13 @@ jobs:
         chmod +x Applications/CausalLM/build_android.sh
         chmod +x Applications/CausalLM/build_tokenizer_android.sh
         ./Applications/CausalLM/build_android.sh
+
+    - name: Build CausalLM API Library
+      run: |
+        chmod +x Applications/CausalLM/build_api_lib.sh
+        ./Applications/CausalLM/build_api_lib.sh
+
+    - name: Build CausalLM Test App (test_api)
+      run: |
+        chmod +x Applications/CausalLM/build_test_app.sh
+        ./Applications/CausalLM/build_test_app.sh
