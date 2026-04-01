@@ -63,11 +63,17 @@ public:
   void save_weight(const std::string &weight_path) override;
 
   /**
-   * @brief Run inference
+   * @brief Run inference (simple)
    */
-  void run(const WSTR prompt, bool do_sample = false,
-           const WSTR system_prompt = "",
-           const WSTR tail_prompt = "") override;
+  void run(const WSTR prompt, void *output_buf = nullptr,
+           bool log_output = true) override;
+
+  /**
+   * @brief Run inference (full)
+   */
+  void run(const WSTR prompt, const WSTR system_prompt,
+           const WSTR tail_prompt, void *output_buf = nullptr,
+           bool log_output = true) override;
 
 protected:
   /**

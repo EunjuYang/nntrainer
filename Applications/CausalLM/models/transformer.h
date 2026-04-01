@@ -70,10 +70,16 @@ public:
   void save_weight(const std::string &weight_path) override;
 
   /**
-   * @brief run the Transformer model
+   * @brief run the Transformer model (simple)
    */
-  void run(const WSTR prompt, bool do_sample = false,
-           const WSTR system_prompt = "", const WSTR tail_prompt = "",
+  void run(const WSTR prompt, void *output_buf = nullptr,
+           bool log_output = true) override;
+
+  /**
+   * @brief run the Transformer model (full)
+   */
+  void run(const WSTR prompt, const WSTR system_prompt,
+           const WSTR tail_prompt, void *output_buf = nullptr,
            bool log_output = true) override;
 
   /**

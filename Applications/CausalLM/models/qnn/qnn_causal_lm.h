@@ -52,11 +52,17 @@ public:
   }
 
   /**
-   * @brief run the QNNCausalLM model
+   * @brief run the QNNCausalLM model (simple)
    */
-  void run(const WSTR prompt, bool do_sample = false,
-           const WSTR system_prompt = "",
-           const WSTR tail_prompt = "") override;
+  void run(const WSTR prompt, void *output_buf = nullptr,
+           bool log_output = true) override;
+
+  /**
+   * @brief run the QNNCausalLM model (full)
+   */
+  void run(const WSTR prompt, const WSTR system_prompt,
+           const WSTR tail_prompt, void *output_buf = nullptr,
+           bool log_output = true) override;
 
 protected:
   /**
@@ -76,12 +82,14 @@ protected:
   virtual void
   registerOutputs(std::unique_ptr<tokenizers::Tokenizer> &tokenizer,
                   std::vector<unsigned int> ids, unsigned int pos,
-                  const std::vector<bool> &eos_list);
+                  const std::vector<bool> &eos_list, bool log_output = true);
 
   /** internal buffer */
   std::vector<std::string>
     output_list;             /**< List of output names for the model */
   unsigned int *ids_history; /**< History of input IDs for the model */
+
+  bool DO_SAMPLE = false; /**< Whether to use sampling for generation */
 
   std::string LMHEAD_DTYPE; /** lmhead dtype */
   std::vector<unsigned int> EOS_TOKEN_ID;

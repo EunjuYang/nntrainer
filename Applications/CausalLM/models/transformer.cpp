@@ -252,8 +252,12 @@ void Transformer::save_weight(const std::string &weight_path) {
   }
 };
 
-void Transformer::run(const WSTR prompt, bool do_sample,
-                      const WSTR system_prompt, const WSTR tail_prompt,
+void Transformer::run(const WSTR prompt, void *output_buf, bool log_output) {
+  run(prompt, "", "", output_buf, log_output);
+}
+
+void Transformer::run(const WSTR prompt, const WSTR system_prompt,
+                      const WSTR tail_prompt, void *output_buf,
                       bool log_output) {
   if (!is_initialized) {
     throw std::runtime_error(

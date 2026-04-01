@@ -98,6 +98,9 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
   TEMPERATURE = generation_cfg.contains("temperature")
                   ? generation_cfg["temperature"].get<float>()
                   : 0.7;
+  DO_SAMPLE = generation_cfg.contains("do_sample")
+                ? generation_cfg["do_sample"].get<bool>()
+                : false;
   global_token_len = 0;
 }
 
@@ -285,8 +288,12 @@ void CausalLM::registerCustomLayers() {
   }
 }
 
-void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
-                   const WSTR tail_prompt, bool log_output) {
+void CausalLM::run(const WSTR prompt, void *output_buf, bool log_output) {
+  run(prompt, "", "", output_buf, log_output);
+}
+
+void CausalLM::run(const WSTR prompt, const WSTR system_prompt,
+                   const WSTR tail_prompt, void *output_buf, bool log_output) {
 
   auto start_total = std::chrono::high_resolution_clock::now();
   if (!is_initialized) {
@@ -489,7 +496,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       model->incremental_inference(BATCH_SIZE, input, label, input_len,
                                    token_generation_idx - 1 + global_token_len,
                                    token_generation_idx + global_token_len);
-    std::vector<unsigned int> ids_list(generate(output_interval[0], do_sample));
+    std::vector<unsigned int> ids_list(generate(output_interval[0], DO_SAMPLE));
     if (token_generation_idx < input_len) {
       for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
         input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
@@ -535,6 +542,10 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   }
 
   global_token_len += (generation_cnt + init_len);
+
+  if (output_buf != nullptr) {
+    *static_cast<std::vector<std::string> *>(output_buf) = output_list;
+  }
 
   auto finish_generation = std::chrono::high_resolution_clock::now();
   auto generation_duration =

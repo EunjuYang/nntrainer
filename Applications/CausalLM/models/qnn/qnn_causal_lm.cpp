@@ -63,12 +63,15 @@ void QNNCausalLM::setupParameters(json &cfg, json &generation_cfg,
   TEMPERATURE = generation_cfg.contains("temperature")
                   ? generation_cfg["temperature"].get<float>()
                   : 0.7;
+  DO_SAMPLE = generation_cfg.contains("do_sample")
+                ? generation_cfg["do_sample"].get<bool>()
+                : false;
 }
 
 void QNNCausalLM::registerOutputs(
   std::unique_ptr<tokenizers::Tokenizer> &tokenizer,
   std::vector<unsigned int> ids, unsigned int pos,
-  const std::vector<bool> &eos_list) {
+  const std::vector<bool> &eos_list, bool log_output) {
 
   static const std::vector<char> puncts{',', '!', ':', ';', '?'};
   for (size_t b = 0; b < ids.size(); ++b) {
@@ -81,13 +84,15 @@ void QNNCausalLM::registerOutputs(
           puncts.end()) {
         // last symbol is a punctuation, hold on
       } else {
+        if (log_output) {
 #if defined(_WIN32)
-        std::wcout << L"" << utf8_to_wstring(decoded_str);
-        std::wcout.flush();
+          std::wcout << L"" << utf8_to_wstring(decoded_str);
+          std::wcout.flush();
 #else
-        std::cout << decoded_str;
-        std::cout.flush();
+          std::cout << decoded_str;
+          std::cout.flush();
 #endif
+        }
         output_list[b].append(decoded_str);
       }
     }
@@ -132,8 +137,13 @@ std::vector<unsigned int> QNNCausalLM::generate(float *logits, bool do_sample) {
   return outputs;
 }
 
-void QNNCausalLM::run(const WSTR prompt, bool do_sample,
-                      const WSTR system_prompt, const WSTR tail_prompt) {
+void QNNCausalLM::run(const WSTR prompt, void *output_buf, bool log_output) {
+  run(prompt, "", "", output_buf, log_output);
+}
+
+void QNNCausalLM::run(const WSTR prompt, const WSTR system_prompt,
+                      const WSTR tail_prompt, void *output_buf,
+                      bool log_output) {
   if (!is_initialized) {
     throw std::runtime_error("QNNCausalLM model is not initialized. Please "
                              "call initialize() before run().");
@@ -149,6 +159,10 @@ void QNNCausalLM::run(const WSTR prompt, bool do_sample,
   /// QNN CausalLM will use the QNN runtime API for graph execution.
   /// The generation loop (tokenize -> infer -> sample -> decode) follows
   /// the same pattern but uses QNN-specific APIs for the inference step.
+
+  if (output_buf != nullptr) {
+    *static_cast<std::vector<std::string> *>(output_buf) = output_list;
+  }
 }
 
 } // namespace causallm

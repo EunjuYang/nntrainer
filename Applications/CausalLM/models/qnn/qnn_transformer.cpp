@@ -168,8 +168,14 @@ void QNNTransformer::save_weight(const std::string &weight_path) {
   }
 }
 
-void QNNTransformer::run(const WSTR prompt, bool do_sample,
-                         const WSTR system_prompt, const WSTR tail_prompt) {
+void QNNTransformer::run(const WSTR prompt, void *output_buf,
+                         bool log_output) {
+  run(prompt, "", "", output_buf, log_output);
+}
+
+void QNNTransformer::run(const WSTR prompt, const WSTR system_prompt,
+                         const WSTR tail_prompt, void *output_buf,
+                         bool log_output) {
   if (!is_initialized) {
     throw std::runtime_error(
       "QNNTransformer model is not initialized. Please call "
