@@ -2,7 +2,7 @@ name: auto-fill-pr-commits
 
 on:
   pull_request_target:
-    types: [opened, reopened]
+    types: [labeled]
 
 permissions:
   contents: read
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   fill-commits:
+    if: github.event.label.name == 'AUTO-PR-BODY'
     runs-on: ubuntu-latest
     steps:
       - name: Auto-fill PR body with commit messages
