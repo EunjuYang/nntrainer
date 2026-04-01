@@ -155,6 +155,64 @@ def gen_lm_head_golden(input_shape=(2, 1, 1, 10), unit=5,
     return filepath
 
 
+def gen_swiglu_golden(input_shape=(2, 1, 1, 10),
+                      filename="causallm_swiglu.nnlayergolden"):
+    """Generate golden data for CausalLM SwiGLU layer with backward pass.
+
+    SwiGLU forward: output = swish(gate) * up
+    where swish(x) = x * sigmoid(x)
+
+    Two inputs: gate (input_idx=0), up (input_idx=1)
+
+    Backward (incoming_deriv = 2.0):
+    d_up = swish(gate) * dy
+    d_gate = up * swish'(gate) * dy
+    where swish'(x) = sigmoid(x) + x * sigmoid(x) * (1 - sigmoid(x))
+    """
+    # Inputs (no weights for SwiGLU)
+    gate = rand_input(input_shape)
+    up = rand_input(input_shape)
+
+    # Forward
+    sigmoid_gate = 1.0 / (1.0 + np.exp(-gate))
+    swish_gate = gate * sigmoid_gate
+    output = swish_gate * up
+
+    # Backward: incoming_deriv = 2.0
+    incoming_deriv = np.full_like(output, 2.0)
+
+    # d_up = swish(gate) * dy
+    d_up = swish_gate * incoming_deriv
+
+    # swish'(gate) = sigmoid(gate) + gate * sigmoid(gate) * (1 - sigmoid(gate))
+    swish_prime = sigmoid_gate + gate * sigmoid_gate * (1.0 - sigmoid_gate)
+    # d_gate = up * swish'(gate) * dy
+    d_gate = up * swish_prime * incoming_deriv
+
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    with open(filepath, "wb") as f:
+        # 1. Initial weights (none)
+        # 2. Inputs (gate, up)
+        write_tensor(f, gate)
+        write_tensor(f, up)
+        # 3. Outputs
+        write_tensor(f, output)
+        # 4. Gradients (no trainable weights)
+        # 5. Weights (none)
+        # 6. Derivatives (d_gate, d_up)
+        write_tensor(f, d_gate)
+        write_tensor(f, d_up)
+
+    print(f"Generated: {filepath}")
+    print(f"  gate shape: {gate.shape}, up shape: {up.shape}")
+    print(f"  output sample: {output.flat[:5]}")
+    print(f"  d_gate sample: {d_gate.flat[:5]}")
+    print(f"  d_up sample: {d_up.flat[:5]}")
+
+    return filepath
+
+
 if __name__ == "__main__":
     gen_rms_norm_golden()
     gen_lm_head_golden()
+    gen_swiglu_golden()

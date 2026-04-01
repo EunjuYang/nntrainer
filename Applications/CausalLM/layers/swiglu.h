@@ -14,6 +14,8 @@
 #ifndef __SWIGLU_LAYER_H__
 #define __SWIGLU_LAYER_H__
 
+#include <array>
+
 #include <layer_context.h>
 #include <layer_devel.h>
 #include <node_exporter.h>
@@ -38,7 +40,9 @@ public:
    * @brief Construct a new custom SwiGLU layer object
    *
    */
-  WIN_EXPORT SwiGLULayer() : Layer() {}
+  WIN_EXPORT SwiGLULayer() : Layer() {
+    tensor_idx.fill(std::numeric_limits<unsigned>::max());
+  }
 
   /**
    * @brief Destroy the custom SwiGLU layer object
@@ -100,6 +104,10 @@ public:
     std::vector<nntrainer::TensorDim> input_dimensions) override;
 
   inline static const std::string type = "swiglu";
+
+private:
+  enum SwiGLUParams { sigmoid_gate = 0 };
+  std::array<unsigned int, 1> tensor_idx;
 };
 
 } // namespace causallm

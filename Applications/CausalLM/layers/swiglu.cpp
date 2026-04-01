@@ -32,10 +32,30 @@ float swiglu(float x) { return x / (1 + nntrainer::exp_util(-x)); }
 
 void SwiGLULayer::finalize(nntrainer::InitLayerContext &context) {
   context.setOutputDimensions({context.getInputDimensions()[0]});
+
+  // Cache sigmoid(gate) for backward pass
+  tensor_idx[SwiGLUParams::sigmoid_gate] = context.requestTensor(
+    context.getInputDimensions()[0], "sigmoid_gate",
+    nntrainer::Initializer::NONE, false,
+    nntrainer::TensorLifespan::ITERATION_LIFESPAN);
 }
 
 void SwiGLULayer::forwarding(nntrainer::RunLayerContext &context,
-                             bool training) {}
+                             bool training) {
+  nntrainer::Tensor &gate = context.getInput(INPUT_IDX_1);
+  nntrainer::Tensor &up = context.getInput(INPUT_IDX_2);
+  nntrainer::Tensor &out = context.getOutput(OUT_IDX);
+  nntrainer::Tensor &sig_gate =
+    context.getTensor(tensor_idx[SwiGLUParams::sigmoid_gate]);
+
+  // sigmoid(gate)
+  gate.apply<float>([](float x) { return 1.0f / (1.0f + nntrainer::exp_util(-x)); },
+                    sig_gate);
+  // swish(gate) = gate * sigmoid(gate)
+  gate.multiply(sig_gate, out);
+  // output = swish(gate) * up
+  out.multiply_i(up);
+}
 
 void SwiGLULayer::incremental_forwarding(nntrainer::RunLayerContext &context,
                                          unsigned int from, unsigned int to,
@@ -94,8 +114,33 @@ void SwiGLULayer::updateTensorsByInputDimensions(
 }
 
 void SwiGLULayer::calcDerivative(nntrainer::RunLayerContext &context) {
-  // std::throw_with_nested(std::runtime_error("Training is not supported
-  // yet."));
+  const nntrainer::Tensor &incoming_deriv =
+    context.getIncomingDerivative(OUT_IDX);
+  nntrainer::Tensor &d_gate = context.getOutgoingDerivative(INPUT_IDX_1);
+  nntrainer::Tensor &d_up = context.getOutgoingDerivative(INPUT_IDX_2);
+  nntrainer::Tensor &gate = context.getInput(INPUT_IDX_1);
+  nntrainer::Tensor &up = context.getInput(INPUT_IDX_2);
+  nntrainer::Tensor &sig_gate =
+    context.getTensor(tensor_idx[SwiGLUParams::sigmoid_gate]);
+
+  // swish(gate) = gate * sigmoid(gate)
+  // d_up = swish(gate) * dy
+  gate.multiply(sig_gate, d_up);
+  d_up.multiply_i(incoming_deriv);
+
+  // swish'(gate) = sigmoid(gate) + gate * sigmoid(gate) * (1 - sigmoid(gate))
+  //              = sigmoid(gate) * (1 + gate * (1 - sigmoid(gate)))
+  // d_gate = up * swish'(gate) * dy
+  nntrainer::Tensor one_minus_sig = sig_gate.multiply(-1.0f);
+  one_minus_sig.add_i(1.0f);
+  // gate * (1 - sigmoid(gate))
+  gate.multiply(one_minus_sig, d_gate);
+  // sigmoid(gate) + gate * sigmoid(gate) * (1 - sigmoid(gate))
+  d_gate.multiply_i(sig_gate);
+  d_gate.add_i(sig_gate);
+  // up * swish'(gate) * dy
+  d_gate.multiply_i(up);
+  d_gate.multiply_i(incoming_deriv);
 }
 
 #ifdef PLUGGABLE
