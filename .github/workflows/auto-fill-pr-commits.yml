@@ -1,0 +1,92 @@
+name: auto-fill-pr-commits
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  fill-commits:
+    if: github.event.label.name == 'AUTO-PR-BODY'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-fill PR body with commit messages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: python3 {0}
+        run: |
+          import subprocess, json, os, sys
+
+          repo = "${{ github.repository }}"
+          pr_num = "${{ github.event.pull_request.number }}"
+
+          # Fetch PR commits via GitHub API
+          result = subprocess.run(
+              ["gh", "api", f"repos/{repo}/pulls/{pr_num}/commits", "--paginate"],
+              capture_output=True, text=True
+          )
+          if result.returncode != 0:
+              print("Failed to fetch commits:", result.stderr, file=sys.stderr)
+              sys.exit(1)
+
+          commits = json.loads(result.stdout)
+          if not commits:
+              print("No commits found, skipping.", file=sys.stderr)
+              sys.exit(0)
+
+          sections = []
+          last_sob = ""
+
+          for commit in commits:
+              full_msg = commit["commit"]["message"]
+              lines = full_msg.splitlines()
+              title = lines[0].strip() if lines else "(no title)"
+              body_lines = lines[2:] if len(lines) > 2 else []
+
+              sob_line = ""
+              clean_lines = []
+              for line in body_lines:
+                  if line.startswith("Signed-off-by:"):
+                      sob_line = line
+                      last_sob = line
+                  else:
+                      clean_lines.append(line)
+              body_clean = "\n".join(clean_lines).strip()
+
+              body_section = f"\n{body_clean}\n\n" if body_clean else "\n"
+
+              section = (
+                  f"<details><summary>{title}</summary><br />"
+                  f"{body_section}"
+                  f"**Self evaluation:**\n"
+                  f"1. Build test: [X]Passed [ ]Failed [ ]Skipped\n"
+                  f"2. Run test: [X]Passed [ ]Failed [ ]Skipped\n"
+                  f"\n{sob_line}\n\n"
+                  f"</details>"
+              )
+              sections.append(section)
+
+          commits_block = "\n\n".join(sections)
+          pr_body = (
+              "## Dependency of the PR\n\n"
+              "## Commits to be reviewed in this PR\n\n"
+              f"{commits_block}\n\n"
+              "### Summary\n\n"
+              "- \n\n"
+              f"{last_sob}\n"
+          )
+
+          with open("pr_body.md", "w") as f:
+              f.write(pr_body)
+
+          print(f"Generated PR body for {len(commits)} commit(s).")
+
+      - name: Update PR body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr edit "${{ github.event.pull_request.number }}" --body-file pr_body.md
+          echo "PR body updated for PR #${{ github.event.pull_request.number }}"
