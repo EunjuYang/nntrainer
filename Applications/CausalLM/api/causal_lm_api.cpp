@@ -38,7 +38,7 @@
 
 using json = nlohmann::json;
 
-static std::unique_ptr<causallm::Transformer> g_model;
+static std::unique_ptr<causallm::TransformerBase> g_model;
 static std::mutex g_mutex;
 static bool g_initialized = false;
 static std::string g_architecture = "";

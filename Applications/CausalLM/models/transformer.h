@@ -24,45 +24,18 @@
 #define __TRANSFORMER_H__
 
 #pragma once
-#ifdef _WIN32
-#define WIN_EXPORT __declspec(dllexport)
-#define WSTR std::wstring
-#define WCHAR_P wchar_t *
-#else
-#define WIN_EXPORT
-#define WSTR std::string
-#define WCHAR_P std::string &
-#endif
-
-#include <layer.h>
-#include <model.h>
-#include <random>
 
 #include <limits.h>
+#include <random>
 
-#include "json.hpp"
-#include "performance_metrics.h"
-#include <fstream>
-#include <tokenizers_c.h>
-#include <tokenizers_cpp.h>
+#include <transformer_base.h>
 
 namespace causallm {
-
-/*** ALIAS ****/
-using LayerHandle = std::shared_ptr<ml::train::Layer>;
-using ModelHandle = std::unique_ptr<ml::train::Model>;
-
-using json = nlohmann::json;
-
-/**
- * @brief Model Type Enum
- */
-enum class ModelType { MODEL, CAUSALLM, EMBEDDING, UNKNOWN };
 
 /**
  * @brief Transformer Class
  */
-WIN_EXPORT class Transformer {
+WIN_EXPORT class Transformer : virtual public TransformerBase {
 
 public:
   /**
@@ -83,24 +56,24 @@ public:
   /**
    * @brief Initialize and Construct the Transformer model
    */
-  virtual void initialize();
+  void initialize() override;
 
   /**
    * @brief Load the model weights from a file
    */
-  virtual void load_weight(const std::string &weight_path);
+  void load_weight(const std::string &weight_path) override;
 
   /**
    * @brief Save the weight to a file
    */
-  virtual void save_weight(const std::string &weight_path);
+  void save_weight(const std::string &weight_path) override;
 
   /**
    * @brief run the Transformer model
    */
-  virtual void run(const WSTR prompt, bool do_sample = false,
-                   const WSTR system_prompt = "", const WSTR tail_prompt = "",
-                   bool log_output = true);
+  void run(const WSTR prompt, bool do_sample = false,
+           const WSTR system_prompt = "", const WSTR tail_prompt = "",
+           bool log_output = true) override;
 
   /**
    * @brief Get PerformanceMetrics
@@ -146,26 +119,12 @@ protected:
    */
   virtual void registerCustomLayers();
 
-  /**
-   * @brief register Outputs
-   */
-  bool is_initialized = false; /**< Flag to check if the model is initialized */
-  ModelHandle model;
-
-  /** tokenizer */
-  std::unique_ptr<tokenizers::Tokenizer> tokenizer;
-
-  unsigned int NUM_VOCAB;
-  int DIM;
   int HEAD_DIM;
   int INTERMEDIATE_SIZE;
-  int NUM_LAYERS;
   bool USE_VOCAB_SELECTION;
   bool TIE_WORD_EMBEDDINGS;
-  unsigned int MAX_SEQ_LEN;
   int NUM_HEADS;
   int NUM_KEY_VALUE_HEADS;
-  int NUM_TO_GENERATE;
   std::string MODEL_TENSOR_TYPE;
   std::string EMBEDDING_DTYPE; /** embedding dtype */
   std::string FC_LAYER_DTYPE;  /** custom_fc_lora */
@@ -177,8 +136,6 @@ protected:
   float EMBEDDING_SCALE = 1.0f;
   int GQA_SIZE;
 
-  unsigned int BATCH_SIZE;              /**< Batch size for the model */
-  unsigned int INIT_SEQ_LEN;            /**< Initial sequence length */
   unsigned int MAX_POSITION_EMBEDDINGS; /**< max_position embeddings */
   bool MEMORY_SWAP;                     /**< memory swap option */
   unsigned int FSU_LOOKAHEAD;
@@ -188,28 +145,7 @@ protected:
   // Performance metrics
   PerformanceMetrics performance_metrics;
 };
-/**
- * Loads JSON data from a file with detailed error handling
- * @param file_path Path to JSON file
- * @return JSON object
- * @throws std::runtime_error on file open or parse failure
- */
-inline json LoadJsonFile(const std::string &file_path) {
-  std::ifstream file(file_path);
-  if (!file.is_open()) {
-    throw std::runtime_error("Failed to open file: " + file_path +
-                             " | Reason: " + std::strerror(errno));
-  }
 
-  try {
-    json data;
-    file >> data;
-    return data;
-  } catch (const json::parse_error &e) {
-    throw std::runtime_error("JSON parse error in " + file_path +
-                             " | Details: " + e.what());
-  }
-}
 } // namespace causallm
 
 #endif
