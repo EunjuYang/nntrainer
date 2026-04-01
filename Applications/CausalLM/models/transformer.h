@@ -81,9 +81,16 @@ public:
   virtual ~Transformer() {}
 
   /**
-   * @brief Initialize and Construct the Transformer model
+   * @brief Initialize and Construct the Transformer model for inference
    */
   virtual void initialize();
+
+  /**
+   * @brief Initialize and Construct the Transformer model for training
+   * @param lr Learning rate for the optimizer
+   * @param epochs Number of training epochs
+   */
+  virtual void initializeForTraining(float lr = 1e-4, unsigned int epochs = 1);
 
   /**
    * @brief Load the model weights from a file

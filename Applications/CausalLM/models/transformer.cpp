@@ -184,6 +184,40 @@ void Transformer::initialize() {
 #endif
 }
 
+void Transformer::initializeForTraining(float lr, unsigned int epochs) {
+
+  // RegisterCustomLayers
+  registerCustomLayers();
+
+  // construct causalLM model
+  constructModel();
+
+  // setup model property
+  std::vector<std::string> model_props = {
+    withKey("batch_size", BATCH_SIZE),
+    withKey("epochs", epochs),
+    withKey("model_tensor_type", MODEL_TENSOR_TYPE)};
+
+  model->setProperty(model_props);
+
+  // set optimizer (Adam for LoRA fine-tuning)
+  auto optimizer =
+    ml::train::createOptimizer("adam", {"learning_rate=" + std::to_string(lr)});
+  if (model->setOptimizer(std::move(optimizer))) {
+    throw std::invalid_argument("Failed to set optimizer.");
+  }
+
+  if (model->compile(ml::train::ExecutionMode::TRAIN)) {
+    throw std::invalid_argument("Model compilation for training failed.");
+  }
+
+  if (model->initialize(ml::train::ExecutionMode::TRAIN)) {
+    throw std::invalid_argument("Model initialization for training failed.");
+  }
+
+  is_initialized = true;
+}
+
 void Transformer::constructModel() {
 
   // layers used in the model
