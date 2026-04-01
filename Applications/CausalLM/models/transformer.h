@@ -185,6 +185,19 @@ protected:
   float ATTN_LOGIT_SOFTCAPPING = 0.0f; /**< attention logit softcapping */
   bool IS_CAUSAL = true;
 
+  /** LoRA parameters */
+  unsigned int LORA_RANK = 0;             /**< LoRA rank (0 = disabled) */
+  unsigned int LORA_ALPHA = 0;            /**< LoRA alpha for scaling */
+  std::vector<std::string> LORA_TARGETS;  /**< Target layer names for LoRA */
+
+  /**
+   * @brief Check if LoRA should be applied to a layer
+   * @param layer_suffix The suffix identifying the layer type (e.g., "wq",
+   * "ffn_down")
+   * @return true if LoRA is enabled and this layer is a target
+   */
+  bool isLoRATarget(const std::string &layer_suffix) const;
+
   // Performance metrics
   PerformanceMetrics performance_metrics;
 };

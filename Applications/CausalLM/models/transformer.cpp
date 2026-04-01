@@ -134,6 +134,19 @@ void Transformer::setupParameters(json &cfg, json &generation_cfg,
   NORM_EPS = cfg["rms_norm_eps"];
   GQA_SIZE = NUM_HEADS / NUM_KEY_VALUE_HEADS;
 
+  /** LoRA parameters */
+  if (nntr_cfg.contains("lora_rank")) {
+    LORA_RANK = nntr_cfg["lora_rank"].get<unsigned int>();
+  }
+  if (nntr_cfg.contains("lora_alpha")) {
+    LORA_ALPHA = nntr_cfg["lora_alpha"].get<unsigned int>();
+  }
+  if (nntr_cfg.contains("lora_target")) {
+    for (const auto &target : nntr_cfg["lora_target"]) {
+      LORA_TARGETS.push_back(target.get<std::string>());
+    }
+  }
+
   return;
 };
 
@@ -313,6 +326,16 @@ Transformer::createTransformerDecoderBlock(const int layer_id,
   return layers;
 }
 
+bool Transformer::isLoRATarget(const std::string &layer_suffix) const {
+  if (LORA_RANK == 0)
+    return false;
+  for (const auto &target : LORA_TARGETS) {
+    if (target == layer_suffix)
+      return true;
+  }
+  return false;
+}
+
 std::vector<LayerHandle>
 Transformer::createAttention(const int layer_id, int seq_len, int n_heads,
                              int head_dim, std::string query_name,
@@ -331,6 +354,10 @@ Transformer::createAttention(const int layer_id, int seq_len, int n_heads,
     withKey("name", Q), withKey("unit", head_dim * n_heads),
     withKey("disable_bias", "true"), withKey("input_layers", query_name),
     withKey("weight_initializer", "ones")};
+  if (isLoRATarget("wq")) {
+    q_params.push_back(withKey("lora_rank", LORA_RANK));
+    q_params.push_back(withKey("lora_alpha", LORA_ALPHA));
+  }
   layers.push_back(createLayer("fully_connected", q_params));
 
   // K layer
@@ -338,6 +365,10 @@ Transformer::createAttention(const int layer_id, int seq_len, int n_heads,
     withKey("name", K), withKey("unit", head_dim * n_heads / GQA_SIZE),
     withKey("disable_bias", "true"), withKey("input_layers", key_name),
     withKey("weight_initializer", "ones")};
+  if (isLoRATarget("wk")) {
+    k_params.push_back(withKey("lora_rank", LORA_RANK));
+    k_params.push_back(withKey("lora_alpha", LORA_ALPHA));
+  }
   layers.push_back(createLayer("fully_connected", k_params));
 
   // V layer
@@ -345,6 +376,10 @@ Transformer::createAttention(const int layer_id, int seq_len, int n_heads,
     withKey("name", V), withKey("unit", head_dim * n_heads / GQA_SIZE),
     withKey("disable_bias", "true"), withKey("input_layers", value_name),
     withKey("weight_initializer", "ones")};
+  if (isLoRATarget("wv")) {
+    v_params.push_back(withKey("lora_rank", LORA_RANK));
+    v_params.push_back(withKey("lora_alpha", LORA_ALPHA));
+  }
   layers.push_back(createLayer("fully_connected", v_params));
 
   // Attention core layer
@@ -366,6 +401,10 @@ Transformer::createAttention(const int layer_id, int seq_len, int n_heads,
   std::vector<std::string> o_params = {
     withKey("name", O), withKey("unit", DIM), withKey("disable_bias", "true"),
     withKey("input_layers", A), withKey("weight_initializer", "ones")};
+  if (isLoRATarget("wo")) {
+    o_params.push_back(withKey("lora_rank", LORA_RANK));
+    o_params.push_back(withKey("lora_alpha", LORA_ALPHA));
+  }
   layers.push_back(createLayer("fully_connected", o_params));
 
   return layers;
@@ -377,18 +416,27 @@ std::vector<LayerHandle> Transformer::createMlp(const int layer_id, int dim,
 
   std::vector<LayerHandle> layers;
 
-  layers.push_back(createLayer(
-    "fully_connected",
-    {withKey("name", "layer" + std::to_string(layer_id) + "_ffn_up"),
-     withKey("unit", hidden_dim), withKey("disable_bias", "true"),
-     withKey("input_layers", input_name),
-     withKey("weight_initializer", "ones")}));
-  layers.push_back(createLayer(
-    "fully_connected",
-    {withKey("name", "layer" + std::to_string(layer_id) + "_ffn_gate"),
-     withKey("unit", hidden_dim), withKey("disable_bias", "true"),
-     withKey("input_layers", input_name),
-     withKey("weight_initializer", "ones")}));
+  std::vector<std::string> up_params = {
+    withKey("name", "layer" + std::to_string(layer_id) + "_ffn_up"),
+    withKey("unit", hidden_dim), withKey("disable_bias", "true"),
+    withKey("input_layers", input_name),
+    withKey("weight_initializer", "ones")};
+  if (isLoRATarget("ffn_up")) {
+    up_params.push_back(withKey("lora_rank", LORA_RANK));
+    up_params.push_back(withKey("lora_alpha", LORA_ALPHA));
+  }
+  layers.push_back(createLayer("fully_connected", up_params));
+
+  std::vector<std::string> gate_params = {
+    withKey("name", "layer" + std::to_string(layer_id) + "_ffn_gate"),
+    withKey("unit", hidden_dim), withKey("disable_bias", "true"),
+    withKey("input_layers", input_name),
+    withKey("weight_initializer", "ones")};
+  if (isLoRATarget("ffn_gate")) {
+    gate_params.push_back(withKey("lora_rank", LORA_RANK));
+    gate_params.push_back(withKey("lora_alpha", LORA_ALPHA));
+  }
+  layers.push_back(createLayer("fully_connected", gate_params));
 
   layers.push_back(createLayer(
     "swiglu",
@@ -397,13 +445,17 @@ std::vector<LayerHandle> Transformer::createMlp(const int layer_id, int dim,
                                "layer" + std::to_string(layer_id) +
                                "_ffn_up")}));
 
-  layers.push_back(createLayer(
-    "fully_connected",
-    {withKey("name", "layer" + std::to_string(layer_id) + "_ffn_down"),
-     withKey("unit", dim), withKey("disable_bias", "true"),
-     withKey("input_layers",
-             "layer" + std::to_string(layer_id) + "_ffn_swiglu"),
-     withKey("weight_initializer", "ones")}));
+  std::vector<std::string> down_params = {
+    withKey("name", "layer" + std::to_string(layer_id) + "_ffn_down"),
+    withKey("unit", dim), withKey("disable_bias", "true"),
+    withKey("input_layers",
+            "layer" + std::to_string(layer_id) + "_ffn_swiglu"),
+    withKey("weight_initializer", "ones")};
+  if (isLoRATarget("ffn_down")) {
+    down_params.push_back(withKey("lora_rank", LORA_RANK));
+    down_params.push_back(withKey("lora_alpha", LORA_ALPHA));
+  }
+  layers.push_back(createLayer("fully_connected", down_params));
 
   return layers;
 }
