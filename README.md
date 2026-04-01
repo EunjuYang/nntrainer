@@ -76,6 +76,60 @@ Includes benchmark tools with thermal monitoring, performance metrics (prefill/g
 
 ---
 
+## On-Device Training — Learn Directly on the Edge
+
+NNTrainer was built from the ground up for **training neural networks on device** — no cloud, no data upload, no privacy risk. User data never leaves the device.
+
+### Training Scenarios
+
+#### Transfer Learning
+Freeze a pre-trained backbone (e.g., MobileNetV2) and fine-tune only the final layers with your own data. Train a custom image classifier with just **15 images** in under a minute on a smartphone.
+
+```
+Pre-trained MobileNetV2 (frozen) → FC(128) → FC(20) → Softmax(3)
+                                   ↑ Only these layers are trained on-device
+```
+
+> See [`Applications/TransferLearning`](Applications/TransferLearning) — CIFAR classification & emotion recognition from hand-drawn images.
+
+#### Few-Shot Learning
+Learn new classes from as few as **1~5 examples** using centroid-based nearest-neighbor classification — no gradient updates needed at deployment time.
+
+> See [`Applications/SimpleShot`](Applications/SimpleShot) — 73% accuracy with just 20 examples per class.
+
+#### Full Model Training
+Train entire CNNs, RNNs, and Transformers from scratch on device. NNTrainer's memory-optimized runtime makes it feasible even on resource-constrained hardware.
+
+> See [`Applications/MNIST`](Applications/MNIST), [`Applications/Resnet`](Applications/Resnet), [`Applications/VGG`](Applications/VGG)
+
+#### Reinforcement Learning
+Complete Deep Q-Learning with experience replay and dual network architecture — tested on Galaxy S9.
+
+> See [`Applications/ReinforcementLearning`](Applications/ReinforcementLearning)
+
+### Training Infrastructure
+
+| Component | Details |
+|-----------|---------|
+| **Optimizers** | SGD, Adam, AdamW |
+| **LR Schedulers** | Constant, Exponential, Step, Cosine Annealing, Linear Decay |
+| **Loss Functions** | Cross-Entropy (Softmax/Sigmoid), MSE, KL Divergence |
+| **Regularization** | L2 Regularization, Dropout, Batch Normalization, Gradient Clipping |
+| **Weight Init** | Xavier, He, LeCun (Normal/Uniform), Zeros |
+| **Activations** | ReLU, GELU, Swish, Sigmoid, Tanh, Softmax, Mish, ELU, SELU, and more |
+| **Data Loading** | File-based datasets or generator callbacks for streaming/augmentation |
+| **Augmentation** | Random flip, translate, L2 normalization (built-in preprocessing layers) |
+| **Export Formats** | Binary, INI, FlatBuffer, ONNX, TFLite |
+
+### Why Train On-Device?
+
+- **Privacy** — Sensitive data (health, biometrics, personal photos) stays on-device. No cloud upload required.
+- **Personalization** — Adapt a generic model to each user's unique patterns and preferences in real-time.
+- **Offline Capability** — Train and improve models without any network connectivity.
+- **Low Latency** — No round-trip to the cloud. Instant feedback loop between data collection and model update.
+
+---
+
 ## What's New
 
 | Feature | Description |
