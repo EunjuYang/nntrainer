@@ -575,7 +575,7 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
     }
 
     // We assume single batch request for this API.
-    g_model->run(input, false, "", "", g_verbose);
+    g_model->run(input, "", "", nullptr, g_verbose);
 
     auto causal_lm_model = dynamic_cast<causallm::CausalLM *>(g_model.get());
     g_last_output = ""; // Reset last output

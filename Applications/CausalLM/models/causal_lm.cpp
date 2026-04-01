@@ -102,6 +102,9 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
   TEMPERATURE = generation_cfg.contains("temperature")
                   ? generation_cfg["temperature"].get<float>()
                   : 0.7;
+  DO_SAMPLE = generation_cfg.contains("do_sample")
+                ? generation_cfg["do_sample"].get<bool>()
+                : false;
   global_token_len = 0;
 }
 
@@ -330,8 +333,12 @@ void CausalLM::registerCustomLayers() {
   }
 }
 
-void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
-                   const WSTR tail_prompt, bool log_output) {
+void CausalLM::run(const WSTR prompt, void *output_buf, bool log_output) {
+  run(prompt, WSTR(), WSTR(), output_buf, log_output);
+}
+
+void CausalLM::run(const WSTR prompt, const WSTR system_prompt,
+                   const WSTR tail_prompt, void *output_buf, bool log_output) {
 
   auto start_total = std::chrono::high_resolution_clock::now();
   if (!is_initialized) {
@@ -523,7 +530,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
   // post process of model output
   std::vector<unsigned int> id_list(
-    generate(output[0], do_sample, 1, ids_history, init_len));
+    generate(output[0], DO_SAMPLE, 1, ids_history, init_len));
 
   if (init_len < INIT_SEQ_LEN)
     registerOutputs(tokenizer, id_list, init_len, eos_list, log_output);
@@ -559,7 +566,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       model->incremental_inference(BATCH_SIZE, input, label, input_len,
                                    token_generation_idx - 1 + global_token_len,
                                    token_generation_idx + global_token_len);
-    std::vector<unsigned int> ids_list(generate(output_interval[0], do_sample));
+    std::vector<unsigned int> ids_list(generate(output_interval[0], DO_SAMPLE));
 
     // Feed the newly generated token back as the next input token.
     // token_generation_idx always starts at input_len + 1, so we are
@@ -603,6 +610,10 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   free(input_sample);
 
   global_token_len += (generation_cnt + init_len);
+
+  if (output_buf != nullptr) {
+    *static_cast<std::vector<std::string> *>(output_buf) = output_list;
+  }
 
   auto finish_generation = std::chrono::high_resolution_clock::now();
   auto generation_duration =
