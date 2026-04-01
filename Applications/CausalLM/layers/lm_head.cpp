@@ -40,7 +40,7 @@ void LmHeadLayer::finalize(nntrainer::InitLayerContext &context) {
     std::get<nntrainer::props::WeightRegularizer>(*layer_impl_props);
   auto &weight_regularizer_constant =
     std::get<nntrainer::props::WeightRegularizerConstant>(*layer_impl_props);
-  auto weight_initializer = nntrainer::props::InitializerInfo::Enum::NONE;
+  auto weight_initializer = nntrainer::Initializer::ONES;
   auto &weight_decay =
     std::get<nntrainer::props::WeightDecay>(*layer_impl_props);
   auto &bias_decay = std::get<nntrainer::props::BiasDecay>(*layer_impl_props);
@@ -112,8 +112,20 @@ void LmHeadLayer::setProperty(const std::vector<std::string> &values) {
 
 void LmHeadLayer::forwarding(nntrainer::RunLayerContext &context,
                              bool training) {
-  throw nntrainer::exception::not_supported(
-    "Forwarding for LMHead layer is not supported");
+  nntrainer::Tensor &weight =
+    context.getWeight(weight_idx[LmHeadParams::weight]);
+  nntrainer::Tensor &input_ = context.getInput(SINGLE_INOUT_IDX);
+  nntrainer::Tensor &hidden_ = context.getOutput(SINGLE_INOUT_IDX);
+
+  input_.dot(weight, hidden_, false, false);
+
+  if (auto &disable_bias =
+        std::get<nntrainer::props::DisableBias>(*layer_impl_props);
+      disable_bias.empty() || disable_bias.get() == false) {
+    nntrainer::Tensor &bias =
+      context.getWeight(weight_idx[LmHeadParams::bias]);
+    hidden_.add_i(bias);
+  }
 }
 
 void LmHeadLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
@@ -158,13 +170,20 @@ void LmHeadLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
 }
 
 void LmHeadLayer::calcDerivative(nntrainer::RunLayerContext &context) {
-  throw nntrainer::exception::not_supported(
-    "calcDerivative for LMHead layer is not supported");
+  const nntrainer::Tensor &incoming_deriv =
+    context.getIncomingDerivative(SINGLE_INOUT_IDX);
+  nntrainer::Tensor &outgoing_deriv =
+    context.getOutgoingDerivative(SINGLE_INOUT_IDX);
+  nntrainer::Tensor &weight =
+    context.getWeight(weight_idx[LmHeadParams::weight]);
+
+  // dx = dy @ W^T
+  incoming_deriv.dot(weight, outgoing_deriv, false, true);
 }
 
 void LmHeadLayer::calcGradient(nntrainer::RunLayerContext &context) {
-  throw nntrainer::exception::not_supported(
-    "calcGradient for LMHead layer is not supported");
+  // LM Head weights are frozen during LoRA training.
+  // Weight gradient computation is not needed.
 }
 
 void LmHeadLayer::exportTo(nntrainer::Exporter &exporter,

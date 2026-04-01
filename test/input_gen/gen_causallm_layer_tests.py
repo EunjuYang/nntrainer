@@ -96,5 +96,65 @@ def gen_rms_norm_golden(input_shape=(2, 3, 3, 3), epsilon=1e-3,
     return filepath
 
 
+def gen_lm_head_golden(input_shape=(2, 1, 1, 10), unit=5,
+                       filename="causallm_lmhead.nnlayergolden"):
+    """Generate golden data for CausalLM LM Head layer with backward pass.
+
+    LM Head forward: output = input @ weight (+ bias)
+    Weight shape: (1, 1, in_width, unit) for NCHW
+
+    Backward (incoming_deriv = 2.0):
+    dx = dy @ W^T
+    """
+    in_width = input_shape[-1]
+
+    # Weight: shape (1, 1, in_width, unit)
+    weight = rand_input((1, 1, in_width, unit))
+    # Bias: disabled for this test
+
+    # Input
+    x = rand_input(input_shape)
+
+    # Forward: output = x @ weight
+    # x shape: (batch, 1, 1, in_width), weight: (1, 1, in_width, unit)
+    # dot: (batch, 1, 1, in_width) x (1, 1, in_width, unit) -> (batch, 1, 1, unit)
+    x_2d = x.reshape(-1, in_width)
+    w_2d = weight.reshape(in_width, unit)
+    out_2d = x_2d @ w_2d
+    output = out_2d.reshape(input_shape[0], 1, 1, unit)
+
+    # Backward: incoming_deriv = 2.0
+    incoming_deriv = np.full_like(output, 2.0)
+    # dx = dy @ W^T
+    dy_2d = incoming_deriv.reshape(-1, unit)
+    dx_2d = dy_2d @ w_2d.T
+    dx = dx_2d.reshape(input_shape)
+
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    with open(filepath, "wb") as f:
+        # 1. Initial weights (weight is trainable by default in LmHead)
+        write_tensor(f, weight)
+        # 2. Inputs
+        write_tensor(f, x)
+        # 3. Outputs
+        write_tensor(f, output)
+        # 4. Gradients (weight gradient: dW = x^T @ dy)
+        dw_2d = x_2d.T @ dy_2d
+        dw = dw_2d.reshape(1, 1, in_width, unit)
+        write_tensor(f, dw)
+        # 5. Weights (unchanged - no optimizer step)
+        write_tensor(f, weight)
+        # 6. Derivatives
+        write_tensor(f, dx)
+
+    print(f"Generated: {filepath}")
+    print(f"  input shape: {x.shape}, weight shape: {weight.shape}")
+    print(f"  output shape: {output.shape}")
+    print(f"  derivative sample: {dx.flat[:5]}")
+
+    return filepath
+
+
 if __name__ == "__main__":
     gen_rms_norm_golden()
+    gen_lm_head_golden()
