@@ -268,8 +268,206 @@ def gen_tie_word_embedding_golden(input_shape=(2, 1, 1, 10), unit=5,
     return filepath
 
 
+def gen_mha_core_golden(batch=2, seq_len=4, num_heads_q=4, num_heads_kv=2,
+                        head_dim=8, is_causal=True, rope_theta=10000.0,
+                        filename="causallm_mhacore.nnlayergolden"):
+    """Generate golden data for CausalLM MHA Core layer.
+
+    MHA Core: multi-head attention with RoPE and GQA support.
+    3 inputs: Q (B,1,S,H_Q*D), K (B,1,S,H_KV*D), V (B,1,S,H_KV*D)
+    1 output: (B,1,S,H_Q*D)
+
+    No trainable weights in MHA Core (Q/K/V/O projections are separate FC layers).
+
+    Note: RoPE thetas/cos/sin are computed in float32 matching C++ exactly.
+    All attention computations use float64 for precision, casting to float32
+    only at the final output to match C++ float32 results within tolerance.
+    """
+    gqa_size = num_heads_q // num_heads_kv
+    q_width = num_heads_q * head_dim
+    kv_width = num_heads_kv * head_dim
+    half_dim = head_dim // 2
+
+    # Compute RoPE frequencies matching C++ _compute_default_parameters exactly
+    # C++: thetas[i] = float(1.0 / pow(theta, 2*i / float(head_dim)))
+    thetas = np.zeros(half_dim, dtype=np.float32)
+    for i in range(half_dim):
+        exponent = np.float32(np.float32(2 * i) / np.float32(head_dim))
+        base_pow = np.float32(np.float64(1.0) / np.float64(np.float32(rope_theta) ** np.float32(exponent)))
+        thetas[i] = base_pow
+
+    # Compute cos/sin tables in float32 matching C++
+    cos_table = np.zeros((seq_len, half_dim), dtype=np.float32)
+    sin_table = np.zeros((seq_len, half_dim), dtype=np.float32)
+    for pos in range(seq_len):
+        for j in range(half_dim):
+            angle = np.float32(np.float32(pos) * thetas[j])
+            cos_table[pos, j] = np.float32(np.cos(np.float64(angle)))
+            sin_table[pos, j] = np.float32(np.sin(np.float64(angle)))
+
+    # Use float64 versions for attention computation (higher precision reference)
+    cos_table_f64 = cos_table.astype(np.float64)
+    sin_table_f64 = sin_table.astype(np.float64)
+
+    def apply_rope(x, cos_t, sin_t):
+        """Apply RoPE. Compute in float32 per-element matching C++ scalar loop."""
+        x = x.astype(np.float32)
+        x1 = x[:half_dim]
+        x2 = x[half_dim:]
+        out1 = (x1 * cos_t.astype(np.float32) - x2 * sin_t.astype(np.float32)).astype(np.float32)
+        out2 = (x1 * sin_t.astype(np.float32) + x2 * cos_t.astype(np.float32)).astype(np.float32)
+        return np.concatenate([out1, out2]).astype(np.float32)
+
+    def apply_inverse_rope(x, cos_t, sin_t):
+        """Apply inverse RoPE. Compute in float32 matching C++."""
+        x = x.astype(np.float32)
+        x1 = x[:half_dim]
+        x2 = x[half_dim:]
+        out1 = (x1 * cos_t.astype(np.float32) + x2 * sin_t.astype(np.float32)).astype(np.float32)
+        out2 = (-x1 * sin_t.astype(np.float32) + x2 * cos_t.astype(np.float32)).astype(np.float32)
+        return np.concatenate([out1, out2]).astype(np.float32)
+
+    # Inputs
+    Q = rand_input((batch, 1, seq_len, q_width))
+    K = rand_input((batch, 1, seq_len, kv_width))
+    V = rand_input((batch, 1, seq_len, kv_width))
+
+    # Forward pass
+    # 1. Apply RoPE to Q and K (element-by-element matching C++)
+    Q_rope = Q.copy()
+    K_rope = K.copy()
+    for b in range(batch):
+        for h in range(seq_len):
+            for n in range(num_heads_q):
+                offset = n * head_dim
+                Q_rope[b, 0, h, offset:offset+head_dim] = apply_rope(
+                    Q[b, 0, h, offset:offset+head_dim],
+                    cos_table[h], sin_table[h])
+            for n in range(num_heads_kv):
+                offset = n * head_dim
+                K_rope[b, 0, h, offset:offset+head_dim] = apply_rope(
+                    K[b, 0, h, offset:offset+head_dim],
+                    cos_table[h], sin_table[h])
+
+    # 2. Reshape to per-head (float64 for precise attention computation)
+    Q_heads = Q_rope.reshape(batch, seq_len, num_heads_q, head_dim).transpose(0, 2, 1, 3).astype(np.float64)
+    K_heads = K_rope.reshape(batch, seq_len, num_heads_kv, head_dim).transpose(0, 2, 1, 3).astype(np.float64)
+    V_heads = V.reshape(batch, seq_len, num_heads_kv, head_dim).transpose(0, 2, 1, 3).astype(np.float64)
+
+    # 3. Compute attention per Q head with GQA (all in float64)
+    scale = 1.0 / np.sqrt(float(head_dim))
+    output = np.zeros((batch, num_heads_q, seq_len, head_dim), dtype=np.float64)
+    attn_weights = np.zeros((batch, num_heads_q, seq_len, seq_len), dtype=np.float64)
+
+    NEG_FLT_MAX = float(-np.finfo(np.float32).max)
+
+    for b in range(batch):
+        for q_head in range(num_heads_q):
+            kv_head = q_head // gqa_size
+            q_h = Q_heads[b, q_head]
+            k_h = K_heads[b, kv_head]
+            scores = q_h @ k_h.T * scale
+
+            if is_causal:
+                for i in range(seq_len):
+                    for j in range(i + 1, seq_len):
+                        scores[i, j] = NEG_FLT_MAX
+
+            # Softmax
+            scores_max = np.max(scores, axis=-1, keepdims=True)
+            scores_exp = np.exp(scores - scores_max)
+            attn_w = scores_exp / np.sum(scores_exp, axis=-1, keepdims=True)
+            attn_weights[b, q_head] = attn_w
+            output[b, q_head] = attn_w @ V_heads[b, kv_head]
+
+    # Reshape output and cast to float32
+    output_flat = output.transpose(0, 2, 1, 3).reshape(batch, 1, seq_len, q_width).astype(np.float32)
+
+    # Backward pass (incoming derivative = 2.0, in float64)
+    d_out_heads = np.full((batch, num_heads_q, seq_len, head_dim), 2.0, dtype=np.float64)
+
+    d_Q_heads = np.zeros_like(Q_heads)  # float64
+    d_K_heads = np.zeros((batch, num_heads_kv, seq_len, head_dim), dtype=np.float64)
+    d_V_heads = np.zeros((batch, num_heads_kv, seq_len, head_dim), dtype=np.float64)
+
+    for b in range(batch):
+        for kv_head in range(num_heads_kv):
+            d_k_head = np.zeros((seq_len, head_dim), dtype=np.float64)
+            d_v_head = np.zeros((seq_len, head_dim), dtype=np.float64)
+
+            for g in range(gqa_size):
+                q_head = kv_head * gqa_size + g
+                attn_w = attn_weights[b, q_head]
+                d_out = d_out_heads[b, q_head]
+                v_h = V_heads[b, kv_head]
+                q_h = Q_heads[b, q_head]
+                k_h = K_heads[b, kv_head]
+
+                d_attn = d_out @ v_h.T
+                d_v_head += attn_w.T @ d_out
+
+                # Softmax backward
+                dot_sum = np.sum(d_attn * attn_w, axis=-1, keepdims=True)
+                d_scores = attn_w * (d_attn - dot_sum) * scale
+
+                d_Q_heads[b, q_head] = d_scores @ k_h
+                d_k_head += d_scores.T @ q_h
+
+            d_K_heads[b, kv_head] = d_k_head
+            d_V_heads[b, kv_head] = d_v_head
+
+    # Reshape and cast to float32
+    d_Q_flat = d_Q_heads.transpose(0, 2, 1, 3).reshape(batch, 1, seq_len, q_width).astype(np.float32)
+    d_K_flat = d_K_heads.transpose(0, 2, 1, 3).reshape(batch, 1, seq_len, kv_width).astype(np.float32)
+
+    # Apply inverse RoPE to d_Q and d_K
+    d_Q_out = d_Q_flat.copy()
+    d_K_out = d_K_flat.copy()
+    for b in range(batch):
+        for h in range(seq_len):
+            for n in range(num_heads_q):
+                offset = n * head_dim
+                d_Q_out[b, 0, h, offset:offset+head_dim] = apply_inverse_rope(
+                    d_Q_flat[b, 0, h, offset:offset+head_dim],
+                    cos_table[h], sin_table[h])
+            for n in range(num_heads_kv):
+                offset = n * head_dim
+                d_K_out[b, 0, h, offset:offset+head_dim] = apply_inverse_rope(
+                    d_K_flat[b, 0, h, offset:offset+head_dim],
+                    cos_table[h], sin_table[h])
+
+    # d_V doesn't need inverse RoPE (V was not rotated) — cast float64 to float32
+    d_V_out = d_V_heads.transpose(0, 2, 1, 3).reshape(batch, 1, seq_len, kv_width).astype(np.float32)
+
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    with open(filepath, "wb") as f:
+        # 1. Initial weights (none - MHA Core has no trainable weights)
+        # 2. Inputs (Q, K, V)
+        write_tensor(f, Q)
+        write_tensor(f, K)
+        write_tensor(f, V)
+        # 3. Outputs
+        write_tensor(f, output_flat)
+        # 4. Gradients (none)
+        # 5. Weights (none)
+        # 6. Derivatives (dQ, dK, dV)
+        write_tensor(f, d_Q_out)
+        write_tensor(f, d_K_out)
+        write_tensor(f, d_V_out)
+
+    print(f"Generated: {filepath}")
+    print(f"  Q shape: {Q.shape}, K shape: {K.shape}, V shape: {V.shape}")
+    print(f"  output shape: {output_flat.shape}")
+    print(f"  d_Q sample: {d_Q_out.flat[:5]}")
+    print(f"  d_K sample: {d_K_out.flat[:5]}")
+    print(f"  d_V sample: {d_V_out.flat[:5]}")
+
+    return filepath
+
+
 if __name__ == "__main__":
     gen_rms_norm_golden()
     gen_lm_head_golden()
     gen_swiglu_golden()
     gen_tie_word_embedding_golden()
+    gen_mha_core_golden()

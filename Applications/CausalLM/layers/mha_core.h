@@ -351,8 +351,13 @@ private:
     attention_weight,
     dropout_mask,
     attention_output,
+    /// Training-only tensors
+    train_query,   /**< RoPE-applied Q for backward */
+    train_key,     /**< RoPE-applied K for backward */
+    train_value,   /**< V stored for backward */
+    train_attn_wt, /**< Attention weights after softmax for backward */
   };
-  std::array<unsigned int, 7> tensor_idx;
+  std::array<unsigned int, 11> tensor_idx;
   unsigned int sink_idx;
 
   /** attention parameters */
@@ -444,6 +449,15 @@ private:
    * @param context Context of the layer
    */
   void calcCommonDerivative(nntrainer::RunLayerContext &context);
+
+  /**
+   * @brief apply inverse rotary embedding for backward pass
+   * @param[in,out] tensor the tensor to apply inverse RoPE
+   * @param[in] dim head dimension
+   * @param[in] from starting position
+   */
+  void apply_inverse_rotary_emb(nntrainer::Tensor &tensor, unsigned int dim,
+                                unsigned int from);
 
   size_t calc_attn_index(size_t i);
 
