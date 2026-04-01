@@ -212,7 +212,64 @@ def gen_swiglu_golden(input_shape=(2, 1, 1, 10),
     return filepath
 
 
+def gen_tie_word_embedding_golden(input_shape=(2, 1, 1, 10), unit=5,
+                                  filename="causallm_tiewordembedding.nnlayergolden"):
+    """Generate golden data for CausalLM TieWordEmbedding layer (lm_head mode).
+
+    TieWordEmbedding in lm_head mode: output = input @ weight^T
+    Weight shape: (1, 1, unit, in_width) — stored transposed vs LmHead.
+
+    Backward (incoming_deriv = 2.0):
+    dx = dy @ weight  (since forward was input @ weight^T)
+    """
+    in_width = input_shape[-1]
+
+    # Weight: shape (1, 1, unit, in_width) — note: transposed vs LmHead
+    weight = rand_input((1, 1, unit, in_width))
+
+    # Input
+    x = rand_input(input_shape)
+
+    # Forward: output = x @ weight^T
+    x_2d = x.reshape(-1, in_width)
+    w_2d = weight.reshape(unit, in_width)  # (unit, in_width)
+    out_2d = x_2d @ w_2d.T  # (batch, unit)
+    output = out_2d.reshape(input_shape[0], 1, 1, unit)
+
+    # Backward: incoming_deriv = 2.0
+    incoming_deriv = np.full_like(output, 2.0)
+    # dx = dy @ weight (not transposed, since forward used weight^T)
+    dy_2d = incoming_deriv.reshape(-1, unit)
+    dx_2d = dy_2d @ w_2d  # (batch, in_width)
+    dx = dx_2d.reshape(input_shape)
+
+    filepath = os.path.join(OUTPUT_DIR, filename)
+    with open(filepath, "wb") as f:
+        # 1. Initial weights
+        write_tensor(f, weight)
+        # 2. Inputs
+        write_tensor(f, x)
+        # 3. Outputs
+        write_tensor(f, output)
+        # 4. Gradients (weight gradient: dW = (x^T @ dy)^T = dy^T @ x for transposed weight)
+        dw_2d = dy_2d.T @ x_2d  # (unit, in_width)
+        dw = dw_2d.reshape(1, 1, unit, in_width)
+        write_tensor(f, dw)
+        # 5. Weights (unchanged)
+        write_tensor(f, weight)
+        # 6. Derivatives
+        write_tensor(f, dx)
+
+    print(f"Generated: {filepath}")
+    print(f"  input shape: {x.shape}, weight shape: {weight.shape}")
+    print(f"  output shape: {output.shape}")
+    print(f"  derivative sample: {dx.flat[:5]}")
+
+    return filepath
+
+
 if __name__ == "__main__":
     gen_rms_norm_golden()
     gen_lm_head_golden()
     gen_swiglu_golden()
+    gen_tie_word_embedding_golden()

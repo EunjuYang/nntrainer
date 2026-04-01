@@ -121,6 +121,8 @@ if get_option('enable-transformer')
   test_target += meson.source_root() / 'Applications' / 'CausalLM' / 'layers' / 'lm_head.cpp'
   test_target += 'unittest_layers_causallm_swiglu.cpp'
   test_target += meson.source_root() / 'Applications' / 'CausalLM' / 'layers' / 'swiglu.cpp'
+  test_target += 'unittest_layers_causallm_tiewordembedding.cpp'
+  test_target += meson.source_root() / 'Applications' / 'CausalLM' / 'layers' / 'tie_word_embedding.cpp'
 endif
 
 if get_option('enable-opencl')
