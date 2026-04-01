@@ -83,10 +83,26 @@ public:
   virtual void save_weight(const std::string &weight_path) = 0;
 
   /**
-   * @brief run the Transformer model
+   * @brief run the Transformer model (simple)
+   * @param prompt User prompt
+   * @param output_buf Optional output pointer. For CausalLM, pass
+   *                   std::vector<std::string>*. For Sentence Transformer, pass
+   *                   std:vector <float*>*. nullptr to skip output collection.
+   * @param log_output Whether to log output to stdout
    */
-  virtual void run(const WSTR prompt, bool do_sample = false,
-                   const WSTR system_prompt = "", const WSTR tail_prompt = "",
+  virtual void run(const WSTR prompt, void *output_buf = nullptr,
+                   bool log_output = true) = 0;
+
+  /**
+   * @brief run the Transformer model (full)
+   * @param prompt User prompt
+   * @param system_prompt System prompt prepended to user prompt
+   * @param tail_prompt Tail prompt appended to user prompt
+   * @param output_buf Optional output pointer (see simple overload for types)
+   * @param log_output Whether to log output to stdout
+   */
+  virtual void run(const WSTR prompt, const WSTR system_prompt = "",
+                   const WSTR tail_prompt = "", void *output_buf = nullptr,
                    bool log_output = true) = 0;
 
 protected:

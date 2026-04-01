@@ -178,8 +178,13 @@ void SentenceTransformer::addModule(const std::string &type, int idx) {
   model->addLayer(layer);
 }
 
-void SentenceTransformer::run(const WSTR prompt, bool do_sample,
-                              const WSTR system_prompt, const WSTR tail_prompt,
+void SentenceTransformer::run(const WSTR prompt, void *output_buf,
+                              bool log_output) {
+  run(prompt, "", "", output_buf, log_output);
+}
+
+void SentenceTransformer::run(const WSTR prompt, const WSTR system_prompt,
+                              const WSTR tail_prompt, void *output_buf,
                               bool log_output) {
 
   try {
@@ -203,9 +208,14 @@ void SentenceTransformer::run(const WSTR prompt, bool do_sample,
       }
     }
 
-    // output should be deallocated after use.
-    for (auto out : results) {
-      delete[] out;
+    if (output_buf != nullptr) {
+      // Caller is responsible for dellocation
+      *static_cast<std::vector<float *> *>(output_buf) = results;
+    } else {
+      // output should be deallocated after use.
+      for (auto out : results) {
+        delete[] out;
+      }
     }
   } catch (const std::exception &e) {
     std::cerr << "Error during embedding run: " << e.what() << std::endl;

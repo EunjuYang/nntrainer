@@ -67,10 +67,16 @@ public:
   }
 
   /**
-   * @brief run the CausalLM model
+   * @brief run the CausalLM model (simple)
    */
-  void run(const WSTR prompt, bool do_sample = false,
-           const WSTR system_prompt = "", const WSTR tail_prompt = "",
+  void run(const WSTR prompt, void *output_buf = nullptr,
+           bool log_output = true) override;
+
+  /**
+   * @brief run the CausalLM model (full)
+   */
+  void run(const WSTR prompt, const WSTR system_prompt = "",
+           const WSTR tail_prompt = "", void *output_buf = nullptr,
            bool log_output = true) override;
 
   /**
@@ -141,6 +147,8 @@ protected:
   float TEMPERATURE;
   unsigned int TOP_K;
   float TOP_P;
+
+  bool DO_SAMPLE = false; /**< Whther to use sampling for generation */
 
   std::vector<unsigned int> BAD_WORD_IDS; /**< List of bad word IDs */
   unsigned int NUM_BADWORDS;              /**< Number of bad words */

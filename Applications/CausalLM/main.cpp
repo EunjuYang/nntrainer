@@ -276,16 +276,14 @@ int main(int argc, char *argv[]) {
     model->initialize();
     model->load_weight(weight_file);
 
-    bool do_sample = generation_cfg.value("do_sample", false);
-
 #ifdef PROFILE
     start_peak_tracker();
 #endif
 #if defined(_WIN32)
-    model->run(input_text.c_str(), do_sample, system_head_prompt.c_str(),
+    model->run(input_text.c_str(), system_head_prompt.c_str(),
                system_tail_prompt.c_str());
 #else
-    model->run(input_text, do_sample, system_head_prompt, system_tail_prompt);
+    model->run(input_text, system_head_prompt, system_tail_prompt);
 #endif
 #ifdef PROFILE
     stop_and_print_peak();
