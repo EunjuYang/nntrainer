@@ -9,6 +9,11 @@ executable_src = [
     meson.current_source_dir() / 'main.cpp',
 ]
 
+lora_train_src = [
+    meson.current_source_dir() / 'main_lora_train.cpp',
+    meson.current_source_dir() / 'lora_train.cpp',
+]
+
 causallm_inc_abs = [meson.current_source_dir()]
 causallm_inc = [include_directories('.')]
 
@@ -71,6 +76,12 @@ causallm_dep = declare_dependency(
 
 e = executable('nntr_causallm',
     executable_src,
+    include_directories: causallm_inc,
+    dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
+)
+
+e_lora_train = executable('nntr_causallm_lora_train',
+    lora_train_src,
     include_directories: causallm_inc,
     dependencies: [nntrainer_dep, nntrainer_ccapi_dep, causallm_layer_dependencies, causallm_dep],
 )

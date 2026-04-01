@@ -209,6 +209,13 @@ protected:
   PerformanceMetrics performance_metrics;
 };
 /**
+ * @brief Loads raw bytes from a file as a string
+ * @param path Path to the file
+ * @return File contents as a string
+ */
+std::string LoadBytesFromFile(const std::string &path);
+
+/**
  * Loads JSON data from a file with detailed error handling
  * @param file_path Path to JSON file
  * @return JSON object
