@@ -3,7 +3,10 @@
 
 # ignore build directory
 /build
+/build_fp16
 /builddir
+/builddir_verify
+subprojects/.wraplock
 .cache/
 .idea/
 
