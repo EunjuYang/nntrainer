@@ -139,7 +139,7 @@ The following scripts are provided in `Applications/CausalLM/` to handle the bui
 
     **Run API Test:**
     ```bash
-    adb shell /data/local/tmp/nntrainer/causallm/run_test_api.sh [model_name] [prompt]
+    adb shell /data/local/tmp/nntrainer/causallm/run_test_api.sh --model QWEN3-0.6B --prompt "Hello" --quant W4A32
     ```
 ## Quantizing Models
 

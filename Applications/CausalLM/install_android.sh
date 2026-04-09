@@ -272,5 +272,5 @@ log_info "   cd $INSTALL_DIR"
 log_info "   ./run_causallm.sh $MODEL_DIR/qwen3-4b"
 if [ -f "$SCRIPT_DIR/jni/libs/arm64-v8a/test_api" ]; then
     log_info "To run API Test on the device:"
-    log_info "  adb shell $INSTALL_DIR/run_test_api.sh [ARGS]"
+    log_info "  adb shell $INSTALL_DIR/run_test_api.sh --model QWEN3-0.6B --prompt \"Hello\" --quant W4A32"
 fi
