@@ -65,6 +65,8 @@ With FSU, NNTrainer loads only the active experts during inference — reducing 
 CausalLM supports multiple deployment targets with ready-to-use build scripts:
 
 ```bash
+cd Applications/CausalLM
+
 # Android
 ./build_android.sh && ./install_android.sh
 
