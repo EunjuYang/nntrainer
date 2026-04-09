@@ -146,7 +146,8 @@ static std::string apply_chat_template(const std::string &architecture,
     // <|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n
     // Note: assuming model handles tokenizer specific special tokens or we
     // might need to handle them raw if tokenizer enabled
-    return "<|im_start|>user\n" + input + "<|im_end|>\n<|im_start|>assistant\n";
+    return "<|im_start|>user\n " + input +
+           "<|im_end|>\n<|im_start|>assistant\n";
   } else if (architecture == "Gemma3ForCausalLM") {
     // Gemma chat format:
     // <start_of_turn>user\n{prompt}<end_of_turn>\n<start_of_turn>model\n
