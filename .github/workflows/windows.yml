@@ -13,11 +13,14 @@ jobs:
 
     name: Windows Meson build & test 
     steps:
+      - name: Prune stale refs
+        run: git remote prune origin
+        continue-on-error: true
       - name: Check out
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: -${{ github.event.pull_request.commits }}
+          fetch-depth: 0
       - name: Install submodules
         run: git submodule sync && git submodule update --init --recursive
       - name: Install Python Dependencies
