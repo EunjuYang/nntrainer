@@ -49,7 +49,7 @@ static void register_qwen3_0_6b() {
   strncpy(rc.model_tensor_type, "Q4_0-FP32", sizeof(rc.model_tensor_type) - 1);
   rc.init_seq_len = 1024;
   rc.max_seq_len = 2048;
-  rc.num_to_generate = 512;
+  rc.num_to_generate = 4096;
   rc.fsu = false;
   rc.fsu_lookahead = 2;
   strncpy(rc.embedding_dtype, "Q6_K", sizeof(rc.embedding_dtype) - 1);
