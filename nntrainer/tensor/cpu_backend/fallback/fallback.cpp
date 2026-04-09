@@ -205,6 +205,10 @@ void tanh_gelu_v2(const unsigned int N, const float *X, float *Y) {
   __fallback_tanh_gelu(N, X, Y);
 }
 
+void gelu_v2(const unsigned int N, const float *X, float *Y) {
+  __fallback_gelu_v2(N, X, Y);
+}
+
 void tanh_gelu_mul(const unsigned int N, float *X, float *Y, float *Z) {
   __fallback_tanh_gelu_mul(N, X, Y, Z);
 }
