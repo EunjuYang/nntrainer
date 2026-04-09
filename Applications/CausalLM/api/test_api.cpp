@@ -89,69 +89,88 @@ void printLogo() {
 void printUsage(const char *program_name) {
   std::cout << COLOR_YELLOW << "Usage:" << COLOR_RESET << "\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
-            << " <model_name> [prompt] [use_chat_template] [quantization] "
-               "[verbose] \n\n";
+            << " --model <model_name> [options]\n\n";
 
-  std::cout << COLOR_CYAN << "Arguments:" << COLOR_RESET << "\n";
-  std::cout << "  model_name        " << COLOR_BOLD << "REQUIRED" << COLOR_RESET
+  std::cout << COLOR_CYAN << "Options:" << COLOR_RESET << "\n";
+  std::cout << "  --model <name>    " << COLOR_BOLD << "REQUIRED" << COLOR_RESET
             << "  - Model name (e.g., QWEN3-0.6B)\n";
-  std::cout << "  prompt            " << COLOR_GREEN << "OPTIONAL"
+  std::cout << "  --prompt <text>   " << COLOR_GREEN << "OPTIONAL"
             << COLOR_RESET
             << "  - Input prompt (default: 'Hello, how are you?')\n";
-  std::cout << "  use_chat_template " << COLOR_GREEN << "OPTIONAL"
+  std::cout << "  --chat_template   " << COLOR_GREEN << "OPTIONAL"
             << COLOR_RESET << "  - 0/1 or true/false (default: 1)\n";
-  std::cout << "  quantization      " << COLOR_GREEN << "OPTIONAL"
+  std::cout << "  --quant <type>    " << COLOR_GREEN << "OPTIONAL"
             << COLOR_RESET
             << "  - W4A32/W16A16/W8A16/W32A32/UNKNOWN (default: UNKNOWN)\n";
-  std::cout << "  verbose           " << COLOR_GREEN << "OPTIONAL"
-            << COLOR_RESET << "  - 0/1 or true/false (default: 0)\n\n";
+  std::cout << "  --verbose         " << COLOR_GREEN << "OPTIONAL"
+            << COLOR_RESET << "  - 0/1 or true/false (default: 0)\n";
+  std::cout << "  --help            " << COLOR_GREEN << "OPTIONAL"
+            << COLOR_RESET << "  - Show this help message\n\n";
 
   std::cout << COLOR_YELLOW << "Examples:" << COLOR_RESET << "\n";
+  std::cout
+    << "  " << COLOR_BOLD << program_name << COLOR_RESET
+    << " --model QWEN3-0.6B --prompt \"Tell me a joke\" --quant W4A32\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
-            << " QWEN3-0.6B \"Tell me a joke\" 1 W4A32\n";
-  std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
-            << " QWEN3-0.6B \"Write a poem\" 1 W32A32 1\n\n";
+            << " --model QWEN3-0.6B --prompt \"Write a poem\" --quant W32A32 "
+               "--verbose 1\n\n";
 }
 } // namespace
 
 int main(int argc, char *argv[]) {
   printLogo();
 
-  if (argc < 2) {
+  // Default values
+  std::string model_name;
+  std::string prompt = "Hello, how are you?";
+  bool use_chat_template = true;
+  std::string quant_str = "UNKNOWN";
+  ModelQuantizationType quant_type = CAUSAL_LM_QUANTIZATION_UNKNOWN;
+  bool verbose = true;
+
+  // Parse flags
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--help" || arg == "-h") {
+      printUsage(argv[0]);
+      return 0;
+    } else if (arg == "--model" && i + 1 < argc) {
+      model_name = argv[++i];
+    } else if (arg == "--prompt" && i + 1 < argc) {
+      prompt = argv[++i];
+    } else if (arg == "--chat_template" && i + 1 < argc) {
+      std::string val = argv[++i];
+      use_chat_template = (val == "1" || val == "true");
+    } else if (arg == "--quant" && i + 1 < argc) {
+      quant_str = argv[++i];
+      if (quant_str == "W4A32")
+        quant_type = CAUSAL_LM_QUANTIZATION_W4A32;
+      else if (quant_str == "W16A16")
+        quant_type = CAUSAL_LM_QUANTIZATION_W16A16;
+      else if (quant_str == "W8A16")
+        quant_type = CAUSAL_LM_QUANTIZATION_W8A16;
+      else if (quant_str == "W32A32")
+        quant_type = CAUSAL_LM_QUANTIZATION_W32A32;
+    } else if (arg == "--verbose" && i + 1 < argc) {
+      std::string val = argv[++i];
+      verbose = (val == "1" || val == "true");
+    } else {
+      printSection("ERROR: Unknown argument");
+      printError("Unknown argument: " + arg);
+      printUsage(argv[0]);
+      return 1;
+    }
+  }
+
+  if (model_name.empty()) {
     printSection("ERROR: Missing Required Arguments");
+    printError("--model is required");
     printUsage(argv[0]);
     return 1;
   }
 
-  const char *model_name = argv[1];
-  const char *prompt = (argc >= 3) ? argv[2] : "Hello, how are you?";
-  bool use_chat_template = true;
-  if (argc >= 4) {
-    use_chat_template =
-      (std::string(argv[3]) == "1" || std::string(argv[3]) == "true");
-  }
-
-  std::string quant_str = "UNKNOWN";
-  ModelQuantizationType quant_type = CAUSAL_LM_QUANTIZATION_UNKNOWN;
-  if (argc >= 5) {
-    quant_str = std::string(argv[4]);
-    if (quant_str == "W4A32")
-      quant_type = CAUSAL_LM_QUANTIZATION_W4A32;
-    else if (quant_str == "W16A16")
-      quant_type = CAUSAL_LM_QUANTIZATION_W16A16;
-    else if (quant_str == "W8A16")
-      quant_type = CAUSAL_LM_QUANTIZATION_W8A16;
-    else if (quant_str == "W32A32")
-      quant_type = CAUSAL_LM_QUANTIZATION_W32A32;
-  }
-
-  bool verbose = true;
-  if (argc >= 6) {
-    verbose = (std::string(argv[5]) == "1" || std::string(argv[5]) == "true");
-  }
-
   printSection("Configuration");
-  printInfo("Model Name", model_name);
+  printInfo("Model Name", model_name.c_str());
   printInfo("Use Chat Template", use_chat_template ? "true" : "false");
   printInfo("Quantization", quant_str);
   printInfo("Verbose", verbose ? "true" : "false");
@@ -173,18 +192,16 @@ int main(int argc, char *argv[]) {
 
   printSection("Model Loading");
   std::cout << COLOR_CYAN << "⏳ " << COLOR_RESET
-            << "Loading model: " << COLOR_BOLD << model_name << COLOR_RESET
-            << "\n";
+            << "Loading model: " << COLOR_BOLD << model_name.c_str()
+            << COLOR_RESET << "\n";
 
   // Map string to ModelType
   ModelType model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
-  std::string model_name_str(model_name);
-  if (model_name_str == "QWEN3-0.6B") {
+  if (model_name == "QWEN3-0.6B") {
     model_type = CAUSAL_LM_MODEL_QWEN3_0_6B;
   } else {
-    std::cout << COLOR_YELLOW << "⚠ Warning: Unknown model name '"
-              << model_name_str << "'. Defaulting to QWEN3-0.6B." << COLOR_RESET
-              << "\n";
+    std::cout << COLOR_YELLOW << "⚠ Warning: Unknown model name '" << model_name
+              << "'. Defaulting to QWEN3-0.6B." << COLOR_RESET << "\n";
   }
 
   err = loadModel(CAUSAL_LM_BACKEND_CPU, model_type, quant_type);
@@ -210,7 +227,7 @@ int main(int argc, char *argv[]) {
     std::cout << COLOR_BOLD << COLOR_GRAY;
   }
 
-  err = runModel(prompt, &outputText);
+  err = runModel(prompt.c_str(), &outputText);
 
   if (verbose) {
     std::cout << COLOR_RESET << "\n\n";

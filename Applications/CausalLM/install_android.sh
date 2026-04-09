@@ -208,7 +208,7 @@ adb shell "cat > $INSTALL_DIR/run_causallm.sh << 'EOF'
 export LD_LIBRARY_PATH=$INSTALL_DIR:\$LD_LIBRARY_PATH
 export OMP_NUM_THREADS=4
 cd $INSTALL_DIR
-./nntrainer_causallm \$@
+./nntrainer_causallm \"\$@\"
 EOF
 "
 adb shell "chmod 755 $INSTALL_DIR/run_causallm.sh"
@@ -218,7 +218,7 @@ adb shell "cat > $INSTALL_DIR/run_quantize.sh << 'EOF'
 #!/system/bin/sh
 export LD_LIBRARY_PATH=$INSTALL_DIR:\$LD_LIBRARY_PATH
 cd $INSTALL_DIR
-./nntr_quantize \$@
+./nntr_quantize \"\$@\"
 EOF"
 
 adb shell "chmod 755 $INSTALL_DIR/run_quantize.sh"
@@ -230,7 +230,7 @@ if [ -f "$SCRIPT_DIR/jni/libs/arm64-v8a/test_api" ]; then
 export LD_LIBRARY_PATH=$INSTALL_DIR:\$LD_LIBRARY_PATH
 export OMP_NUM_THREADS=4
 cd $INSTALL_DIR
-./test_api \$@
+./test_api \"\$@\"
 EOF
 "
     adb shell "chmod 755 $INSTALL_DIR/run_test_api.sh"
