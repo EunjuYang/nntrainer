@@ -548,7 +548,9 @@ void tanh_gelu(const unsigned int N, const float *X, float *Y);
 void tanh_gelu_v2(const unsigned int N, const float *X, float *Y);
 
 /**
- * @brief gelu v2 function : Y = 0.5 * X * (1 + erf(X / sqrt(2)))
+ * @brief tanh_gelu function
+ * Y = 0.5 * X * (1 + tanh(sqrt(2/pi) * (X
+ *     + 0.044715 * X^3))) with x4 loop unrolling
  *
  * @param N number of elements in X
  * @param X float * for Vector X (input)
@@ -1095,26 +1097,26 @@ void quantize_row_q8_K(const T *src, void *dst, int64_t k);
 /**
  * @brief repack q40 to q40x8
  *
- * @param W input q40
- * @param repacked_W output q40x8
+ * @param dst output repacked q40x8
+ * @param src input q40
  * @param data_size total weight size
  * @param M number of rows
  * @param N number of columns
  */
-void repack_q4_0(void *W, void *repacked_W, size_t data_size,
-                 const unsigned int M, const unsigned int N);
+void repack_q4_0(void *dst, void *src, size_t data_size, const unsigned int M,
+                 const unsigned int N);
 
 /**
  * @brief repack q4K to q4Kx8
  *
- * @param W input q4K
- * @param repacked_W output q4Kx8
+ * @param dst output repacked q4Kx8
+ * @param src input q4K
  * @param data_size total weight size
  * @param M number of rows
  * @param N number of columns
  */
-void repack_q4_K(void *W, void *repacked_W, size_t data_size,
-                 const unsigned int M, const unsigned int N);
+void repack_q4_K(void *dst, void *src, size_t data_size, const unsigned int M,
+                 const unsigned int N);
 
 /**
  * @brief unpack q40x8 to q40 - invers method: repack_q4_0
@@ -1362,11 +1364,13 @@ void quantize_kv_turboquant_rotated(const float *input, size_t num_elements,
                                     uint8_t *out_packed, float *out_scales,
                                     const float *signs, int head_dim,
                                     int num_heads);
+
 void compute_kcaches_packed4_rotated(
   const float *query, const uint8_t *kcache_packed, const float *kcache_scales,
   float *output, int num_rows, int num_cache_head, int head_dim, int gqa_size,
   int tile_size, const float *signs, size_t local_window_size = UINT_MAX,
   int head_start = 0, int head_end = -1);
+
 void compute_vcache_packed4_transposed_rotated(
   int row_num, const float *attn_weights, const uint8_t *vcache_packed,
   const float *vcache_scales, float *output, int num_cache_head, int gqa_size,
@@ -1376,11 +1380,13 @@ void compute_vcache_packed4_transposed_rotated(
 void quantize_kv_turboquant_v2(const float *input, uint8_t *out_packed,
                                float *out_norms, const float *rot_signs,
                                int head_dim, int num_heads);
+
 void compute_kcaches_packed4_v2(
   const float *query, const uint8_t *kcache_packed, const float *kcache_norms,
   float *output, int num_rows, int num_cache_head, int head_dim, int gqa_size,
   int tile_size, const float *rot_signs, size_t local_window_size = UINT_MAX,
   int head_start = 0, int head_end = -1);
+
 void compute_vcache_packed4_v2(
   int row_num, const float *attn_weights, const uint8_t *vcache_packed,
   const float *vcache_norms, float *output, int num_cache_head, int gqa_size,
