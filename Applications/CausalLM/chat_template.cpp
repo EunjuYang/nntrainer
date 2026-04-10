@@ -63,6 +63,12 @@ enum class TokenType {
   ENDFOR,
   SET,
   IS,
+  TILDE,     // ~
+  COLON,     // :
+  GT,        // >
+  LT,        // <
+  GTE,       // >=
+  LTE,       // <=
   END_OF_INPUT,
 };
 
@@ -283,6 +289,38 @@ private:
           continue;
         }
         break;
+      case '~':
+        t.type = TokenType::TILDE;
+        t.value = "~";
+        pos_++;
+        break;
+      case ':':
+        t.type = TokenType::COLON;
+        t.value = ":";
+        pos_++;
+        break;
+      case '>':
+        if (pos_ + 1 < input_.size() && input_[pos_ + 1] == '=') {
+          t.type = TokenType::GTE;
+          t.value = ">=";
+          pos_ += 2;
+        } else {
+          t.type = TokenType::GT;
+          t.value = ">";
+          pos_++;
+        }
+        break;
+      case '<':
+        if (pos_ + 1 < input_.size() && input_[pos_ + 1] == '=') {
+          t.type = TokenType::LTE;
+          t.value = "<=";
+          pos_ += 2;
+        } else {
+          t.type = TokenType::LT;
+          t.value = "<";
+          pos_++;
+        }
+        break;
       default:
         pos_++;
         continue;
@@ -444,6 +482,7 @@ struct ForNode : ASTNode {
 
 struct SetNode : ASTNode {
   std::string var_name;
+  std::string attr_name; // for "set ns.attr = val" (empty if simple set)
   ExprNodePtr value;
   bool strip_before = false;
   bool strip_after = false;
@@ -501,6 +540,24 @@ struct IsDefinedExpr : ExprNode {
 struct FunctionCallExpr : ExprNode {
   std::string name;
   std::vector<ExprNodePtr> args;
+};
+
+struct MethodCallExpr : ExprNode {
+  ExprNodePtr object;
+  std::string method;
+  std::vector<ExprNodePtr> args;
+};
+
+struct SliceExpr : ExprNode {
+  ExprNodePtr object;
+  ExprNodePtr start; // nullable
+  ExprNodePtr stop;  // nullable
+  ExprNodePtr step;  // nullable
+};
+
+struct ContainsExpr : ExprNode {
+  ExprNodePtr item;
+  ExprNodePtr container;
 };
 
 // ============================================================================
@@ -683,6 +740,13 @@ private:
 
     expect(TokenType::SET);
     node->var_name = expect(TokenType::IDENTIFIER).value;
+
+    // Handle dotted assignment: "set ns.attr = val"
+    if (check(TokenType::DOT)) {
+      advance();
+      node->attr_name = expect(TokenType::IDENTIFIER).value;
+    }
+
     expect(TokenType::ASSIGN);
     node->value = parseExpression();
     Token end = expect(TokenType::STATEMENT_END);
@@ -734,11 +798,13 @@ private:
   }
 
   ExprNodePtr parseComparison() {
-    auto left = parseAddition();
+    auto left = parseContains();
 
-    if (check(TokenType::EQ) || check(TokenType::NEQ)) {
+    if (check(TokenType::EQ) || check(TokenType::NEQ) || check(TokenType::GT) ||
+        check(TokenType::LT) || check(TokenType::GTE) ||
+        check(TokenType::LTE)) {
       std::string op = advance().value;
-      auto right = parseAddition();
+      auto right = parseContains();
       auto node = std::make_shared<BinaryExpr>();
       node->op = op;
       node->left = left;
@@ -746,40 +812,130 @@ private:
       return node;
     }
 
-    // "is defined" test
+    // "is" tests: "is defined", "is not defined", "is string", "is false", etc.
     if (check(TokenType::IS)) {
       advance();
-      if (check(TokenType::IDENTIFIER) && current().value == "defined") {
-        advance();
-        auto node = std::make_shared<IsDefinedExpr>();
-        node->value = left;
-        return node;
-      }
-      // "is not defined"
+      bool negated = false;
       if (check(TokenType::NOT)) {
+        negated = true;
         advance();
-        if (check(TokenType::IDENTIFIER) && current().value == "defined") {
-          advance();
-          auto def_node = std::make_shared<IsDefinedExpr>();
-          def_node->value = left;
+      }
+      if (check(TokenType::IDENTIFIER)) {
+        std::string test_name = current().value;
+        advance();
+        ExprNodePtr result;
+        if (test_name == "defined") {
+          auto node = std::make_shared<IsDefinedExpr>();
+          node->value = left;
+          result = node;
+        } else if (test_name == "string") {
+          // "is string" -> check if value is a string type
+          auto call = std::make_shared<FunctionCallExpr>();
+          call->name = "__is_string";
+          call->args.push_back(left);
+          result = call;
+        } else if (test_name == "none") {
+          auto call = std::make_shared<FunctionCallExpr>();
+          call->name = "__is_none";
+          call->args.push_back(left);
+          result = call;
+        } else if (test_name == "number") {
+          auto call = std::make_shared<FunctionCallExpr>();
+          call->name = "__is_number";
+          call->args.push_back(left);
+          result = call;
+        } else {
+          // Fallback: treat unknown test as comparison
+          result = left;
+        }
+        if (negated) {
           auto not_node = std::make_shared<UnaryExpr>();
           not_node->op = "not";
-          not_node->operand = def_node;
+          not_node->operand = result;
           return not_node;
         }
+        return result;
+      }
+      // "is true" / "is false" / "is none" (keyword forms)
+      if (check(TokenType::TRUE_LIT)) {
+        advance();
+        auto node = std::make_shared<BinaryExpr>();
+        node->op = "==";
+        node->left = left;
+        auto lit = std::make_shared<BoolLiteral>();
+        lit->value = true;
+        node->right = lit;
+        ExprNodePtr result = node;
+        if (negated) {
+          auto not_node = std::make_shared<UnaryExpr>();
+          not_node->op = "not";
+          not_node->operand = result;
+          return not_node;
+        }
+        return result;
+      }
+      if (check(TokenType::FALSE_LIT)) {
+        advance();
+        auto node = std::make_shared<BinaryExpr>();
+        node->op = "==";
+        node->left = left;
+        auto lit = std::make_shared<BoolLiteral>();
+        lit->value = false;
+        node->right = lit;
+        ExprNodePtr result = node;
+        if (negated) {
+          auto not_node = std::make_shared<UnaryExpr>();
+          not_node->op = "not";
+          not_node->operand = result;
+          return not_node;
+        }
+        return result;
+      }
+      if (check(TokenType::NONE_LIT)) {
+        advance();
+        auto node = std::make_shared<BinaryExpr>();
+        node->op = "==";
+        node->left = left;
+        node->right = std::make_shared<NoneLiteral>();
+        ExprNodePtr result = node;
+        if (negated) {
+          auto not_node = std::make_shared<UnaryExpr>();
+          not_node->op = "not";
+          not_node->operand = result;
+          return not_node;
+        }
+        return result;
       }
     }
 
     return left;
   }
 
+  // "in" / "not in" containment
+  ExprNodePtr parseContains() {
+    auto left = parseAddition();
+
+    if (check(TokenType::IN)) {
+      advance();
+      auto right = parseAddition();
+      auto node = std::make_shared<ContainsExpr>();
+      node->item = left;
+      node->container = right;
+      return node;
+    }
+    // "not in" is handled by parseNot wrapping this
+
+    return left;
+  }
+
   ExprNodePtr parseAddition() {
     auto left = parseModulo();
-    while (check(TokenType::PLUS)) {
-      advance();
+    while (check(TokenType::PLUS) || check(TokenType::MINUS) ||
+           check(TokenType::TILDE)) {
+      std::string op = advance().value;
       auto right = parseModulo();
       auto node = std::make_shared<BinaryExpr>();
-      node->op = "+";
+      node->op = op;
       node->left = left;
       node->right = right;
       left = node;
@@ -820,18 +976,88 @@ private:
       if (check(TokenType::DOT)) {
         advance();
         std::string attr = expect(TokenType::IDENTIFIER).value;
-        auto access = std::make_shared<AttributeExpr>();
-        access->object = node;
-        access->attribute = attr;
-        node = access;
+        // Check for method call: obj.method(args)
+        if (check(TokenType::LPAREN)) {
+          advance();
+          auto call = std::make_shared<MethodCallExpr>();
+          call->object = node;
+          call->method = attr;
+          if (!check(TokenType::RPAREN)) {
+            call->args.push_back(parseExpression());
+            while (check(TokenType::COMMA)) {
+              advance();
+              call->args.push_back(parseExpression());
+            }
+          }
+          expect(TokenType::RPAREN);
+          node = call;
+        } else {
+          auto access = std::make_shared<AttributeExpr>();
+          access->object = node;
+          access->attribute = attr;
+          node = access;
+        }
       } else if (check(TokenType::LBRACKET)) {
         advance();
-        auto index = parseExpression();
-        expect(TokenType::RBRACKET);
-        auto access = std::make_shared<IndexExpr>();
-        access->object = node;
-        access->index = index;
-        node = access;
+        // Check for slice: obj[start:stop:step] or obj[::step]
+        if (check(TokenType::COLON)) {
+          // [:stop] or [::step]
+          auto slice = std::make_shared<SliceExpr>();
+          slice->object = node;
+          slice->start = nullptr;
+          advance(); // skip first ':'
+          if (check(TokenType::COLON)) {
+            // [::step]
+            advance();
+            slice->stop = nullptr;
+            if (!check(TokenType::RBRACKET)) {
+              slice->step = parseExpression();
+            }
+          } else if (!check(TokenType::RBRACKET)) {
+            slice->stop = parseExpression();
+            if (check(TokenType::COLON)) {
+              advance();
+              if (!check(TokenType::RBRACKET)) {
+                slice->step = parseExpression();
+              }
+            }
+          }
+          expect(TokenType::RBRACKET);
+          node = slice;
+        } else {
+          auto index = parseExpression();
+          if (check(TokenType::COLON)) {
+            // [start:stop] or [start:stop:step]
+            advance();
+            auto slice = std::make_shared<SliceExpr>();
+            slice->object = node;
+            slice->start = index;
+            if (check(TokenType::COLON)) {
+              // [start::step]
+              advance();
+              slice->stop = nullptr;
+              if (!check(TokenType::RBRACKET)) {
+                slice->step = parseExpression();
+              }
+            } else if (!check(TokenType::RBRACKET)) {
+              slice->stop = parseExpression();
+              if (check(TokenType::COLON)) {
+                advance();
+                if (!check(TokenType::RBRACKET)) {
+                  slice->step = parseExpression();
+                }
+              }
+            }
+            expect(TokenType::RBRACKET);
+            node = slice;
+          } else {
+            expect(TokenType::RBRACKET);
+            auto access = std::make_shared<IndexExpr>();
+            access->object = node;
+            access->index = index;
+            node = access;
+          }
+        }
       } else {
         break;
       }
@@ -840,6 +1066,22 @@ private:
   }
 
   ExprNodePtr parsePrimary() {
+    // Unary minus
+    if (check(TokenType::MINUS)) {
+      advance();
+      auto operand = parsePrimary();
+      if (auto *intLit = dynamic_cast<IntegerLiteral *>(operand.get())) {
+        intLit->value = -intLit->value;
+        return operand;
+      }
+      auto node = std::make_shared<BinaryExpr>();
+      node->op = "-";
+      auto zero = std::make_shared<IntegerLiteral>();
+      zero->value = 0;
+      node->left = zero;
+      node->right = operand;
+      return node;
+    }
     if (check(TokenType::STRING)) {
       auto node = std::make_shared<StringLiteral>();
       node->value = advance().value;
@@ -872,6 +1114,34 @@ private:
       // Check for function call
       if (check(TokenType::LPAREN)) {
         advance();
+        // Special case: namespace(key=val, ...) with keyword arguments
+        if (name == "namespace") {
+          // Parse keyword arguments and build a JSON object initializer
+          // We create a FunctionCallExpr where args[0] is a JSON-like init
+          auto call = std::make_shared<FunctionCallExpr>();
+          call->name = name;
+          // Parse key=value pairs and store as string literal pairs
+          json init_pairs = json::object();
+          while (!check(TokenType::RPAREN) &&
+                 pos_ < tokens_.size()) {
+            if (check(TokenType::IDENTIFIER)) {
+              std::string key = advance().value;
+              if (check(TokenType::ASSIGN)) {
+                advance();
+                // We can't fully evaluate here, so skip for now
+                // Just consume until comma or rparen
+                auto val_expr = parseExpression();
+                // Store key for later reference
+              }
+            }
+            if (check(TokenType::COMMA))
+              advance();
+            else
+              break;
+          }
+          expect(TokenType::RPAREN);
+          return call;
+        }
         auto call = std::make_shared<FunctionCallExpr>();
         call->name = name;
         if (!check(TokenType::RPAREN)) {
@@ -986,7 +1256,18 @@ private:
     }
     if (auto *set_node = dynamic_cast<SetNode *>(node)) {
       json val = evalExpr(set_node->value.get());
-      setVariable(set_node->var_name, val);
+      if (!set_node->attr_name.empty()) {
+        // Namespace attribute mutation: "set ns.attr = val"
+        // Find the namespace object and mutate it in place
+        for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
+          if (it->contains(set_node->var_name)) {
+            (*it)[set_node->var_name][set_node->attr_name] = val;
+            break;
+          }
+        }
+      } else {
+        setVariable(set_node->var_name, val);
+      }
       return "";
     }
     return "";
@@ -1126,23 +1407,217 @@ private:
         throw std::runtime_error("ChatTemplate: " + msg);
       }
       if (call->name == "namespace") {
-        // Return an empty object (simplified namespace support)
-        json ns = json::object();
-        for (size_t i = 0; i + 1 < call->args.size(); i += 2) {
-          // simplified: not fully supported
+        // namespace() creates a mutable object that persists across scopes
+        // keyword args are not parsed at AST level, so we return empty object
+        // The actual initialization happens via {% set ns.attr = val %}
+        return json::object();
+      }
+      // Type-checking built-in tests
+      if (call->name == "__is_string") {
+        if (!call->args.empty()) {
+          json val = evalExpr(call->args[0].get());
+          return val.is_string();
         }
-        return ns;
+        return false;
+      }
+      if (call->name == "__is_none") {
+        if (!call->args.empty()) {
+          json val = evalExpr(call->args[0].get());
+          return val.is_null();
+        }
+        return false;
+      }
+      if (call->name == "__is_number") {
+        if (!call->args.empty()) {
+          json val = evalExpr(call->args[0].get());
+          return val.is_number();
+        }
+        return false;
       }
       return nullptr;
     }
+    if (auto *method = dynamic_cast<MethodCallExpr *>(node)) {
+      return evalMethodCall(method);
+    }
+    if (auto *slice = dynamic_cast<SliceExpr *>(node)) {
+      return evalSlice(slice);
+    }
+    if (auto *contains = dynamic_cast<ContainsExpr *>(node)) {
+      json item = evalExpr(contains->item.get());
+      json container = evalExpr(contains->container.get());
+      // String containment: 'x' in 'xyz'
+      if (item.is_string() && container.is_string()) {
+        return container.get<std::string>().find(item.get<std::string>()) !=
+               std::string::npos;
+      }
+      // Array containment
+      if (container.is_array()) {
+        for (const auto &elem : container) {
+          if (elem == item)
+            return true;
+        }
+        return false;
+      }
+      // Object key containment
+      if (container.is_object() && item.is_string()) {
+        return container.contains(item.get<std::string>());
+      }
+      return false;
+    }
     return nullptr;
+  }
+
+  json evalMethodCall(MethodCallExpr *node) {
+    json obj = evalExpr(node->object.get());
+    const std::string &method = node->method;
+
+    if (obj.is_string()) {
+      std::string s = obj.get<std::string>();
+
+      if (method == "startswith" && !node->args.empty()) {
+        json arg = evalExpr(node->args[0].get());
+        if (arg.is_string()) {
+          std::string prefix = arg.get<std::string>();
+          return s.size() >= prefix.size() &&
+                 s.compare(0, prefix.size(), prefix) == 0;
+        }
+        return false;
+      }
+      if (method == "endswith" && !node->args.empty()) {
+        json arg = evalExpr(node->args[0].get());
+        if (arg.is_string()) {
+          std::string suffix = arg.get<std::string>();
+          return s.size() >= suffix.size() &&
+                 s.compare(s.size() - suffix.size(), suffix.size(), suffix) ==
+                   0;
+        }
+        return false;
+      }
+      if (method == "strip") {
+        std::string chars = " \t\n\r";
+        if (!node->args.empty()) {
+          json arg = evalExpr(node->args[0].get());
+          if (arg.is_string())
+            chars = arg.get<std::string>();
+        }
+        size_t start = s.find_first_not_of(chars);
+        if (start == std::string::npos)
+          return std::string("");
+        size_t end = s.find_last_not_of(chars);
+        return s.substr(start, end - start + 1);
+      }
+      if (method == "lstrip") {
+        std::string chars = " \t\n\r";
+        if (!node->args.empty()) {
+          json arg = evalExpr(node->args[0].get());
+          if (arg.is_string())
+            chars = arg.get<std::string>();
+        }
+        size_t start = s.find_first_not_of(chars);
+        if (start == std::string::npos)
+          return std::string("");
+        return s.substr(start);
+      }
+      if (method == "rstrip") {
+        std::string chars = " \t\n\r";
+        if (!node->args.empty()) {
+          json arg = evalExpr(node->args[0].get());
+          if (arg.is_string())
+            chars = arg.get<std::string>();
+        }
+        size_t end = s.find_last_not_of(chars);
+        if (end == std::string::npos)
+          return std::string("");
+        return s.substr(0, end + 1);
+      }
+      if (method == "split" && !node->args.empty()) {
+        json arg = evalExpr(node->args[0].get());
+        if (arg.is_string()) {
+          std::string delimiter = arg.get<std::string>();
+          json result = json::array();
+          size_t pos = 0;
+          size_t found;
+          while ((found = s.find(delimiter, pos)) != std::string::npos) {
+            result.push_back(s.substr(pos, found - pos));
+            pos = found + delimiter.size();
+          }
+          result.push_back(s.substr(pos));
+          return result;
+        }
+      }
+      if (method == "upper") {
+        std::string result = s;
+        std::transform(result.begin(), result.end(), result.begin(), ::toupper);
+        return result;
+      }
+      if (method == "lower") {
+        std::string result = s;
+        std::transform(result.begin(), result.end(), result.begin(), ::tolower);
+        return result;
+      }
+    }
+
+    return nullptr;
+  }
+
+  json evalSlice(SliceExpr *node) {
+    json obj = evalExpr(node->object.get());
+    if (!obj.is_array())
+      return json::array();
+
+    int size = static_cast<int>(obj.size());
+    int start = 0, stop = size, step = 1;
+
+    if (node->start)
+      start = evalExpr(node->start.get()).get<int>();
+    if (node->stop)
+      stop = evalExpr(node->stop.get()).get<int>();
+    if (node->step)
+      step = evalExpr(node->step.get()).get<int>();
+
+    // Handle negative indices
+    if (start < 0)
+      start = std::max(0, size + start);
+    if (stop < 0)
+      stop = std::max(0, size + stop);
+
+    // Clamp
+    start = std::max(0, std::min(start, size));
+    stop = std::max(0, std::min(stop, size));
+
+    json result = json::array();
+    if (step > 0) {
+      for (int i = start; i < stop; i += step)
+        result.push_back(obj[i]);
+    } else if (step < 0) {
+      // Reverse iteration: e.g., [::-1]
+      if (!node->start)
+        start = size - 1;
+      if (!node->stop)
+        stop = -1;
+      else if (stop < 0)
+        stop = std::max(-1, size + stop);
+      // Re-clamp for reverse
+      if (start >= size)
+        start = size - 1;
+      for (int i = start; i > stop; i += step) {
+        if (i >= 0 && i < size)
+          result.push_back(obj[i]);
+      }
+    }
+
+    return result;
   }
 
   json evalBinary(BinaryExpr *node) {
     json left = evalExpr(node->left.get());
     json right = evalExpr(node->right.get());
 
-    if (node->op == "+") {
+    if (node->op == "+" || node->op == "~") {
+      if (node->op == "~") {
+        // Tilde always does string concat
+        return jsonToString(left) + jsonToString(right);
+      }
       if (left.is_string() && right.is_string()) {
         return left.get<std::string>() + right.get<std::string>();
       }
@@ -1152,11 +1627,37 @@ private:
       // String + non-string: convert to string
       return jsonToString(left) + jsonToString(right);
     }
+    if (node->op == "-") {
+      if (left.is_number() && right.is_number()) {
+        return left.get<int>() - right.get<int>();
+      }
+      return 0;
+    }
     if (node->op == "==") {
       return left == right;
     }
     if (node->op == "!=") {
       return left != right;
+    }
+    if (node->op == ">") {
+      if (left.is_number() && right.is_number())
+        return left.get<int>() > right.get<int>();
+      return false;
+    }
+    if (node->op == "<") {
+      if (left.is_number() && right.is_number())
+        return left.get<int>() < right.get<int>();
+      return false;
+    }
+    if (node->op == ">=") {
+      if (left.is_number() && right.is_number())
+        return left.get<int>() >= right.get<int>();
+      return false;
+    }
+    if (node->op == "<=") {
+      if (left.is_number() && right.is_number())
+        return left.get<int>() <= right.get<int>();
+      return false;
     }
     if (node->op == "%") {
       if (left.is_number_integer() && right.is_number_integer()) {
