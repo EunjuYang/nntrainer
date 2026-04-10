@@ -51,6 +51,13 @@ See `meson_options.txt` for the full list.
 ### Formatting
 
 - **clang-format v14** using the repo's `.clang-format`. Run it on all `.cpp` and `.c` files.
+- **Always run clang-format before committing** to avoid CI formatting failures:
+  ```bash
+  # Format specific files
+  clang-format -i --style=file <file.cpp>
+  # Format all staged C/C++ files
+  git diff --cached --name-only --diff-filter=ACMR '*.cpp' '*.c' | xargs clang-format -i --style=file
+  ```
 - 80-column limit, 2-space indent, no tabs, Attach (K&R) brace style.
 - Header files (`.h`) have relaxed rules: indent and 80-col may differ.
 - **Warnings are treated as errors** (`werror=true`). Never weaken warning flags.
