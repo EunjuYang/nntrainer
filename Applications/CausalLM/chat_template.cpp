@@ -1407,7 +1407,10 @@ private:
       json index = evalExpr(idx->index.get());
       if (obj.is_array() && index.is_number_integer()) {
         int i = index.get<int>();
-        if (i >= 0 && i < static_cast<int>(obj.size()))
+        int sz = static_cast<int>(obj.size());
+        if (i < 0)
+          i += sz;
+        if (i >= 0 && i < sz)
           return obj[i];
       } else if (obj.is_object() && index.is_string()) {
         std::string key = index.get<std::string>();
