@@ -253,7 +253,17 @@ int main(int argc, char *argv[]) {
       if (chat_tmpl.isAvailable()) {
         std::cout << "[Info] Chat template loaded from tokenizer_config.json"
                   << std::endl;
+      } else {
+        std::cerr
+          << "[Warning] tokenizer_config.json found but chat template could "
+             "not be loaded. Chat formatting will not be applied to raw input."
+          << std::endl;
       }
+    } else {
+      std::cerr
+        << "[Warning] tokenizer_config.json not found in " << model_path
+        << ". Chat template will not be available for raw input formatting."
+        << std::endl;
     }
 
     // Determine input text
