@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "causal_lm.h"
+#include "chat_template.h"
 #include "gemma3_causallm.h"
 #include "gptoss_cached_slim_causallm.h"
 #include "gptoss_causallm.h"
@@ -46,6 +47,7 @@ static bool g_use_chat_template = false;
 static bool g_verbose = false;
 static std::string g_last_output = "";
 static double g_initialization_duration_ms = 0.0;
+static causallm::ChatTemplate g_chat_template;
 
 static std::map<std::string, std::string> g_model_path_map = {
   {"QWEN3-0.6B", "qwen3-0.6b"},
@@ -134,6 +136,12 @@ static const char *get_model_name_from_type(ModelType type) {
 
 static std::string apply_chat_template(const std::string &architecture,
                                        const std::string &input) {
+  // Use dynamic chat template from tokenizer_config.json if available
+  if (g_chat_template.isAvailable()) {
+    return g_chat_template.apply(input);
+  }
+
+  // Fallback: hardcoded per-architecture templates
   if (architecture == "LlamaForCausalLM") {
     // Llama 2/3 chat format: [INST] {prompt} [/INST]
     return "[INST] " + input + " [/INST]";
@@ -144,8 +152,6 @@ static std::string apply_chat_template(const std::string &architecture,
              architecture == "Qwen3CachedSlimMoeForCausalLM") {
     // Qwen chat format
     // <|im_start|>user\n{prompt}<|im_end|>\n<|im_start|>assistant\n
-    // Note: assuming model handles tokenizer specific special tokens or we
-    // might need to handle them raw if tokenizer enabled
     return "<|im_start|>user\n" + input + "<|im_end|>\n<|im_start|>assistant\n";
   } else if (architecture == "Gemma3ForCausalLM") {
     // Gemma chat format:
@@ -466,6 +472,25 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
         std::string t_file = nntr_cfg["tokenizer_file"];
         nntr_cfg["tokenizer_file"] = model_dir_path + "/" + t_file;
       }
+    }
+
+    // Load chat template from tokenizer_config.json if available
+    std::string tc_path = model_dir_path + "/tokenizer_config.json";
+    if (check_file_exists(tc_path)) {
+      g_chat_template = causallm::ChatTemplate::fromFile(tc_path);
+      if (g_chat_template.isAvailable()) {
+        std::cout << "[Info] Chat template loaded from tokenizer_config.json"
+                  << std::endl;
+      } else {
+        std::cerr
+          << "[Warning] tokenizer_config.json found but chat template could "
+             "not be loaded. Falling back to hardcoded templates." << std::endl;
+      }
+    } else {
+      g_chat_template = causallm::ChatTemplate();
+      std::cerr
+        << "[Warning] tokenizer_config.json not found in " << model_dir_path
+        << ". Using hardcoded chat templates." << std::endl;
     }
 
     // Construct weight file path
