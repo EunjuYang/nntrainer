@@ -488,6 +488,7 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
           << std::endl;
       }
     } else {
+      g_chat_template = causallm::ChatTemplate();
       std::cerr << "[Warning] tokenizer_config.json not found in "
                 << model_dir_path << ". Using hardcoded chat templates."
                 << std::endl;
