@@ -617,6 +617,9 @@ private:
   /** @brief Advance to next token and return the current one */
   const Token &advance() { return tokens_[pos_++]; }
 
+  /** @brief Peek at the next token without advancing */
+  const Token &peek() const { return tokens_[pos_ + 1]; }
+
   /** @brief Check if current token matches the given type */
   bool check(TokenType type) const { return current().type == type; }
 
@@ -965,9 +968,16 @@ private:
   }
 
   // "in" / "not in" containment
-  /** @brief Parse "in" containment expression */
+  /** @brief Parse "in" and "not in" containment expressions */
   ExprNodePtr parseContains() {
     auto left = parseAddition();
+
+    bool negated = false;
+    if (check(TokenType::NOT) && pos_ + 1 < tokens_.size() &&
+        peek().type == TokenType::IN) {
+      advance(); // skip 'not'
+      negated = true;
+    }
 
     if (check(TokenType::IN)) {
       advance();
@@ -975,9 +985,14 @@ private:
       auto node = std::make_shared<ContainsExpr>();
       node->item = left;
       node->container = right;
+      if (negated) {
+        auto not_node = std::make_shared<UnaryExpr>();
+        not_node->op = "not";
+        not_node->operand = node;
+        return not_node;
+      }
       return node;
     }
-    // "not in" is handled by parseNot wrapping this
 
     return left;
   }
