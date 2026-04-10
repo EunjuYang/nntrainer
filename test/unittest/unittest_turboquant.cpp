@@ -21,7 +21,7 @@
 /**
  * @brief Test hadamard_transform is orthogonal: applying twice returns original.
  */
-TEST(turboquant_v2, hadamard_roundtrip) {
+TEST(turboquant, hadamard_roundtrip) {
   constexpr int n = 64;
   std::vector<float> x(n), orig(n);
 
@@ -41,7 +41,7 @@ TEST(turboquant_v2, hadamard_roundtrip) {
 /**
  * @brief Test apply_rotation / apply_inverse_rotation roundtrip.
  */
-TEST(turboquant_v2, rotation_roundtrip) {
+TEST(turboquant, rotation_roundtrip) {
   constexpr int n = 128;
   std::vector<float> signs(n), input(n), rotated(n);
 
@@ -64,7 +64,7 @@ TEST(turboquant_v2, rotation_roundtrip) {
 /**
  * @brief Test rotation preserves L2 norm (orthogonal transform).
  */
-TEST(turboquant_v2, rotation_preserves_norm) {
+TEST(turboquant, rotation_preserves_norm) {
   constexpr int n = 64;
   std::vector<float> signs(n), input(n), rotated(n);
 
@@ -90,7 +90,7 @@ TEST(turboquant_v2, rotation_preserves_norm) {
 /**
  * @brief Test Lloyd-Max codebook symmetry and monotonicity.
  */
-TEST(turboquant_v2, codebook_properties) {
+TEST(turboquant, codebook_properties) {
   const auto &cb = nntrainer::CODEBOOK_D128;
 
   for (int i = 0; i < 8; ++i) {
@@ -114,7 +114,7 @@ TEST(turboquant_v2, codebook_properties) {
 /**
  * @brief Test lloydmax_quantize for known values.
  */
-TEST(turboquant_v2, lloydmax_quantize_known) {
+TEST(turboquant, lloydmax_quantize_known) {
   const auto &cb = nntrainer::CODEBOOK_D128;
 
   uint8_t q0 = nntrainer::lloydmax_quantize(0.0f, cb);
@@ -131,7 +131,7 @@ TEST(turboquant_v2, lloydmax_quantize_known) {
 /**
  * @brief Test turboquant_quantize_head -> turboquant_dequantize_head roundtrip.
  */
-TEST(turboquant_v2, quantize_dequantize_roundtrip) {
+TEST(turboquant, quantize_dequantize_roundtrip) {
   constexpr int head_dim = 128;
   std::vector<float> signs(head_dim);
   nntrainer::generate_random_signs(signs.data(), head_dim, 0xCAFE);
@@ -171,9 +171,9 @@ TEST(turboquant_v2, quantize_dequantize_roundtrip) {
 }
 
 /**
- * @brief Test quantize_kv_turboquant_v2 multi-head pipeline.
+ * @brief Test quantize_kv_turboquant multi-head pipeline.
  */
-TEST(turboquant_v2, quantize_v2_multihead) {
+TEST(turboquant, quantize_multihead) {
   constexpr int head_dim = 64;
   constexpr int num_heads = 4;
   constexpr int total = num_heads * head_dim;
@@ -189,7 +189,7 @@ TEST(turboquant_v2, quantize_v2_multihead) {
   std::vector<float> signs(head_dim);
   nntrainer::generate_random_signs(signs.data(), head_dim, 0x5EED);
 
-  nntrainer::quantize_kv_turboquant_v2(input.data(), packed.data(),
+  nntrainer::quantize_kv_turboquant(input.data(), packed.data(),
                                        norms.data(), signs.data(), head_dim,
                                        num_heads);
 
@@ -219,9 +219,9 @@ TEST(turboquant_v2, quantize_v2_multihead) {
 }
 
 /**
- * @brief Test compute_kcaches_packed4_v2 against FP32 reference.
+ * @brief Test compute_kcaches_packed4 against FP32 reference.
  */
-TEST(turboquant_v2, kcaches_v2_vs_fp32) {
+TEST(turboquant, kcaches_vs_fp32) {
   constexpr int num_heads_Q = 8;
   constexpr int num_heads_KV = 2;
   constexpr int gqa_size = num_heads_Q / num_heads_KV;
@@ -262,14 +262,14 @@ TEST(turboquant_v2, kcaches_v2_vs_fp32) {
   std::vector<float> knorms(num_rows * num_heads_KV);
 
   for (int r = 0; r < num_rows; ++r) {
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       keys.data() + r * num_heads_KV * head_dim,
       pk.data() + r * packed_row_bytes, knorms.data() + r * num_heads_KV,
       rot_signs.data(), head_dim, num_heads_KV);
   }
 
   std::vector<float> tq_scores(num_rows * num_heads_Q, 0.0f);
-  nntrainer::compute_kcaches_packed4_v2(
+  nntrainer::compute_kcaches_packed4(
     query.data(), pk.data(), knorms.data(), tq_scores.data(), num_rows,
     num_heads_KV, head_dim, gqa_size, 4, rot_signs.data());
 
@@ -279,13 +279,13 @@ TEST(turboquant_v2, kcaches_v2_vs_fp32) {
     max_diff = std::max(max_diff, d);
   }
 
-  EXPECT_LT(max_diff, 0.5f) << "compute_kcaches_packed4_v2 error too large";
+  EXPECT_LT(max_diff, 0.5f) << "compute_kcaches_packed4 error too large";
 }
 
 /**
- * @brief Test compute_vcache_packed4_v2 against FP32 reference.
+ * @brief Test compute_vcache_packed4 against FP32 reference.
  */
-TEST(turboquant_v2, vcache_v2_vs_fp32) {
+TEST(turboquant, vcache_vs_fp32) {
   constexpr int num_heads_Q = 4;
   constexpr int num_heads_KV = 2;
   constexpr int gqa_size = num_heads_Q / num_heads_KV;
@@ -334,14 +334,14 @@ TEST(turboquant_v2, vcache_v2_vs_fp32) {
   std::vector<float> vnorms(num_rows * num_heads_KV);
 
   for (int r = 0; r < num_rows; ++r) {
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       values.data() + r * num_heads_KV * head_dim,
       pv.data() + r * packed_row_bytes, vnorms.data() + r * num_heads_KV,
       rot_signs.data(), head_dim, num_heads_KV);
   }
 
   std::vector<float> tq_out(num_heads_Q * head_dim, 0.0f);
-  nntrainer::compute_vcache_packed4_v2(row_num, attn.data(), pv.data(),
+  nntrainer::compute_vcache_packed4(row_num, attn.data(), pv.data(),
                                        vnorms.data(), tq_out.data(),
                                        num_heads_KV, gqa_size, head_dim,
                                        rot_signs.data());
@@ -352,13 +352,13 @@ TEST(turboquant_v2, vcache_v2_vs_fp32) {
     max_diff = std::max(max_diff, d);
   }
 
-  EXPECT_LT(max_diff, 0.5f) << "compute_vcache_packed4_v2 error too large";
+  EXPECT_LT(max_diff, 0.5f) << "compute_vcache_packed4 error too large";
 }
 
 /**
  * @brief Test zero input produces zero norm and zero output.
  */
-TEST(turboquant_v2, quantize_zeros) {
+TEST(turboquant, quantize_zeros) {
   constexpr int head_dim = 64;
   std::vector<float> input(head_dim, 0.0f);
   std::vector<uint8_t> packed(head_dim / 2);
@@ -381,7 +381,7 @@ TEST(turboquant_v2, quantize_zeros) {
 /**
  * @brief Test fallback matches dispatch for v2 functions.
  */
-TEST(turboquant_v2, fallback_matches_dispatch) {
+TEST(turboquant, fallback_matches_dispatch) {
   constexpr int head_dim = 64;
   constexpr int num_heads = 2;
   constexpr int total = num_heads * head_dim;
@@ -397,13 +397,13 @@ TEST(turboquant_v2, fallback_matches_dispatch) {
 
   std::vector<uint8_t> packed_d(total / 2);
   std::vector<float> norms_d(num_heads);
-  nntrainer::quantize_kv_turboquant_v2(input.data(), packed_d.data(),
+  nntrainer::quantize_kv_turboquant(input.data(), packed_d.data(),
                                        norms_d.data(), signs.data(), head_dim,
                                        num_heads);
 
   std::vector<uint8_t> packed_f(total / 2);
   std::vector<float> norms_f(num_heads);
-  nntrainer::__fallback_quantize_kv_turboquant_v2(
+  nntrainer::__fallback_quantize_kv_turboquant(
     input.data(), packed_f.data(), norms_f.data(), signs.data(), head_dim,
     num_heads);
 

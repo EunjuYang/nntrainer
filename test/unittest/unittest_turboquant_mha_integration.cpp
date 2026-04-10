@@ -68,7 +68,7 @@ static void fp32_reference_attention(
 }
 
 // Forward declaration
-static void turboquant_v2_attention(
+static void turboquant_attention(
   const float *query, const float *keys, const float *values, float *output,
   int num_rows, int num_heads_Q, int num_heads_KV, int head_dim);
 
@@ -101,7 +101,7 @@ TEST(turboquant_logit_compare, small_config) {
   fp32_reference_attention(query.data(), keys.data(), values.data(),
                            ref_out.data(), context_len, num_heads_Q,
                            num_heads_KV, head_dim);
-  turboquant_v2_attention(query.data(), keys.data(), values.data(), tq_out.data(),
+  turboquant_attention(query.data(), keys.data(), values.data(), tq_out.data(),
                        context_len, num_heads_Q, num_heads_KV, head_dim);
 
   // Per-element comparison
@@ -177,7 +177,7 @@ TEST(turboquant_logit_compare, qwen3_like) {
   fp32_reference_attention(query.data(), keys.data(), values.data(),
                            ref_out.data(), context_len, num_heads_Q,
                            num_heads_KV, head_dim);
-  turboquant_v2_attention(query.data(), keys.data(), values.data(), tq_out.data(),
+  turboquant_attention(query.data(), keys.data(), values.data(), tq_out.data(),
                        context_len, num_heads_Q, num_heads_KV, head_dim);
 
   float max_diff = 0, sum_sq = 0, max_ref = 0;
@@ -232,7 +232,7 @@ TEST(turboquant_logit_compare, error_vs_context_length) {
     fp32_reference_attention(query.data(), keys.data(), values.data(),
                              ref_out.data(), ctx, num_heads_Q, num_heads_KV,
                              head_dim);
-    turboquant_v2_attention(query.data(), keys.data(), values.data(),
+    turboquant_attention(query.data(), keys.data(), values.data(),
                          tq_out.data(), ctx, num_heads_Q, num_heads_KV,
                          head_dim);
 
@@ -256,7 +256,7 @@ TEST(turboquant_logit_compare, error_vs_context_length) {
  * @brief TurboQuant v2 pipeline: norm + rotation + Lloyd-Max codebook.
  *        Paper Algorithm 1 (MSE-optimal).
  */
-static void turboquant_v2_attention(
+static void turboquant_attention(
   const float *query, const float *keys, const float *values, float *output,
   int num_rows, int num_heads_Q, int num_heads_KV, int head_dim) {
 
@@ -274,11 +274,11 @@ static void turboquant_v2_attention(
   std::vector<float> v_norms(num_rows * num_heads_KV);
 
   for (int r = 0; r < num_rows; ++r) {
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       keys + r * kv_width, pk.data() + r * packed_row_bytes,
       k_norms.data() + r * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       values + r * kv_width, pv.data() + r * packed_row_bytes,
       v_norms.data() + r * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
@@ -286,7 +286,7 @@ static void turboquant_v2_attention(
 
   // Q*K^T
   std::vector<float> attn(num_rows * num_heads_Q, 0.0f);
-  nntrainer::compute_kcaches_packed4_v2(
+  nntrainer::compute_kcaches_packed4(
     query, pk.data(), k_norms.data(), attn.data(), num_rows, num_heads_KV,
     head_dim, gqa_size, 4, rot_signs.data());
 
@@ -307,7 +307,7 @@ static void turboquant_v2_attention(
 
   // Attn * V
   std::fill(output, output + num_heads_Q * head_dim, 0.0f);
-  nntrainer::compute_vcache_packed4_v2(
+  nntrainer::compute_vcache_packed4(
     num_rows - 1, attn.data(), pv.data(), v_norms.data(), output, num_heads_KV,
     gqa_size, head_dim, rot_signs.data());
 }
@@ -365,12 +365,12 @@ TEST(turboquant_qwen3_sim, prefill_then_decode) {
 
   // Quantize into TQ v2 cache (all prefill tokens at once)
   for (int t = 0; t < prefill_len; ++t) {
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       prompt_keys.data() + t * kv_width,
       tq_kcache.data() + t * packed_row,
       tq_knorms.data() + t * num_heads_KV,
       rot_signs.data(), head_dim, num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       prompt_values.data() + t * kv_width,
       tq_vcache.data() + t * packed_row,
       tq_vnorms.data() + t * num_heads_KV,
@@ -403,11 +403,11 @@ TEST(turboquant_qwen3_sim, prefill_then_decode) {
               fp32_vcache.begin() + pos * kv_width);
 
     // Quantize and append to TQ cache
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       new_k.data(), tq_kcache.data() + pos * packed_row,
       tq_knorms.data() + pos * num_heads_KV,
       rot_signs.data(), head_dim, num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       new_v.data(), tq_vcache.data() + pos * packed_row,
       tq_vnorms.data() + pos * num_heads_KV,
       rot_signs.data(), head_dim, num_heads_KV);
@@ -425,7 +425,7 @@ TEST(turboquant_qwen3_sim, prefill_then_decode) {
     // ---- TQ v2 attention (using packed prefill + decode cache) ----
     // Q * K_packed^T (reads ALL ctx_len rows from packed cache)
     std::vector<float> tq_scores(ctx_len * num_heads_Q, 0.0f);
-    nntrainer::compute_kcaches_packed4_v2(
+    nntrainer::compute_kcaches_packed4(
       query.data(), tq_kcache.data(), tq_knorms.data(), tq_scores.data(),
       ctx_len, num_heads_KV, head_dim, gqa_size, 4, rot_signs.data());
 
@@ -446,7 +446,7 @@ TEST(turboquant_qwen3_sim, prefill_then_decode) {
 
     // Attn * V_packed (reads ALL ctx_len rows from packed value cache)
     std::vector<float> tq_out(q_width, 0.0f);
-    nntrainer::compute_vcache_packed4_v2(
+    nntrainer::compute_vcache_packed4(
       pos, tq_scores.data(), tq_vcache.data(), tq_vnorms.data(),
       tq_out.data(), num_heads_KV, gqa_size, head_dim, rot_signs.data());
 
@@ -523,11 +523,11 @@ TEST(turboquant_qwen3_sim, prefill_decode_1_7b_like) {
   for (int t = 0; t < prefill_len; ++t) {
     gen_llm_vec(fp32_kc.data() + t * kv_width, kv_width);
     gen_llm_vec(fp32_vc.data() + t * kv_width, kv_width);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       fp32_kc.data() + t * kv_width, tq_kc.data() + t * packed_row,
       tq_kn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       fp32_vc.data() + t * kv_width, tq_vc.data() + t * packed_row,
       tq_vn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
@@ -546,11 +546,11 @@ TEST(turboquant_qwen3_sim, prefill_decode_1_7b_like) {
 
     gen_llm_vec(fp32_kc.data() + pos * kv_width, kv_width);
     gen_llm_vec(fp32_vc.data() + pos * kv_width, kv_width);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       fp32_kc.data() + pos * kv_width, tq_kc.data() + pos * packed_row,
       tq_kn.data() + pos * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       fp32_vc.data() + pos * kv_width, tq_vc.data() + pos * packed_row,
       tq_vn.data() + pos * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
@@ -566,7 +566,7 @@ TEST(turboquant_qwen3_sim, prefill_decode_1_7b_like) {
 
     // TQ v2
     std::vector<float> tq_scores(ctx_len * num_heads_Q, 0.0f);
-    nntrainer::compute_kcaches_packed4_v2(
+    nntrainer::compute_kcaches_packed4(
       query.data(), tq_kc.data(), tq_kn.data(), tq_scores.data(), ctx_len,
       num_heads_KV, head_dim, gqa_size, 4, rot_signs.data());
 
@@ -585,7 +585,7 @@ TEST(turboquant_qwen3_sim, prefill_decode_1_7b_like) {
     }
 
     std::vector<float> tq_out(q_width, 0.0f);
-    nntrainer::compute_vcache_packed4_v2(
+    nntrainer::compute_vcache_packed4(
       pos, tq_scores.data(), tq_vc.data(), tq_vn.data(), tq_out.data(),
       num_heads_KV, gqa_size, head_dim, rot_signs.data());
 
@@ -619,7 +619,7 @@ TEST(turboquant_qwen3_sim, prefill_decode_1_7b_like) {
 /**
  * @brief Step-by-step MHA pipeline comparison that mirrors mha_core.cpp EXACTLY.
  *
- *  This test calls compute_kcaches_packed4_v2 and compute_vcache_packed4_v2
+ *  This test calls compute_kcaches_packed4 and compute_vcache_packed4
  *  the SAME way mha_core.cpp does:
  *    - Per KV-head loop (head_start, head_end) for OpenMP-like parallelization
  *    - Explicit local_window_size parameter
@@ -672,11 +672,11 @@ TEST(turboquant_mha_core_pipeline, single_token_stepwise_comparison) {
   std::vector<float> tq_vn(context_len * num_heads_KV);
 
   for (int t = 0; t < context_len; ++t) {
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       fp32_keys.data() + t * kv_width, tq_kc.data() + t * packed_row,
       tq_kn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       fp32_values.data() + t * kv_width, tq_vc.data() + t * packed_row,
       tq_vn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
@@ -711,7 +711,7 @@ TEST(turboquant_mha_core_pipeline, single_token_stepwise_comparison) {
   // TQ v2 scores - per KV-head loop (matching mha_core.cpp OpenMP pattern)
   std::vector<float> tq_scores(row_to_compute * num_heads_Q, 0.0f);
   for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
-    nntrainer::compute_kcaches_packed4_v2(
+    nntrainer::compute_kcaches_packed4(
       query.data(), tq_kc.data(), tq_kn.data(), tq_scores.data(),
       row_to_compute, num_heads_KV, head_dim, gqa_size, tile_size,
       rot_signs.data(), local_window_size, head_kv, head_kv + 1);
@@ -788,7 +788,7 @@ TEST(turboquant_mha_core_pipeline, single_token_stepwise_comparison) {
   std::vector<float> tq_out(q_width, 0.0f);
   int row_num = to - 1;
   for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
-    nntrainer::compute_vcache_packed4_v2(
+    nntrainer::compute_vcache_packed4(
       row_num, tq_attn.data(), tq_vc.data(), tq_vn.data(), tq_out.data(),
       num_heads_KV, gqa_size, head_dim, rot_signs.data(), local_window_size,
       head_kv, head_kv + 1);
@@ -881,11 +881,11 @@ TEST(turboquant_mha_core_pipeline, windowed_attention_consistency) {
   std::vector<float> tq_vn(context_len * num_heads_KV);
 
   for (int t = 0; t < context_len; ++t) {
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       fp32_keys.data() + t * kv_width, tq_kc.data() + t * packed_row,
       tq_kn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       fp32_values.data() + t * kv_width, tq_vc.data() + t * packed_row,
       tq_vn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
@@ -904,13 +904,13 @@ TEST(turboquant_mha_core_pipeline, windowed_attention_consistency) {
   std::vector<float> tq_scores(row_to_compute * num_heads_Q, 0.0f);
 
   for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
-    nntrainer::compute_kcaches_packed4_v2(
+    nntrainer::compute_kcaches_packed4(
       query.data(), tq_kc.data(), tq_kn.data(), tq_scores.data(),
       row_to_compute, num_heads_KV, head_dim, gqa_size, tile_size,
       rot_signs.data(), local_window_size, head_kv, head_kv + 1);
   }
 
-  // Verify layout: compute_kcaches_packed4_v2 writes scores at indices
+  // Verify layout: compute_kcaches_packed4 writes scores at indices
   // 0..row_cnt-1 (compacted), where row_cnt = min(row_to_compute, LWS).
   // Indices row_cnt..row_to_compute-1 should still be 0 (from our setZero).
   int row_cnt = row_to_compute < (int)local_window_size
@@ -952,7 +952,7 @@ TEST(turboquant_mha_core_pipeline, windowed_attention_consistency) {
   // V computation with windowing
   std::vector<float> tq_out(q_width, 0.0f);
   for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
-    nntrainer::compute_vcache_packed4_v2(
+    nntrainer::compute_vcache_packed4(
       from, tq_scores.data(), tq_vc.data(), tq_vn.data(), tq_out.data(),
       num_heads_KV, gqa_size, head_dim, rot_signs.data(), local_window_size,
       head_kv, head_kv + 1);
@@ -1022,7 +1022,7 @@ TEST(turboquant_mha_core_pipeline, windowed_attention_consistency) {
 
 /**
  * @brief Multi-step decode test with per-head parallelization.
- *        Verifies that calling compute_kcaches_packed4_v2 per KV-head
+ *        Verifies that calling compute_kcaches_packed4 per KV-head
  *        produces the same result as calling it all-at-once.
  */
 TEST(turboquant_mha_core_pipeline, per_head_vs_allheads) {
@@ -1052,12 +1052,12 @@ TEST(turboquant_mha_core_pipeline, per_head_vs_allheads) {
   std::vector<float> kv_data(kv_width);
   for (int t = 0; t < context_len; ++t) {
     for (auto &v : kv_data) v = normal(gen);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       kv_data.data(), tq_kc.data() + t * packed_row,
       tq_kn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
     for (auto &v : kv_data) v = normal(gen);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       kv_data.data(), tq_vc.data() + t * packed_row,
       tq_vn.data() + t * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
@@ -1070,7 +1070,7 @@ TEST(turboquant_mha_core_pipeline, per_head_vs_allheads) {
 
   // All-at-once (default: head_start=0, head_end=-1)
   std::vector<float> scores_all(row_to_compute * num_heads_Q, 0.0f);
-  nntrainer::compute_kcaches_packed4_v2(
+  nntrainer::compute_kcaches_packed4(
     query.data(), tq_kc.data(), tq_kn.data(), scores_all.data(),
     row_to_compute, num_heads_KV, head_dim, gqa_size, 4, rot_signs.data(),
     local_window_size);
@@ -1078,7 +1078,7 @@ TEST(turboquant_mha_core_pipeline, per_head_vs_allheads) {
   // Per KV-head (matching mha_core.cpp OpenMP pattern)
   std::vector<float> scores_per(row_to_compute * num_heads_Q, 0.0f);
   for (int hkv = 0; hkv < num_heads_KV; ++hkv) {
-    nntrainer::compute_kcaches_packed4_v2(
+    nntrainer::compute_kcaches_packed4(
       query.data(), tq_kc.data(), tq_kn.data(), scores_per.data(),
       row_to_compute, num_heads_KV, head_dim, gqa_size, 4, rot_signs.data(),
       local_window_size, hkv, hkv + 1);
@@ -1116,14 +1116,14 @@ TEST(turboquant_mha_core_pipeline, per_head_vs_allheads) {
   }
 
   std::vector<float> vout_all(q_width, 0.0f);
-  nntrainer::compute_vcache_packed4_v2(
+  nntrainer::compute_vcache_packed4(
     context_len - 1, attn_all.data(), tq_vc.data(), tq_vn.data(),
     vout_all.data(), num_heads_KV, gqa_size, head_dim, rot_signs.data(),
     local_window_size);
 
   std::vector<float> vout_per(q_width, 0.0f);
   for (int hkv = 0; hkv < num_heads_KV; ++hkv) {
-    nntrainer::compute_vcache_packed4_v2(
+    nntrainer::compute_vcache_packed4(
       context_len - 1, attn_per.data(), tq_vc.data(), tq_vn.data(),
       vout_per.data(), num_heads_KV, gqa_size, head_dim, rot_signs.data(),
       local_window_size, hkv, hkv + 1);
@@ -1173,7 +1173,7 @@ TEST(turboquant_mha_core_pipeline, quantize_dequantize_fidelity) {
     // Quantize
     std::vector<uint8_t> packed(packed_row);
     std::vector<float> norms(num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       orig.data(), packed.data(), norms.data(), rot_signs.data(), head_dim,
       num_heads_KV);
 
@@ -1233,7 +1233,7 @@ TEST(turboquant_mha_core_pipeline, quantize_dequantize_fidelity) {
  *        between OMP_NUM_THREADS=4 and OMP_NUM_THREADS=8.
  *
  *        Tests the OMP parallel for pattern used in mha_core.cpp (lines 827,
- * 850): each OMP thread calls compute_kcaches/vcache_packed4_v2 with a
+ * 850): each OMP thread calls compute_kcaches/vcache_packed4 with a
  * single-head range.
  */
 TEST(turboquant_mha_core_pipeline, omp_thread_count_determinism) {
@@ -1269,11 +1269,11 @@ TEST(turboquant_mha_core_pipeline, omp_thread_count_determinism) {
     for (auto &v : v_data)
       v = dist(gen);
 
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       k_data.data(), packed_kcache.data() + row * packed_row_bytes,
       kcache_norms.data() + row * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(
+    nntrainer::quantize_kv_turboquant(
       v_data.data(), packed_vcache.data() + row * packed_row_bytes,
       vcache_norms.data() + row * num_heads_KV, rot_signs.data(), head_dim,
       num_heads_KV);
@@ -1292,7 +1292,7 @@ TEST(turboquant_mha_core_pipeline, omp_thread_count_determinism) {
     omp_set_num_threads(nthreads);
 #pragma omp parallel for schedule(static)
     for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
-      nntrainer::compute_kcaches_packed4_v2(
+      nntrainer::compute_kcaches_packed4(
         query.data(), packed_kcache.data(), kcache_norms.data(), out.data(),
         row_to_compute, num_heads_KV, head_dim, gqa_size, tile_size,
         rot_signs.data(), local_window_size, head_kv, head_kv + 1);
@@ -1367,7 +1367,7 @@ TEST(turboquant_mha_core_pipeline, omp_thread_count_determinism) {
     omp_set_num_threads(nthreads);
 #pragma omp parallel for schedule(static)
     for (int head_kv = 0; head_kv < num_heads_KV; ++head_kv) {
-      nntrainer::compute_vcache_packed4_v2(
+      nntrainer::compute_vcache_packed4(
         row_num, attn.data(), packed_vcache.data(), vcache_norms.data(),
         out.data(), num_heads_KV, gqa_size, head_dim, rot_signs.data(),
         local_window_size, head_kv, head_kv + 1);
@@ -1464,7 +1464,7 @@ TEST(turboquant_mha_core_pipeline, openblas_quantization_amplification) {
     // Quantize with TurboQuant v2
     std::vector<uint8_t> packed(kv_width / 2);
     std::vector<float> norms(num_heads_KV);
-    nntrainer::quantize_kv_turboquant_v2(kv_out.data(), packed.data(),
+    nntrainer::quantize_kv_turboquant(kv_out.data(), packed.data(),
                                          norms.data(), rot_signs.data(),
                                          head_dim, num_heads_KV);
 

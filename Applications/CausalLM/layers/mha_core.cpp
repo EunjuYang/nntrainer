@@ -783,7 +783,7 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
       batch * cache_key_scales.getDim().getFeatureLen() +
       cache_row * num_heads_KV;
 
-    nntrainer::quantize_kv_turboquant_v2(key_data, packed_dst, norms_dst,
+    nntrainer::quantize_kv_turboquant(key_data, packed_dst, norms_dst,
                                          tq_rot_signs.data(), head_dim,
                                          num_heads_KV);
   }
@@ -800,7 +800,7 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
       batch * cache_value_scales.getDim().getFeatureLen() +
       cache_row * num_heads_KV;
 
-    nntrainer::quantize_kv_turboquant_v2(val_data, packed_dst, norms_dst,
+    nntrainer::quantize_kv_turboquant(val_data, packed_dst, norms_dst,
                                          tq_rot_signs.data(), head_dim,
                                          num_heads_KV);
   }
@@ -827,7 +827,7 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
 #pragma omp parallel for schedule(static)
     for (unsigned int head_kv = 0;
          head_kv < (unsigned int)(num_heads_Q / gqa_size); ++head_kv) {
-      nntrainer::compute_kcaches_packed4_v2(
+      nntrainer::compute_kcaches_packed4(
         q_data, kc_packed, kc_norms, out_data, row_to_compute, num_heads_KV,
         head_dim, gqa_size, tile_size, tq_rot_signs.data(),
         local_window_size, head_kv, head_kv + 1);
@@ -849,7 +849,7 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
 
 #pragma omp parallel for schedule(static)
     for (int head_kv = 0; head_kv < (int)num_heads_KV; ++head_kv) {
-      nntrainer::compute_vcache_packed4_v2(
+      nntrainer::compute_vcache_packed4(
         row_num, attn_data, vc_packed, vc_norms, attn_out, num_heads_KV,
         gqa_size, head_dim, tq_rot_signs.data(), local_window_size, head_kv,
         head_kv + 1);
@@ -884,7 +884,7 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
         out_.getData<float>() + out_start_row * num_heads_Q;
 
       futures.emplace_back(pool.submit_task([=]() {
-        nntrainer::compute_kcaches_packed4_v2(
+        nntrainer::compute_kcaches_packed4(
           input_addr, kc_packed, kc_norms, output_addr, row_to_compute,
           num_heads_KV, head_dim, gqa_size, tile_size, signs,
           local_window_size);
@@ -918,7 +918,7 @@ void MHACoreLayer::one_batch_incremental_forwarding_turboquant(
                      i * (num_heads_KV * gqa_size * head_dim);
 
         int row_num = is_causal ? (int)(to - seq + i) : (int)(to - 1);
-        nntrainer::compute_vcache_packed4_v2(
+        nntrainer::compute_vcache_packed4(
           row_num, input, vc_packed, vc_norms, out, num_heads_KV, gqa_size,
           head_dim, signs, local_window_size);
       }));

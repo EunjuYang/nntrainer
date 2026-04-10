@@ -1519,7 +1519,7 @@ extern void transform_int4_osv32_isv2_to_q4_0(size_t N, size_t K,
  * @param[in]  head_dim     dimension per head (power of 2)
  * @param[in]  num_heads    number of heads
  */
-extern void quantize_kv_turboquant_v2(const float *input, uint8_t *out_packed,
+extern void quantize_kv_turboquant(const float *input, uint8_t *out_packed,
                                       float *out_norms, const float *rot_signs,
                                       int head_dim, int num_heads);
 
@@ -1528,7 +1528,7 @@ extern void quantize_kv_turboquant_v2(const float *input, uint8_t *out_packed,
  *        Dequantizes via centroid lookup + inverse rotation + norm rescale,
  *        then dot product with query.
  */
-extern void compute_kcaches_packed4_v2(
+extern void compute_kcaches_packed4(
   const float *query, const uint8_t *kcache_packed, const float *kcache_norms,
   float *output, int num_rows, int num_cache_head, int head_dim, int gqa_size,
   int tile_size, const float *rot_signs, size_t local_window_size = UINT_MAX,
@@ -1537,7 +1537,7 @@ extern void compute_kcaches_packed4_v2(
 /**
  * @brief Compute attention-weighted V aggregation with TurboQuant v2.
  */
-extern void compute_vcache_packed4_v2(
+extern void compute_vcache_packed4(
   int row_num, const float *attn_weights, const uint8_t *vcache_packed,
   const float *vcache_norms, float *output, int num_cache_head, int gqa_size,
   int head_dim, const float *rot_signs, size_t local_window_size = UINT_MAX,
