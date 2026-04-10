@@ -1766,6 +1766,8 @@ ChatTemplate ChatTemplate::fromFile(const std::string &tokenizer_config_path) {
   }
 
   if (tmpl.template_str_.empty()) {
+    std::cerr << "[ChatTemplate] Warning: no 'chat_template' field found in "
+              << tokenizer_config_path << std::endl;
     return tmpl;
   }
 

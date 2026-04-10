@@ -478,6 +478,18 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
     std::string tc_path = model_dir_path + "/tokenizer_config.json";
     if (check_file_exists(tc_path)) {
       g_chat_template = causallm::ChatTemplate::fromFile(tc_path);
+      if (g_chat_template.isAvailable()) {
+        std::cout << "[Info] Chat template loaded from tokenizer_config.json"
+                  << std::endl;
+      } else {
+        std::cerr
+          << "[Warning] tokenizer_config.json found but chat template could "
+             "not be loaded. Falling back to hardcoded templates." << std::endl;
+      }
+    } else {
+      std::cerr
+        << "[Warning] tokenizer_config.json not found in " << model_dir_path
+        << ". Using hardcoded chat templates." << std::endl;
     }
 
     // Construct weight file path
