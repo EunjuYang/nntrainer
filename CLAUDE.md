@@ -42,7 +42,7 @@ Pass with `-D<option>=<value>` to `meson setup`:
 | `enable-openmp` | varies | OpenMP parallelism |
 | `enable-fsu` | false | Flash Storage Utilization for LLM inference |
 | `enable-transformer` | false | Transformer model support |
-| `arm-arch` | armv7l | ARM architecture target |
+| `arm-arch` | none | ARM architecture target (none, armv7l, armv8.2-a, armv9.2-a) |
 
 See `meson_options.txt` for the full list.
 
@@ -141,7 +141,7 @@ subprojects/         Dependencies (googletest, openblas, iniparser, ruy, CLBlast
 
 ### Layer hierarchy
 
-All layers derive from `nntrainer::Layer` (defined in `layer_devel.h`). Layers with weights extend `LayerImpl`. Each layer implements `finalize()` (shape inference), `forwarding()`, `calcDerivative()`, and `calcGrad()`. OpenCL layers live in `cl_layers/` and extend `LayerImplCl`.
+All layers derive from `nntrainer::Layer` (defined in `layer_devel.h`). Layers with weights extend `LayerImpl`. Each layer implements `finalize()` (shape inference), `forwarding()`, `calcDerivative()`, and `calcGradient()`. OpenCL layers live in `cl_layers/` and extend `LayerImplCl`.
 
 ### Model pipeline
 
