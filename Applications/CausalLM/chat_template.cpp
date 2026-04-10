@@ -25,6 +25,7 @@ namespace causallm {
 // ============================================================================
 // Token types for the Jinja2 lexer
 // ============================================================================
+/** @brief TokenType - enum class for Jinja2 template processing */
 enum class TokenType {
   TEXT,
   EXPRESSION_START, // {{
@@ -72,6 +73,7 @@ enum class TokenType {
   END_OF_INPUT,
 };
 
+/** @brief Lexer token with type, value, and whitespace control flags */
 struct Token {
   TokenType type;
   std::string value;
@@ -82,10 +84,13 @@ struct Token {
 // ============================================================================
 // Lexer
 // ============================================================================
+/** @brief Tokenizes Jinja2 template strings into token sequences */
 class Lexer {
 public:
+  /** @brief Construct lexer with input template string */
   explicit Lexer(const std::string &input) : input_(input), pos_(0) {}
 
+  /** @brief Tokenize the input template into a sequence of tokens */
   std::vector<Token> tokenize() {
     std::vector<Token> tokens;
 
@@ -140,6 +145,7 @@ public:
   }
 
 private:
+  /** @brief Try to match a string at current position and advance */
   bool match(const std::string &s) {
     if (pos_ + s.size() <= input_.size() &&
         input_.substr(pos_, s.size()) == s) {
@@ -149,11 +155,13 @@ private:
     return false;
   }
 
+  /** @brief Skip whitespace characters at current position */
   void skipWhitespace() {
     while (pos_ < input_.size() && std::isspace(input_[pos_]))
       pos_++;
   }
 
+  /** @brief Tokenize content inside expression or statement tags */
   void tokenizeInside(std::vector<Token> &tokens, TokenType end_type) {
     while (pos_ < input_.size()) {
       skipWhitespace();
@@ -329,6 +337,7 @@ private:
     }
   }
 
+  /** @brief Read a string literal token */
   Token readString() {
     char quote = input_[pos_++];
     std::string value;
@@ -370,6 +379,7 @@ private:
     return t;
   }
 
+  /** @brief Read a numeric literal token */
   Token readNumber() {
     std::string value;
     bool has_dot = false;
@@ -388,6 +398,7 @@ private:
     return t;
   }
 
+  /** @brief Read an identifier or keyword token */
   Token readIdentifier() {
     std::string value;
     while (pos_ < input_.size() &&
@@ -442,36 +453,43 @@ private:
 // ============================================================================
 // AST Nodes
 // ============================================================================
+/** @brief Base AST node for template parsing */
 struct ASTNode {
   virtual ~ASTNode() = default;
 };
 
 using ASTNodePtr = std::shared_ptr<ASTNode>;
 
+/** @brief Base expression AST node */
 struct ExprNode : ASTNode {};
 using ExprNodePtr = std::shared_ptr<ExprNode>;
 
+/** @brief AST node for literal text output */
 struct TextNode : ASTNode {
   std::string text;
 };
 
+/** @brief AST node for expression output ({{ expr }}) */
 struct OutputNode : ASTNode {
   ExprNodePtr expr;
   bool strip_before = false;
   bool strip_after = false;
 };
 
+/** @brief Single branch of an if/elif/else block */
 struct IfBranch {
   ExprNodePtr condition; // nullptr for else branch
   std::vector<ASTNodePtr> body;
 };
 
+/** @brief AST node for if/elif/else conditional blocks */
 struct IfNode : ASTNode {
   std::vector<IfBranch> branches;
   bool strip_before = false;
   bool strip_after = false;
 };
 
+/** @brief AST node for for-loop iteration blocks */
 struct ForNode : ASTNode {
   std::string var_name;
   ExprNodePtr iterable;
@@ -480,6 +498,7 @@ struct ForNode : ASTNode {
   bool strip_after = false;
 };
 
+/** @brief AST node for variable assignment (set statement) */
 struct SetNode : ASTNode {
   std::string var_name;
   std::string attr_name; // for "set ns.attr = val" (empty if simple set)
@@ -489,65 +508,79 @@ struct SetNode : ASTNode {
 };
 
 // Expression nodes
+/** @brief Expression node for string literal values */
 struct StringLiteral : ExprNode {
   std::string value;
 };
 
+/** @brief Expression node for integer literal values */
 struct IntegerLiteral : ExprNode {
   int value;
 };
 
+/** @brief Expression node for boolean literal values */
 struct BoolLiteral : ExprNode {
   bool value;
 };
 
+/** @brief Expression node for None/null literal values */
 struct NoneLiteral : ExprNode {};
 
+/** @brief Expression node for variable references */
 struct VariableExpr : ExprNode {
   std::string name;
 };
 
+/** @brief Expression node for attribute access (obj.attr) */
 struct AttributeExpr : ExprNode {
   ExprNodePtr object;
   std::string attribute;
 };
 
+/** @brief Expression node for index access (obj[key]) */
 struct IndexExpr : ExprNode {
   ExprNodePtr object;
   ExprNodePtr index;
 };
 
+/** @brief Expression node for binary operations (+, ==, and, etc.) */
 struct BinaryExpr : ExprNode {
   std::string op; // "+", "==", "!=", "and", "or", "%"
   ExprNodePtr left;
   ExprNodePtr right;
 };
 
+/** @brief Expression node for unary operations (not) */
 struct UnaryExpr : ExprNode {
   std::string op; // "not"
   ExprNodePtr operand;
 };
 
+/** @brief Expression node for filter application (val | filter) */
 struct FilterExpr : ExprNode {
   ExprNodePtr value;
   std::string filter_name;
 };
 
+/** @brief Expression node for "is defined" test */
 struct IsDefinedExpr : ExprNode {
   ExprNodePtr value;
 };
 
+/** @brief Expression node for function calls */
 struct FunctionCallExpr : ExprNode {
   std::string name;
   std::vector<ExprNodePtr> args;
 };
 
+/** @brief Expression node for method calls (obj.method()) */
 struct MethodCallExpr : ExprNode {
   ExprNodePtr object;
   std::string method;
   std::vector<ExprNodePtr> args;
 };
 
+/** @brief Expression node for slice operations (obj[start:stop:step]) */
 struct SliceExpr : ExprNode {
   ExprNodePtr object;
   ExprNodePtr start; // nullable
@@ -555,6 +588,7 @@ struct SliceExpr : ExprNode {
   ExprNodePtr step;  // nullable
 };
 
+/** @brief Expression node for "in" containment test */
 struct ContainsExpr : ExprNode {
   ExprNodePtr item;
   ExprNodePtr container;
@@ -563,11 +597,13 @@ struct ContainsExpr : ExprNode {
 // ============================================================================
 // Parser
 // ============================================================================
+/** @brief Parses token sequences into an AST for template rendering */
 class Parser {
 public:
   explicit Parser(const std::vector<Token> &tokens) :
     tokens_(tokens), pos_(0) {}
 
+  /** @brief Parse tokens into AST node list */
   std::vector<ASTNodePtr> parse() {
     std::vector<ASTNodePtr> nodes;
     parseBody(nodes, {});
@@ -575,12 +611,16 @@ public:
   }
 
 private:
+  /** @brief Get the current token without advancing */
   const Token &current() const { return tokens_[pos_]; }
 
+  /** @brief Advance to next token and return the current one */
   const Token &advance() { return tokens_[pos_++]; }
 
+  /** @brief Check if current token matches the given type */
   bool check(TokenType type) const { return current().type == type; }
 
+  /** @brief Match current token type and advance if matched */
   bool matchToken(TokenType type) {
     if (check(type)) {
       advance();
@@ -589,6 +629,7 @@ private:
     return false;
   }
 
+  /** @brief Expect current token to match type, throw on mismatch */
   Token expect(TokenType type) {
     if (!check(type)) {
       throw std::runtime_error("ChatTemplate parser: unexpected token '" +
@@ -598,6 +639,7 @@ private:
     return advance();
   }
 
+  /** @brief Parse template body until a stop keyword is found */
   void parseBody(std::vector<ASTNodePtr> &nodes,
                  const std::vector<TokenType> &stop_keywords) {
     while (pos_ < tokens_.size() && current().type != TokenType::END_OF_INPUT) {
@@ -635,6 +677,7 @@ private:
     }
   }
 
+  /** @brief Parse an output expression block ({{ expr }}) */
   ASTNodePtr parseOutput() {
     auto node = std::make_shared<OutputNode>();
     Token start = expect(TokenType::EXPRESSION_START);
@@ -645,6 +688,7 @@ private:
     return node;
   }
 
+  /** @brief Parse a statement block ({% ... %}) */
   void parseStatement(std::vector<ASTNodePtr> &nodes) {
     Token start = expect(TokenType::STATEMENT_START);
     bool strip_before = start.strip_before;
@@ -666,6 +710,7 @@ private:
     }
   }
 
+  /** @brief Parse an if/elif/else/endif block */
   ASTNodePtr parseIf(bool strip_before) {
     auto node = std::make_shared<IfNode>();
     node->strip_before = strip_before;
@@ -714,6 +759,7 @@ private:
     return node;
   }
 
+  /** @brief Parse a for/endfor loop block */
   ASTNodePtr parseFor(bool strip_before) {
     auto node = std::make_shared<ForNode>();
     node->strip_before = strip_before;
@@ -735,6 +781,7 @@ private:
     return node;
   }
 
+  /** @brief Parse a set variable assignment statement */
   ASTNodePtr parseSet(bool strip_before) {
     auto node = std::make_shared<SetNode>();
     node->strip_before = strip_before;
@@ -757,8 +804,10 @@ private:
   }
 
   // Expression parsing with precedence
+  /** @brief Parse a complete expression with precedence */
   ExprNodePtr parseExpression() { return parseOr(); }
 
+  /** @brief Parse OR boolean expression */
   ExprNodePtr parseOr() {
     auto left = parseAnd();
     while (check(TokenType::OR)) {
@@ -773,6 +822,7 @@ private:
     return left;
   }
 
+  /** @brief Parse AND boolean expression */
   ExprNodePtr parseAnd() {
     auto left = parseNot();
     while (check(TokenType::AND)) {
@@ -787,6 +837,7 @@ private:
     return left;
   }
 
+  /** @brief Parse NOT unary boolean expression */
   ExprNodePtr parseNot() {
     if (check(TokenType::NOT)) {
       advance();
@@ -798,6 +849,7 @@ private:
     return parseComparison();
   }
 
+  /** @brief Parse comparison and "is" test expressions */
   ExprNodePtr parseComparison() {
     auto left = parseContains();
 
@@ -913,6 +965,7 @@ private:
   }
 
   // "in" / "not in" containment
+  /** @brief Parse "in" containment expression */
   ExprNodePtr parseContains() {
     auto left = parseAddition();
 
@@ -929,6 +982,7 @@ private:
     return left;
   }
 
+  /** @brief Parse addition, subtraction, and tilde concat */
   ExprNodePtr parseAddition() {
     auto left = parseModulo();
     while (check(TokenType::PLUS) || check(TokenType::MINUS) ||
@@ -944,6 +998,7 @@ private:
     return left;
   }
 
+  /** @brief Parse modulo arithmetic expression */
   ExprNodePtr parseModulo() {
     auto left = parseFilter();
     while (check(TokenType::PERCENT)) {
@@ -958,6 +1013,7 @@ private:
     return left;
   }
 
+  /** @brief Parse pipe filter expression (val | filter) */
   ExprNodePtr parseFilter() {
     auto left = parsePostfix();
     while (check(TokenType::PIPE)) {
@@ -971,6 +1027,7 @@ private:
     return left;
   }
 
+  /** @brief Parse postfix operations (dot, index, method, slice) */
   ExprNodePtr parsePostfix() {
     auto node = parsePrimary();
     while (true) {
@@ -1066,6 +1123,7 @@ private:
     return node;
   }
 
+  /** @brief Parse primary expression (literals, variables, parens) */
   ExprNodePtr parsePrimary() {
     // Unary minus
     if (check(TokenType::MINUS)) {
@@ -1177,10 +1235,13 @@ private:
 // ============================================================================
 // Evaluator
 // ============================================================================
+/** @brief Evaluates AST nodes to produce rendered template output */
 class Evaluator {
 public:
+  /** @brief Construct evaluator with template context variables */
   explicit Evaluator(const json &context) { scopes_.push_back(context); }
 
+  /** @brief Evaluate AST node list and return rendered string */
   std::string evaluate(const std::vector<ASTNodePtr> &nodes) {
     std::string result;
     for (size_t i = 0; i < nodes.size(); ++i) {
@@ -1216,6 +1277,7 @@ public:
   }
 
 private:
+  /** @brief Check if node has strip-before whitespace control */
   bool shouldStripBefore(ASTNode *node) {
     if (auto *o = dynamic_cast<OutputNode *>(node))
       return o->strip_before;
@@ -1228,6 +1290,7 @@ private:
     return false;
   }
 
+  /** @brief Check if node has strip-after whitespace control */
   bool shouldStripAfter(ASTNode *node) {
     if (auto *o = dynamic_cast<OutputNode *>(node))
       return o->strip_after;
@@ -1240,6 +1303,7 @@ private:
     return false;
   }
 
+  /** @brief Evaluate a single AST node and return its string result */
   std::string evalNode(ASTNode *node) {
     if (auto *text = dynamic_cast<TextNode *>(node)) {
       return text->text;
@@ -1273,6 +1337,7 @@ private:
     return "";
   }
 
+  /** @brief Evaluate an if/elif/else conditional node */
   std::string evalIf(IfNode *node) {
     for (auto &branch : node->branches) {
       if (!branch.condition || isTruthy(evalExpr(branch.condition.get()))) {
@@ -1282,6 +1347,7 @@ private:
     return "";
   }
 
+  /** @brief Evaluate a for-loop node over an iterable */
   std::string evalFor(ForNode *node) {
     json iterable = evalExpr(node->iterable.get());
     if (!iterable.is_array())
@@ -1312,6 +1378,7 @@ private:
     return result;
   }
 
+  /** @brief Evaluate an expression node and return JSON value */
   json evalExpr(ExprNode *node) {
     if (auto *str = dynamic_cast<StringLiteral *>(node)) {
       return str->value;
@@ -1467,6 +1534,7 @@ private:
     return nullptr;
   }
 
+  /** @brief Evaluate a method call on a string object */
   json evalMethodCall(MethodCallExpr *node) {
     json obj = evalExpr(node->object.get());
     const std::string &method = node->method;
@@ -1560,6 +1628,7 @@ private:
     return nullptr;
   }
 
+  /** @brief Evaluate an array slice expression */
   json evalSlice(SliceExpr *node) {
     json obj = evalExpr(node->object.get());
     if (!obj.is_array())
@@ -1609,6 +1678,7 @@ private:
     return result;
   }
 
+  /** @brief Evaluate a binary operation expression */
   json evalBinary(BinaryExpr *node) {
     json left = evalExpr(node->left.get());
     json right = evalExpr(node->right.get());
@@ -1676,6 +1746,7 @@ private:
     return nullptr;
   }
 
+  /** @brief Check if a JSON value is truthy */
   bool isTruthy(const json &val) {
     if (val.is_null())
       return false;
@@ -1692,6 +1763,7 @@ private:
     return false;
   }
 
+  /** @brief Convert a JSON value to its string representation */
   std::string jsonToString(const json &val) {
     if (val.is_string())
       return val.get<std::string>();
@@ -1706,6 +1778,7 @@ private:
     return val.dump();
   }
 
+  /** @brief Look up a variable name in scope chain */
   json lookupVariable(const std::string &name) {
     // Search from innermost scope to outermost
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
@@ -1715,6 +1788,7 @@ private:
     return nullptr;
   }
 
+  /** @brief Set a variable in the current innermost scope */
   void setVariable(const std::string &name, const json &value) {
     // Set in the current (innermost) scope
     if (!scopes_.empty()) {
@@ -1766,6 +1840,8 @@ ChatTemplate ChatTemplate::fromFile(const std::string &tokenizer_config_path) {
   }
 
   if (tmpl.template_str_.empty()) {
+    std::cerr << "[ChatTemplate] Warning: no 'chat_template' field found in "
+              << tokenizer_config_path << std::endl;
     return tmpl;
   }
 
