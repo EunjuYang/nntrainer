@@ -669,8 +669,7 @@ apply_chat_template_messages(const std::string &architecture,
              architecture == "Qwen3SlimMoeForCausalLM" ||
              architecture == "Qwen3CachedSlimMoeForCausalLM") {
     for (const auto &msg : messages) {
-      result +=
-        "<|im_start|>" + msg.role + "\n" + msg.content + "<|im_end|>\n";
+      result += "<|im_start|>" + msg.role + "\n" + msg.content + "<|im_end|>\n";
     }
     if (add_generation_prompt) {
       result += "<|im_start|>assistant\n";
@@ -680,8 +679,7 @@ apply_chat_template_messages(const std::string &architecture,
       if (msg.role == "user") {
         result += "<start_of_turn>user\n" + msg.content + "<end_of_turn>\n";
       } else if (msg.role == "assistant") {
-        result +=
-          "<start_of_turn>model\n" + msg.content + "<end_of_turn>\n";
+        result += "<start_of_turn>model\n" + msg.content + "<end_of_turn>\n";
       }
     }
     if (add_generation_prompt) {
@@ -732,9 +730,8 @@ ErrorCode runModelWithMessages(const CausalLMChatMessage *messages,
 
   // Apply chat template to format the prompt
   const char *formattedInput = nullptr;
-  ErrorCode err =
-    applyChatTemplate(messages, num_messages, add_generation_prompt,
-                      &formattedInput);
+  ErrorCode err = applyChatTemplate(messages, num_messages,
+                                    add_generation_prompt, &formattedInput);
   if (err != CAUSAL_LM_ERROR_NONE) {
     return err;
   }
