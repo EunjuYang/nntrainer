@@ -46,6 +46,7 @@ static bool g_use_chat_template = false;
 static bool g_verbose = false;
 static std::string g_last_output = "";
 static double g_initialization_duration_ms = 0.0;
+static unsigned int g_turn_count = 0;
 
 static std::map<std::string, std::string> g_model_path_map = {
   {"QWEN3-0.6B", "qwen3-0.6b"},
@@ -503,6 +504,7 @@ ErrorCode loadModel(BackendType compute, ModelType modeltype,
 
     g_initialized = true;
     g_architecture = architecture;
+    g_turn_count = 0;
 
     auto finish_init = std::chrono::high_resolution_clock::now();
     auto init_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -553,9 +555,33 @@ ErrorCode runModel(const char *inputTextPrompt, const char **outputText) {
 
     *outputText = g_last_output.c_str();
 
+    ++g_turn_count;
+
   } catch (const std::exception &e) {
     std::cerr << "Exception in runModel: " << e.what() << std::endl;
     return CAUSAL_LM_ERROR_INFERENCE_FAILED;
+  }
+
+  return CAUSAL_LM_ERROR_NONE;
+}
+
+ErrorCode resetConversation(void) {
+  if (!g_initialized || !g_model) {
+    return CAUSAL_LM_ERROR_NOT_INITIALIZED;
+  }
+
+  try {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto causal_lm_model = dynamic_cast<causallm::CausalLM *>(g_model.get());
+    if (!causal_lm_model) {
+      return CAUSAL_LM_ERROR_UNKNOWN;
+    }
+    causal_lm_model->resetConversation();
+    g_last_output.clear();
+    g_turn_count = 0;
+  } catch (const std::exception &e) {
+    std::cerr << "Exception in resetConversation: " << e.what() << std::endl;
+    return CAUSAL_LM_ERROR_UNKNOWN;
   }
 
   return CAUSAL_LM_ERROR_NONE;

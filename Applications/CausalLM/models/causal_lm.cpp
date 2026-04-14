@@ -159,6 +159,30 @@ void CausalLM::registerOutputs(
   }
 }
 
+void CausalLM::resetConversation() {
+  global_token_len = 0;
+  SYS_PROMP_LEN = 0;
+  pending_ids_.clear();
+  output_list.clear();
+  has_run_ = false;
+
+  if (!model)
+    return;
+
+  // Reset cache_index in every MHACoreLayer so the next run() starts writing
+  // at position 0 of the (persistent) KV cache tensors.
+  std::function<void(ml::train::Layer &, nntrainer::RunLayerContext &, void *)>
+    fn = [](ml::train::Layer &l, nntrainer::RunLayerContext & /*context*/,
+            void * /*user_data*/) {
+      if (l.getType() == causallm::MHACoreLayer::type) {
+        if (auto *mha = dynamic_cast<causallm::MHACoreLayer *>(&l)) {
+          mha->resetCache();
+        }
+      }
+    };
+  model->forEachLayer(fn, nullptr);
+}
+
 void CausalLM::save_kvcache(std::string path, int to_) {
   auto f = nntrainer::checkedOpenStream<std::ofstream>(
     path, std::ios::out | std::ios::binary | std::ios::trunc);
