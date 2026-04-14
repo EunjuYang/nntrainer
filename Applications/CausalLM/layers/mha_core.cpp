@@ -493,6 +493,24 @@ void MHACoreLayer::one_batch_incremental_forwarding(
    *  |<-------------b_cached_key--------------->|
    */
 
+  // Diagnostic invariant: caller-provided absolute position (_from) must equal
+  // the layer's internal write head (cache_index). RoPE uses cache_index for
+  // position encoding and KV-cache writes are at cache_index, so any drift
+  // between them silently shifts position encodings of new tokens relative to
+  // the cached prefix and corrupts attention. Warn (do not throw) so
+  // multi-turn flows remain debuggable end-to-end.
+  if (cache_index != _from) {
+    static thread_local bool warned = false;
+    if (!warned) {
+      warned = true;
+      std::cerr << "[MHACoreLayer] WARNING: cache_index (" << cache_index
+                << ") != _from (" << _from
+                << ") on first divergence. Subsequent occurrences suppressed."
+                << " RoPE/cache offsets will be inconsistent across turns."
+                << std::endl;
+    }
+  }
+
   // Load Input Tensors of this batch : b_ denotes a Tensor for this batch
   auto &pool =
     nntrainer::Engine::Global().getThreadPoolManager()->getThreadPool();
