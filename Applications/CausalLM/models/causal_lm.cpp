@@ -169,14 +169,15 @@ void CausalLM::resetConversation() {
   if (!model)
     return;
 
-  // Reset cache_index in every MHACoreLayer so the next run() starts writing
-  // at position 0 of the (persistent) KV cache tensors.
+  // Reset cache_index in every MHACoreLayer and zero the underlying
+  // cache_key / cache_value tensors so no stale KV entries from the
+  // previous conversation can influence the next run.
   std::function<void(ml::train::Layer &, nntrainer::RunLayerContext &, void *)>
-    fn = [](ml::train::Layer &l, nntrainer::RunLayerContext & /*context*/,
+    fn = [](ml::train::Layer &l, nntrainer::RunLayerContext &context,
             void * /*user_data*/) {
       if (l.getType() == causallm::MHACoreLayer::type) {
         if (auto *mha = dynamic_cast<causallm::MHACoreLayer *>(&l)) {
-          mha->resetCache();
+          mha->resetCache(context);
         }
       }
     };

@@ -186,6 +186,18 @@ void MHACoreLayer::finalize(nntrainer::InitLayerContext &context) {
 
 /************************************************************** */
 
+void MHACoreLayer::resetCache(nntrainer::RunLayerContext &context) {
+  cache_index = 0;
+  nntrainer::Tensor &cache_key =
+    context.getTensor(tensor_idx[AttentionParams::cache_key]);
+  nntrainer::Tensor &cache_value =
+    context.getTensor(tensor_idx[AttentionParams::cache_value]);
+  cache_key.setZero();
+  cache_value.setZero();
+}
+
+/************************************************************** */
+
 /**
  * @note This forwarding function is used for training mode.
  *       This will be implemented ASAP.
