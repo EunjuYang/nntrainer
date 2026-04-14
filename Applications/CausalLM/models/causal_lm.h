@@ -85,6 +85,17 @@ public:
    */
   bool hasRun() const { return has_run_; }
 
+  /**
+   * @brief Reset multi-turn conversation state so the next run() starts a
+   *        fresh conversation on the same loaded model.
+   * @note  Clears accumulated token count, pending decoder tokens, the
+   *        last-turn output buffer, and resets the KV-cache write position
+   *        (cache_index) on every MHACoreLayer. The KV-cache tensor data
+   *        itself is not zeroed; subsequent writes overwrite the positions
+   *        that are read.
+   */
+  void resetConversation();
+
 protected:
   /**
    * @brief Setup the parameters for the CausalLM model
