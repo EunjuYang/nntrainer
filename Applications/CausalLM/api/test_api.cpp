@@ -407,25 +407,36 @@ int run_multi_turn_repl(bool verbose) {
 
 /**
  * @brief Compare multi-turn (KV-cache reuse) output against a canonical
- *        single-prompt equivalent that packs the entire conversation
- *        history into one runModelWithMessages() call.
+ *        single-prompt equivalent that packs the entire conversation into
+ *        one runModel() call as a single concatenated text input.
  *
  * Procedure:
- *   1. Reset. Multi-turn turn 1: runModelWithMessages([{user, Q1}])
- *      -> capture A1_MT.  Turn 2: runModelWithMessages([{user, Q2}])
- *      -> capture A2_MT.   (Turn 2 reuses turn 1's KV cache.)
- *   2. Reset. Single-prompt reference:
- *      runModelWithMessages([{user, Q1}, {assistant, A1_MT}, {user, Q2}])
- *      -> capture A2_SP.   (Full conversation re-prefilled from scratch
- *       using the canonical chat template with correct turn separators.)
- *   3. Print both, and report exact match / prefix match / diverged.
+ *   1. Reset. Multi-turn:
+ *        text1 = applyChatTemplate([{user, Q1}], add_gen=true)
+ *        runModel(text1) -> A1_MT          (template OFF for runModel; the
+ *                                           templated string is fed raw)
+ *        text2 = applyChatTemplate([{user, Q2}], add_gen=true)
+ *        runModel(text2) -> A2_MT          (turn-2 prefill reuses turn-1 KV)
+ *
+ *   2. Reset. Single-prompt:
+ *        text_full = applyChatTemplate(
+ *                       [{user, Q1}, {assistant, A1_MT}, {user, Q2}],
+ *                       add_gen=true)
+ *        runModel(text_full) -> A2_SP      (entire history in one prefill,
+ *                                           one single string input)
+ *
+ *   3. Print A2_MT and A2_SP and report exact / strong-prefix / diverged.
+ *
+ * Both paths bypass runModel()'s implicit chat-template wrapping by
+ * temporarily disabling g_use_chat_template, so the prompts that actually
+ * reach the model are EXACTLY the strings produced by applyChatTemplate
+ * (no double formatting).
  *
  * Interpretation:
- *   - Identical or strong prefix match -> multi-turn KV-cache path is
+ *   - Identical / strong prefix match -> multi-turn KV-cache path is
  *     structurally equivalent to the single-prompt canonical form.
- *   - Diverged early -> KV-cache state (positions, separator tokens,
- *     residual data) does not match the canonical prefill, indicating
- *     a multi-turn bug.
+ *   - Diverged -> KV-cache state (positions, separator tokens, residual
+ *     data) does not match the canonical prefill.
  */
 int run_compare_modes(bool verbose) {
   printSection("Compare Modes: Multi-Turn vs Single-Prompt");
@@ -433,61 +444,121 @@ int run_compare_modes(bool verbose) {
   const char *q1 = "My name is Alice. Please remember my name.";
   const char *q2 = "What is my name?";
 
+  // Disable runModel()'s implicit chat-template wrapping for the duration
+  // of this test. We feed runModel raw strings that we have already
+  // formatted via applyChatTemplate(); leaving g_use_chat_template=true
+  // would re-wrap them and corrupt the prompt (double-formatting).
+  Config cfg_off{};
+  cfg_off.use_chat_template = false;
+  cfg_off.debug_mode = false;
+  cfg_off.verbose = verbose;
+  cfg_off.chat_template_name = nullptr;
+  setOptions(cfg_off);
+
+  auto restore_template = [&]() {
+    Config cfg_on{};
+    cfg_on.use_chat_template = true;
+    cfg_on.debug_mode = false;
+    cfg_on.verbose = verbose;
+    cfg_on.chat_template_name = nullptr;
+    setOptions(cfg_on);
+  };
+
+  // Helper: build a templated string from a message list.
+  auto build_template = [](const std::vector<CausalLMChatMessage> &msgs,
+                           std::string *out) -> ErrorCode {
+    const char *txt = nullptr;
+    ErrorCode e = applyChatTemplate(msgs.data(), msgs.size(), true, &txt);
+    if (e != CAUSAL_LM_ERROR_NONE || !txt)
+      return e == CAUSAL_LM_ERROR_NONE ? CAUSAL_LM_ERROR_UNKNOWN : e;
+    *out = txt;
+    return CAUSAL_LM_ERROR_NONE;
+  };
+
   // ---- (1) Multi-turn with KV-cache reuse ----
   std::cout << COLOR_BOLD << "[MT] Reset + 2 incremental turns" << COLOR_RESET
             << "\n";
   ErrorCode rerr = resetConversation();
   if (rerr != CAUSAL_LM_ERROR_NONE) {
     printError("resetConversation() failed before MT run.");
+    restore_template();
     return 1;
   }
 
-  CausalLMChatMessage mt1_msgs[] = {{"user", q1}};
-  const char *mt1_out_c = nullptr;
-  std::cout << COLOR_BOLD << "MT turn 1" << COLOR_RESET << "\n";
-  ErrorCode err = runModelWithMessages(mt1_msgs, 1, true, &mt1_out_c);
-  if (err != CAUSAL_LM_ERROR_NONE || !mt1_out_c) {
-    printError("MT turn 1 runModelWithMessages failed");
+  std::string text1, text2;
+  if (build_template({{"user", q1}}, &text1) != CAUSAL_LM_ERROR_NONE) {
+    printError("applyChatTemplate failed for MT turn 1.");
+    restore_template();
     return 2;
+  }
+  std::cout << COLOR_GRAY << "  MT text1 (raw, " << text1.size()
+            << " chars):\n" << text1 << COLOR_RESET << "\n";
+
+  std::cout << COLOR_BOLD << "MT turn 1" << COLOR_RESET << "\n";
+  const char *mt1_out_c = nullptr;
+  ErrorCode err = runModel(text1.c_str(), &mt1_out_c);
+  if (err != CAUSAL_LM_ERROR_NONE || !mt1_out_c) {
+    printError("MT turn 1 runModel failed");
+    restore_template();
+    return 3;
   }
   std::string a1_mt = mt1_out_c;
   std::cout << COLOR_GREEN << "  A1_MT: " << COLOR_RESET << a1_mt << "\n\n";
 
-  CausalLMChatMessage mt2_msgs[] = {{"user", q2}};
-  const char *mt2_out_c = nullptr;
+  if (build_template({{"user", q2}}, &text2) != CAUSAL_LM_ERROR_NONE) {
+    printError("applyChatTemplate failed for MT turn 2.");
+    restore_template();
+    return 4;
+  }
+  std::cout << COLOR_GRAY << "  MT text2 (raw, " << text2.size()
+            << " chars):\n" << text2 << COLOR_RESET << "\n";
+
   std::cout << COLOR_BOLD << "MT turn 2 (reuses turn-1 KV cache)" << COLOR_RESET
             << "\n";
-  err = runModelWithMessages(mt2_msgs, 1, true, &mt2_out_c);
+  const char *mt2_out_c = nullptr;
+  err = runModel(text2.c_str(), &mt2_out_c);
   if (err != CAUSAL_LM_ERROR_NONE || !mt2_out_c) {
-    printError("MT turn 2 runModelWithMessages failed");
-    return 3;
+    printError("MT turn 2 runModel failed");
+    restore_template();
+    return 5;
   }
   std::string a2_mt = mt2_out_c;
   std::cout << COLOR_GREEN << "  A2_MT: " << COLOR_RESET << a2_mt << "\n\n";
 
   // ---- (2) Single-prompt canonical reference ----
   std::cout << COLOR_BOLD
-            << "[SP] Reset + 1 call with full [user, assistant, user] history"
+            << "[SP] Reset + 1 call with concatenated [Q1, A1_MT, Q2] prompt"
             << COLOR_RESET << "\n";
   rerr = resetConversation();
   if (rerr != CAUSAL_LM_ERROR_NONE) {
     printError("resetConversation() failed before SP run.");
-    return 4;
+    restore_template();
+    return 6;
   }
 
-  CausalLMChatMessage sp_msgs[] = {
-    {"user", q1},
-    {"assistant", a1_mt.c_str()},
-    {"user", q2},
-  };
+  std::string text_full;
+  if (build_template({{"user", q1},
+                      {"assistant", a1_mt.c_str()},
+                      {"user", q2}},
+                     &text_full) != CAUSAL_LM_ERROR_NONE) {
+    printError("applyChatTemplate failed for SP build.");
+    restore_template();
+    return 7;
+  }
+  std::cout << COLOR_GRAY << "  SP text_full (raw, " << text_full.size()
+            << " chars):\n" << text_full << COLOR_RESET << "\n";
+
   const char *sp_out_c = nullptr;
-  err = runModelWithMessages(sp_msgs, 3, true, &sp_out_c);
+  err = runModel(text_full.c_str(), &sp_out_c);
   if (err != CAUSAL_LM_ERROR_NONE || !sp_out_c) {
-    printError("SP runModelWithMessages failed");
-    return 5;
+    printError("SP runModel failed");
+    restore_template();
+    return 8;
   }
   std::string a2_sp = sp_out_c;
   std::cout << COLOR_GREEN << "  A2_SP: " << COLOR_RESET << a2_sp << "\n\n";
+
+  restore_template();
 
   // ---- (3) Compare ----
   printSection("Comparison Report");
@@ -530,9 +601,9 @@ int run_compare_modes(bool verbose) {
     return 0;
   }
   printWarning("Outputs DIVERGED — multi-turn KV-cache path does not match "
-               "the canonical single-prompt template. Inspect KV-cache "
+               "the canonical single-prompt prefill. Inspect KV-cache "
                "boundary tokens and position indexing.");
-  return 6;
+  return 9;
 }
 } // namespace
 
