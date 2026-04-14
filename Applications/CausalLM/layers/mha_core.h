@@ -296,6 +296,14 @@ public:
     nntrainer::RunLayerContext &context,
     std::vector<nntrainer::TensorDim> input_dimensions) override;
 
+  /**
+   * @brief Reset KV cache write position to 0.
+   * @note  Used to start a new multi-turn conversation. The cache tensors
+   *        themselves are not zeroed; subsequent writes overwrite the
+   *        positions that are read.
+   */
+  WIN_EXPORT void resetCache() { cache_index = 0; }
+
   inline static const std::string type = "mha_core";
 
 private:
