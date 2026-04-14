@@ -50,6 +50,7 @@ static unsigned int g_turn_count = 0;
 
 static std::map<std::string, std::string> g_model_path_map = {
   {"QWEN3-0.6B", "qwen3-0.6b"},
+  {"QWEN3-1.7B", "qwen3-1.7b"},
 };
 
 /**
@@ -128,6 +129,8 @@ static const char *get_model_name_from_type(ModelType type) {
   switch (type) {
   case CAUSAL_LM_MODEL_QWEN3_0_6B:
     return "QWEN3-0.6B";
+  case CAUSAL_LM_MODEL_QWEN3_1_7B:
+    return "QWEN3-1.7B";
   default:
     return nullptr;
   }
