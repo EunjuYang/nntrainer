@@ -525,6 +525,70 @@ int run_compare_modes(bool verbose) {
   std::string a2_mt = mt2_out_c;
   std::cout << COLOR_GREEN << "  A2_MT: " << COLOR_RESET << a2_mt << "\n\n";
 
+  // ---- (1b) Multi-turn with explicit "\n" turn-boundary repair ----
+  // Hypothesis: the canonical Qwen3 chat layout always has "\n" between
+  // <|im_end|> (close of previous turn) and <|im_start|> (open of next).
+  // applyChatTemplate(single message) does NOT prepend that "\n", so the
+  // KV-cache concatenation in MT mode misses it. Prepend it manually here
+  // and check whether MT output then matches SP.
+  std::cout << COLOR_BOLD
+            << "[MT_FIX] Reset + 2 turns with leading \"\\n\" on turn 2"
+            << COLOR_RESET << "\n";
+  rerr = resetConversation();
+  if (rerr != CAUSAL_LM_ERROR_NONE) {
+    printError("resetConversation() failed before MT_FIX run.");
+    restore_template();
+    return 10;
+  }
+
+  std::cout << COLOR_BOLD << "MT_FIX turn 1" << COLOR_RESET << "\n";
+  const char *mtfix1_out_c = nullptr;
+  err = runModel(text1.c_str(), &mtfix1_out_c);
+  if (err != CAUSAL_LM_ERROR_NONE || !mtfix1_out_c) {
+    printError("MT_FIX turn 1 runModel failed");
+    restore_template();
+    return 11;
+  }
+  std::string a1_mtfix = mtfix1_out_c;
+  std::cout << COLOR_GREEN << "  A1_MT_FIX: " << COLOR_RESET << a1_mtfix
+            << "\n\n";
+
+  // Strip the system-prompt prefix from text2 if present so we don't re-inject
+  // a system block mid-stream. The Qwen3 chat template always emits
+  // "<|im_start|>system\n...<|im_end|>\n" first when no explicit system msg
+  // is provided. For continuation we want to pick up exactly at the next
+  // user turn.
+  std::string text2_continuation;
+  {
+    const std::string sys_open = "<|im_start|>system";
+    const std::string user_open = "<|im_start|>user";
+    if (text2.compare(0, sys_open.size(), sys_open) == 0) {
+      auto user_pos = text2.find(user_open);
+      text2_continuation = (user_pos != std::string::npos)
+                             ? text2.substr(user_pos)
+                             : text2;
+    } else {
+      text2_continuation = text2;
+    }
+  }
+  std::string text2_fix = "\n" + text2_continuation;
+  std::cout << COLOR_GRAY << "  MT_FIX text2 (raw, " << text2_fix.size()
+            << " chars):\n" << text2_fix << COLOR_RESET << "\n";
+
+  std::cout << COLOR_BOLD
+            << "MT_FIX turn 2 (reuses turn-1 KV cache, +\"\\n\" prefix)"
+            << COLOR_RESET << "\n";
+  const char *mtfix2_out_c = nullptr;
+  err = runModel(text2_fix.c_str(), &mtfix2_out_c);
+  if (err != CAUSAL_LM_ERROR_NONE || !mtfix2_out_c) {
+    printError("MT_FIX turn 2 runModel failed");
+    restore_template();
+    return 12;
+  }
+  std::string a2_mtfix = mtfix2_out_c;
+  std::cout << COLOR_GREEN << "  A2_MT_FIX: " << COLOR_RESET << a2_mtfix
+            << "\n\n";
+
   // ---- (2) Single-prompt canonical reference ----
   std::cout << COLOR_BOLD
             << "[SP] Reset + 1 call with concatenated [Q1, A1_MT, Q2] prompt"
@@ -562,47 +626,70 @@ int run_compare_modes(bool verbose) {
 
   // ---- (3) Compare ----
   printSection("Comparison Report");
-  std::cout << COLOR_BOLD << "A2_MT" << COLOR_RESET << " (multi-turn, "
+  std::cout << COLOR_BOLD << "A2_MT" << COLOR_RESET << " (multi-turn naive, "
             << a2_mt.size() << " chars):\n  " << COLOR_YELLOW << a2_mt
             << COLOR_RESET << "\n\n";
+  std::cout << COLOR_BOLD << "A2_MT_FIX" << COLOR_RESET
+            << " (multi-turn + leading \"\\n\", " << a2_mtfix.size()
+            << " chars):\n  " << COLOR_YELLOW << a2_mtfix << COLOR_RESET
+            << "\n\n";
   std::cout << COLOR_BOLD << "A2_SP" << COLOR_RESET << " (single-prompt, "
             << a2_sp.size() << " chars):\n  " << COLOR_YELLOW << a2_sp
             << COLOR_RESET << "\n\n";
 
-  // Exact match?
-  if (a2_mt == a2_sp) {
-    printSuccess("EXACT MATCH — multi-turn KV-cache output == canonical.");
+  auto report_pair = [](const std::string &label_a, const std::string &a,
+                        const std::string &label_b, const std::string &b) {
+    if (a == b) {
+      std::cout << COLOR_GREEN << "  " << label_a << " == " << label_b
+                << ": EXACT MATCH" << COLOR_RESET << "\n";
+      return;
+    }
+    size_t lcp = 0;
+    const size_t n = std::min(a.size(), b.size());
+    while (lcp < n && a[lcp] == b[lcp])
+      ++lcp;
+    size_t denom = std::max(a.size(), b.size());
+    double r =
+      denom > 0 ? static_cast<double>(lcp) / static_cast<double>(denom) : 1.0;
+    std::cout << "  " << label_a << " vs " << label_b << ": LCP=" << lcp
+              << " chars (" << std::fixed << std::setprecision(1)
+              << (r * 100.0) << "%)";
+    if (lcp < n) {
+      std::cout << "\n    diverge: " << label_a << "...\""
+                << a.substr(lcp, 32) << "\"\n             "
+                << label_b << "...\"" << b.substr(lcp, 32) << "\"";
+    }
     std::cout << "\n";
+  };
+
+  report_pair("A2_MT    ", a2_mt, "A2_SP", a2_sp);
+  report_pair("A2_MT_FIX", a2_mtfix, "A2_SP", a2_sp);
+
+  // Heuristic structural check: a healthy Qwen3 reasoning answer should
+  // contain a closing </think> tag. Missing close suggests the second turn
+  // collapsed (the symptom the user reported).
+  auto has_think_close = [](const std::string &s) {
+    return s.find("</think>") != std::string::npos;
+  };
+  std::cout << "\n" << COLOR_BOLD << "Structural check (</think> present):"
+            << COLOR_RESET << "\n";
+  std::cout << "  A2_MT    : " << (has_think_close(a2_mt) ? "yes" : "NO")
+            << "\n";
+  std::cout << "  A2_MT_FIX: " << (has_think_close(a2_mtfix) ? "yes" : "NO")
+            << "\n";
+  std::cout << "  A2_SP    : " << (has_think_close(a2_sp) ? "yes" : "NO")
+            << "\n";
+
+  if (a2_mtfix == a2_sp) {
+    printSuccess("MT_FIX matches SP exactly — turn-boundary \"\\n\" "
+                 "hypothesis CONFIRMED.");
     return 0;
   }
-
-  // Longest common prefix (char-level).
-  size_t lcp = 0;
-  const size_t n = std::min(a2_mt.size(), a2_sp.size());
-  while (lcp < n && a2_mt[lcp] == a2_sp[lcp])
-    ++lcp;
-  size_t denom = std::max(a2_mt.size(), a2_sp.size());
-  double prefix_ratio =
-    denom > 0 ? static_cast<double>(lcp) / static_cast<double>(denom) : 1.0;
-
-  std::cout << COLOR_BOLD << "Longest common prefix: " << COLOR_RESET << lcp
-            << " chars (" << std::fixed << std::setprecision(1)
-            << (prefix_ratio * 100.0) << "% of longer output)\n";
-  if (lcp < n) {
-    std::cout << COLOR_BOLD << "First divergence at char " << lcp << COLOR_RESET
-              << ":\n";
-    std::cout << "  MT: ...\"" << a2_mt.substr(lcp, 32) << "\"\n";
-    std::cout << "  SP: ...\"" << a2_sp.substr(lcp, 32) << "\"\n";
-  }
-
-  if (prefix_ratio >= 0.90) {
-    printSuccess("Strong prefix match (>=90%) — multi-turn closely tracks "
-                 "canonical.");
+  if (a2_mt == a2_sp) {
+    printSuccess("MT (naive) matches SP exactly.");
     return 0;
   }
-  printWarning("Outputs DIVERGED — multi-turn KV-cache path does not match "
-               "the canonical single-prompt prefill. Inspect KV-cache "
-               "boundary tokens and position indexing.");
+  printWarning("Outputs DIVERGED. See per-pair LCP report above.");
   return 9;
 }
 } // namespace
