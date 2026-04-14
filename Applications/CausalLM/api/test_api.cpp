@@ -94,7 +94,7 @@ void printUsage(const char *program_name) {
   std::cout << COLOR_YELLOW << "Usage:" << COLOR_RESET << "\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
             << " <model_name> [prompt] [use_chat_template] [quantization] "
-               "[verbose] [--verify-memory|--multi-turn]\n";
+               "[verbose] [--verify-memory|--multi-turn|--compare-modes]\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
             << " <model_name> --chat-file <path.json> [quantization] "
                "[verbose] \n\n";
@@ -122,7 +122,11 @@ void printUsage(const char *program_name) {
             << "  - Scripted 2-turn regression test, then reset+recheck\n";
   std::cout << "  --multi-turn      " << COLOR_GREEN << "OPTIONAL"
             << COLOR_RESET
-            << "  - Interactive REPL (/reset, /quit supported)\n\n";
+            << "  - Interactive REPL (/reset, /quit supported)\n";
+  std::cout << "  --compare-modes   " << COLOR_GREEN << "OPTIONAL"
+            << COLOR_RESET
+            << "  - Compare multi-turn KV-cache output vs single-prompt "
+               "canonical\n\n";
 
   std::cout << COLOR_YELLOW << "Examples:" << COLOR_RESET << "\n";
   std::cout << "  " << COLOR_BOLD << program_name << COLOR_RESET
@@ -400,6 +404,136 @@ int run_multi_turn_repl(bool verbose) {
   }
   return 0;
 }
+
+/**
+ * @brief Compare multi-turn (KV-cache reuse) output against a canonical
+ *        single-prompt equivalent that packs the entire conversation
+ *        history into one runModelWithMessages() call.
+ *
+ * Procedure:
+ *   1. Reset. Multi-turn turn 1: runModelWithMessages([{user, Q1}])
+ *      -> capture A1_MT.  Turn 2: runModelWithMessages([{user, Q2}])
+ *      -> capture A2_MT.   (Turn 2 reuses turn 1's KV cache.)
+ *   2. Reset. Single-prompt reference:
+ *      runModelWithMessages([{user, Q1}, {assistant, A1_MT}, {user, Q2}])
+ *      -> capture A2_SP.   (Full conversation re-prefilled from scratch
+ *       using the canonical chat template with correct turn separators.)
+ *   3. Print both, and report exact match / prefix match / diverged.
+ *
+ * Interpretation:
+ *   - Identical or strong prefix match -> multi-turn KV-cache path is
+ *     structurally equivalent to the single-prompt canonical form.
+ *   - Diverged early -> KV-cache state (positions, separator tokens,
+ *     residual data) does not match the canonical prefill, indicating
+ *     a multi-turn bug.
+ */
+int run_compare_modes(bool verbose) {
+  printSection("Compare Modes: Multi-Turn vs Single-Prompt");
+
+  const char *q1 = "My name is Alice. Please remember my name.";
+  const char *q2 = "What is my name?";
+
+  // ---- (1) Multi-turn with KV-cache reuse ----
+  std::cout << COLOR_BOLD << "[MT] Reset + 2 incremental turns" << COLOR_RESET
+            << "\n";
+  ErrorCode rerr = resetConversation();
+  if (rerr != CAUSAL_LM_ERROR_NONE) {
+    printError("resetConversation() failed before MT run.");
+    return 1;
+  }
+
+  CausalLMChatMessage mt1_msgs[] = {{"user", q1}};
+  const char *mt1_out_c = nullptr;
+  std::cout << COLOR_BOLD << "MT turn 1" << COLOR_RESET << "\n";
+  ErrorCode err = runModelWithMessages(mt1_msgs, 1, true, &mt1_out_c);
+  if (err != CAUSAL_LM_ERROR_NONE || !mt1_out_c) {
+    printError("MT turn 1 runModelWithMessages failed");
+    return 2;
+  }
+  std::string a1_mt = mt1_out_c;
+  std::cout << COLOR_GREEN << "  A1_MT: " << COLOR_RESET << a1_mt << "\n\n";
+
+  CausalLMChatMessage mt2_msgs[] = {{"user", q2}};
+  const char *mt2_out_c = nullptr;
+  std::cout << COLOR_BOLD << "MT turn 2 (reuses turn-1 KV cache)" << COLOR_RESET
+            << "\n";
+  err = runModelWithMessages(mt2_msgs, 1, true, &mt2_out_c);
+  if (err != CAUSAL_LM_ERROR_NONE || !mt2_out_c) {
+    printError("MT turn 2 runModelWithMessages failed");
+    return 3;
+  }
+  std::string a2_mt = mt2_out_c;
+  std::cout << COLOR_GREEN << "  A2_MT: " << COLOR_RESET << a2_mt << "\n\n";
+
+  // ---- (2) Single-prompt canonical reference ----
+  std::cout << COLOR_BOLD
+            << "[SP] Reset + 1 call with full [user, assistant, user] history"
+            << COLOR_RESET << "\n";
+  rerr = resetConversation();
+  if (rerr != CAUSAL_LM_ERROR_NONE) {
+    printError("resetConversation() failed before SP run.");
+    return 4;
+  }
+
+  CausalLMChatMessage sp_msgs[] = {
+    {"user", q1},
+    {"assistant", a1_mt.c_str()},
+    {"user", q2},
+  };
+  const char *sp_out_c = nullptr;
+  err = runModelWithMessages(sp_msgs, 3, true, &sp_out_c);
+  if (err != CAUSAL_LM_ERROR_NONE || !sp_out_c) {
+    printError("SP runModelWithMessages failed");
+    return 5;
+  }
+  std::string a2_sp = sp_out_c;
+  std::cout << COLOR_GREEN << "  A2_SP: " << COLOR_RESET << a2_sp << "\n\n";
+
+  // ---- (3) Compare ----
+  printSection("Comparison Report");
+  std::cout << COLOR_BOLD << "A2_MT" << COLOR_RESET << " (multi-turn, "
+            << a2_mt.size() << " chars):\n  " << COLOR_YELLOW << a2_mt
+            << COLOR_RESET << "\n\n";
+  std::cout << COLOR_BOLD << "A2_SP" << COLOR_RESET << " (single-prompt, "
+            << a2_sp.size() << " chars):\n  " << COLOR_YELLOW << a2_sp
+            << COLOR_RESET << "\n\n";
+
+  // Exact match?
+  if (a2_mt == a2_sp) {
+    printSuccess("EXACT MATCH — multi-turn KV-cache output == canonical.");
+    std::cout << "\n";
+    return 0;
+  }
+
+  // Longest common prefix (char-level).
+  size_t lcp = 0;
+  const size_t n = std::min(a2_mt.size(), a2_sp.size());
+  while (lcp < n && a2_mt[lcp] == a2_sp[lcp])
+    ++lcp;
+  size_t denom = std::max(a2_mt.size(), a2_sp.size());
+  double prefix_ratio =
+    denom > 0 ? static_cast<double>(lcp) / static_cast<double>(denom) : 1.0;
+
+  std::cout << COLOR_BOLD << "Longest common prefix: " << COLOR_RESET << lcp
+            << " chars (" << std::fixed << std::setprecision(1)
+            << (prefix_ratio * 100.0) << "% of longer output)\n";
+  if (lcp < n) {
+    std::cout << COLOR_BOLD << "First divergence at char " << lcp << COLOR_RESET
+              << ":\n";
+    std::cout << "  MT: ...\"" << a2_mt.substr(lcp, 32) << "\"\n";
+    std::cout << "  SP: ...\"" << a2_sp.substr(lcp, 32) << "\"\n";
+  }
+
+  if (prefix_ratio >= 0.90) {
+    printSuccess("Strong prefix match (>=90%) — multi-turn closely tracks "
+                 "canonical.");
+    return 0;
+  }
+  printWarning("Outputs DIVERGED — multi-turn KV-cache path does not match "
+               "the canonical single-prompt template. Inspect KV-cache "
+               "boundary tokens and position indexing.");
+  return 6;
+}
 } // namespace
 
 int main(int argc, char *argv[]) {
@@ -410,6 +544,7 @@ int main(int argc, char *argv[]) {
   // remain byte-identical.
   bool mode_verify_memory = false;
   bool mode_multi_turn = false;
+  bool mode_compare = false;
   std::vector<char *> filtered_argv;
   filtered_argv.reserve(argc);
   for (int i = 0; i < argc; ++i) {
@@ -422,10 +557,17 @@ int main(int argc, char *argv[]) {
       mode_multi_turn = true;
       continue;
     }
+    if (a == "--compare-modes") {
+      mode_compare = true;
+      continue;
+    }
     filtered_argv.push_back(argv[i]);
   }
-  if (mode_verify_memory && mode_multi_turn) {
-    printError("--verify-memory and --multi-turn are mutually exclusive.");
+  int num_modes = (int)mode_verify_memory + (int)mode_multi_turn +
+                  (int)mode_compare;
+  if (num_modes > 1) {
+    printError("--verify-memory, --multi-turn and --compare-modes are "
+               "mutually exclusive.");
     return 1;
   }
   argc = static_cast<int>(filtered_argv.size());
@@ -563,6 +705,9 @@ int main(int argc, char *argv[]) {
   }
   if (mode_multi_turn) {
     return run_multi_turn_repl(verbose);
+  }
+  if (mode_compare) {
+    return run_compare_modes(verbose);
   }
 
 
