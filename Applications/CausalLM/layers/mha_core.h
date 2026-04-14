@@ -304,6 +304,15 @@ public:
    */
   WIN_EXPORT void resetCache() { cache_index = 0; }
 
+  /**
+   * @brief Read the current KV-cache write position.
+   * @return Number of tokens currently stored in this layer's KV cache.
+   * @note  Intended for diagnostics (e.g. verifying multi-turn cache
+   *        continuity). The returned value equals the slot index where the
+   *        next incremental_forwarding() call will start writing.
+   */
+  WIN_EXPORT unsigned int getCacheIndex() const { return cache_index; }
+
   inline static const std::string type = "mha_core";
 
 private:

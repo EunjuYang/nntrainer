@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <app_context.h>
 #include <cmath>
+#include <cstdlib>
 #include <engine.h>
 #include <fstream>
 #include <iostream>
@@ -158,6 +159,43 @@ void CausalLM::registerOutputs(
     }
   }
 }
+
+namespace {
+/**
+ * @brief Whether to emit multi-turn KV-cache diagnostic logs.
+ *        Enabled by setting the env var CAUSALLM_DEBUG_KV to a non-empty,
+ *        non-"0" value. Disabled by default (zero overhead).
+ */
+static bool causal_lm_kv_debug_enabled() {
+  const char *env = std::getenv("CAUSALLM_DEBUG_KV");
+  return env && env[0] != '\0' && env[0] != '0';
+}
+
+/**
+ * @brief Read the cache_index of the first MHACoreLayer reachable from the
+ *        given model, for diagnostic dumps. Returns UINT_MAX if no such
+ *        layer is found or the model is null.
+ */
+static unsigned int causal_lm_first_mha_cache_index(ml::train::Model *model) {
+  unsigned int ci = UINT_MAX;
+  if (!model)
+    return ci;
+  std::function<void(ml::train::Layer &, nntrainer::RunLayerContext &, void *)>
+    fn = [](ml::train::Layer &l, nntrainer::RunLayerContext & /*context*/,
+            void *user_data) {
+      auto *out = static_cast<unsigned int *>(user_data);
+      if (*out != UINT_MAX)
+        return; // already captured the first one
+      if (l.getType() == causallm::MHACoreLayer::type) {
+        if (auto *mha = dynamic_cast<causallm::MHACoreLayer *>(&l)) {
+          *out = mha->getCacheIndex();
+        }
+      }
+    };
+  model->forEachLayer(fn, &ci);
+  return ci;
+}
+} // namespace
 
 void CausalLM::resetConversation() {
   global_token_len = 0;
@@ -487,6 +525,16 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   // (RoPE indices and KV-cache write offsets all derive from the same base).
   const unsigned int base_pos = SYS_PROMP_LEN + global_token_len;
 
+  if (causal_lm_kv_debug_enabled()) {
+    unsigned int ci = causal_lm_first_mha_cache_index(model.get());
+    std::cerr << "[CausalLM][KVDBG] turn-entry:"
+              << " global_token_len=" << global_token_len
+              << " SYS_PROMP_LEN=" << SYS_PROMP_LEN << " base_pos=" << base_pos
+              << " init_len=" << init_len
+              << " first_mha_cache_index=" << ci
+              << " (expected=" << base_pos << ")" << std::endl;
+  }
+
   if (base_pos + init_len + NUM_TO_GENERATE > MAX_SEQ_LEN) {
     free(input_sample);
     std::cerr << "[CausalLM] context overflow: base_pos=" << base_pos
@@ -499,6 +547,13 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
   output = model->incremental_inference(BATCH_SIZE, input, label, init_len,
                                         base_pos, base_pos + input_len, false);
+
+  if (causal_lm_kv_debug_enabled()) {
+    unsigned int ci = causal_lm_first_mha_cache_index(model.get());
+    std::cerr << "[CausalLM][KVDBG] post-prefill:"
+              << " first_mha_cache_index=" << ci
+              << " (expected=" << (base_pos + input_len) << ")" << std::endl;
+  }
 
   // post process of model output
   std::vector<unsigned int> id_list(generate_multi_tokens(
@@ -585,6 +640,15 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   }
 
   global_token_len += (generation_cnt + init_len);
+
+  if (causal_lm_kv_debug_enabled()) {
+    unsigned int ci = causal_lm_first_mha_cache_index(model.get());
+    std::cerr << "[CausalLM][KVDBG] turn-exit:"
+              << " generation_cnt=" << generation_cnt
+              << " new global_token_len=" << global_token_len
+              << " first_mha_cache_index=" << ci
+              << " (expected=" << global_token_len << ")" << std::endl;
+  }
 
   auto finish_generation = std::chrono::high_resolution_clock::now();
   auto generation_duration =
