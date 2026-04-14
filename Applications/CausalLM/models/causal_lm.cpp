@@ -296,6 +296,11 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
   has_run_ = false;
 
+  // Multi-turn safety: drop any decoder state left over from a previous run.
+  // If a prior turn ended mid-punctuation or mid-UTF-8 token, pending_ids_
+  // would leak into this turn's decoding and corrupt output.
+  pending_ids_.clear();
+
   output_list.clear();
   for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
     output_list.push_back("");
@@ -448,9 +453,28 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   } else {
     SYS_PROMP_LEN = 0;
   }
+
+  // Absolute base position for this turn in the (persistent) KV cache.
+  // - SYS_PROMP_LEN: precomputed system-prompt length (0 when not using a
+  //   precomputed system-prompt KV cache).
+  // - global_token_len: total tokens written by all previous run() calls on
+  //   this model instance, accumulated for multi-turn conversations.
+  // Using a single base_pos keeps prefill and generation phases consistent
+  // (RoPE indices and KV-cache write offsets all derive from the same base).
+  const unsigned int base_pos = SYS_PROMP_LEN + global_token_len;
+
+  if (base_pos + init_len + NUM_TO_GENERATE > MAX_SEQ_LEN) {
+    free(input_sample);
+    std::cerr << "[CausalLM] context overflow: base_pos=" << base_pos
+              << " input=" << init_len << " gen=" << NUM_TO_GENERATE
+              << " max_seq_len=" << MAX_SEQ_LEN
+              << ". Call resetConversation() to start a new conversation."
+              << std::endl;
+    throw std::runtime_error("CausalLM context overflow");
+  }
+
   output = model->incremental_inference(BATCH_SIZE, input, label, init_len,
-                                        SYS_PROMP_LEN,
-                                        SYS_PROMP_LEN + input_len, false);
+                                        base_pos, base_pos + input_len, false);
 
   // post process of model output
   std::vector<unsigned int> id_list(generate_multi_tokens(
@@ -472,7 +496,9 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
    * TOKEN GENERATION
    */
 
-  input_len += SYS_PROMP_LEN;
+  // Shift input_len into absolute-position space so that token_generation_idx
+  // below indexes the cache in the same frame as the prefill call above.
+  input_len += base_pos;
 
   // Update generated token by prefill as an input
   for (unsigned int b = 0; b < BATCH_SIZE; ++b)
@@ -487,13 +513,13 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
     auto output_interval =
       model->incremental_inference(BATCH_SIZE, input, label, input_len,
-                                   token_generation_idx - 1 + global_token_len,
-                                   token_generation_idx + global_token_len);
+                                   token_generation_idx - 1,
+                                   token_generation_idx);
     std::vector<unsigned int> ids_list(generate(output_interval[0], do_sample));
     if (token_generation_idx < input_len) {
       for (unsigned int b = 0; b < BATCH_SIZE; ++b) {
         input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
-          static_cast<float>(init_input[token_generation_idx - SYS_PROMP_LEN]);
+          static_cast<float>(init_input[token_generation_idx - base_pos]);
       }
       registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list,
                       log_output);
