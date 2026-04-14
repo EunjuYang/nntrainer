@@ -64,6 +64,9 @@ typedef struct {
   bool use_chat_template; /// < @brief Whether to apply chat template to input
   bool debug_mode; /// < @brief Check model file validity during initialization
   bool verbose;    /// < @brief Whether to print output during generation
+  const char
+    *chat_template_name; /// < @brief Template name to select from array
+                         ///  (e.g., "default", "tool_use"). NULL for "default".
 } Config;
 
 /**
@@ -83,6 +86,15 @@ typedef enum {
   CAUSAL_LM_QUANTIZATION_W8A16 = 3,  ///< 8-bit weights, 16-bit activations
   CAUSAL_LM_QUANTIZATION_W32A32 = 4, ///< 32-bit weights, 32-bit activations
 } ModelQuantizationType;
+
+/**
+ * @brief Chat message structure for chat template formatting
+ * @note  Compatible with HuggingFace apply_chat_template() format
+ */
+typedef struct {
+  const char *role;    /**< Message role: "system", "user", or "assistant" */
+  const char *content; /**< Message content text */
+} CausalLMChatMessage;
 
 /**
  * @brief Load a model
@@ -123,6 +135,32 @@ WIN_EXPORT ErrorCode runModel(const char *inputTextPrompt,
  *         CAUSAL_LM_ERROR_NOT_INITIALIZED if no model is loaded.
  */
 WIN_EXPORT ErrorCode resetConversation(void);
+
+/**
+ * @brief Run inference with chat template formatted messages
+ * @param messages Array of chat messages with role and content
+ * @param num_messages Number of messages in the array
+ * @param add_generation_prompt Whether to append generation prompt at end
+ * @param outputText Buffer to store output text (owned by the library)
+ * @return ErrorCode
+ */
+WIN_EXPORT ErrorCode runModelWithMessages(const CausalLMChatMessage *messages,
+                                          size_t num_messages,
+                                          bool add_generation_prompt,
+                                          const char **outputText);
+
+/**
+ * @brief Apply chat template to messages without running inference
+ * @param messages Array of chat messages with role and content
+ * @param num_messages Number of messages in the array
+ * @param add_generation_prompt Whether to append generation prompt at end
+ * @param formattedText Buffer to store formatted text (owned by the library)
+ * @return ErrorCode
+ */
+WIN_EXPORT ErrorCode applyChatTemplate(const CausalLMChatMessage *messages,
+                                       size_t num_messages,
+                                       bool add_generation_prompt,
+                                       const char **formattedText);
 
 #ifdef __cplusplus
 }
