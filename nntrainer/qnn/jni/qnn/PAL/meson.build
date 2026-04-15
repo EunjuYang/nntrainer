@@ -18,12 +18,12 @@ pal_sources = [
 ]
 
 foreach s : pal_sources
-  nntrainer_sources += meson.current_source_dir() / s
+  qnn_sources += meson.current_source_dir() / s
 endforeach
 
-nntrainer_inc_abs += meson.current_source_dir() / 'include'
+qnn_inc_abs += meson.current_source_dir() / 'include'
 
-qnn_include_dir = nntrainer_prefix / 'include' / 'nntrainer' / 'npu' / 'qnn'
+qnn_include_dir = quick_dot_ai_prefix / 'include' / 'nntrainer' / 'npu' / 'qnn'
 
 install_subdir ('PAL', install_dir : qnn_include_dir )
 

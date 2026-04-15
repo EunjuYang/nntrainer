@@ -6,7 +6,7 @@ gpu_headers=[
 'QnnGpuOpPackage.h',
 ]
 
-qnn_dir_include_dir = nntrainer_prefix / 'include' / 'nntrainer' / 'npu' / 'qnn' / 'QNN'
+qnn_dir_include_dir = quick_dot_ai_prefix / 'include' / 'nntrainer' / 'npu' / 'qnn' / 'QNN'
 
 install_subdir ('GPU', install_dir : qnn_dir_include_dir )
 

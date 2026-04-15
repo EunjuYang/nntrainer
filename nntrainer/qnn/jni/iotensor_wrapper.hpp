@@ -18,7 +18,6 @@ public:
   setupInputAndOutputTensors(Qnn_Tensor_t **inputs, Qnn_Tensor_t **outputs,
                              qnn_wrapper_api::GraphInfo_t graphInfo) {
     auto returnStatus = StatusCode::SUCCESS;
-#ifdef ENABLE_NPU
     if (StatusCode::SUCCESS != setupTensorsNoCopy(inputs,
                                                   graphInfo.numInputTensors,
                                                   (graphInfo.inputTensors))) {
@@ -31,18 +30,6 @@ public:
       ml_loge("Failure in setting up output tensors");
       returnStatus = StatusCode::FAILURE;
     }
-#else
-    if (StatusCode::SUCCESS != setupTensors(inputs, graphInfo.numInputTensors,
-                                            (graphInfo.inputTensors))) {
-      ml_loge("Failure in setting up input tensors");
-      returnStatus = StatusCode::FAILURE;
-    }
-    if (StatusCode::SUCCESS != setupTensors(outputs, graphInfo.numOutputTensors,
-                                            (graphInfo.outputTensors))) {
-      ml_loge("Failure in setting up output tensors");
-      returnStatus = StatusCode::FAILURE;
-    }
-#endif
     if (StatusCode::SUCCESS != returnStatus) {
       ml_loge("Failure in setupInputAndOutputTensors, cleaning up resources");
       if (nullptr != *inputs) {

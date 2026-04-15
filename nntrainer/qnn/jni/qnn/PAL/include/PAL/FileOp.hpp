@@ -29,6 +29,26 @@ class FileOp;
 //------------------------------------------------------------------------------
 class pal::FileOp {
  public:
+  enum class AccessMode : int32_t {
+    O_RDONLY_  = O_RDONLY,   // File access flag: Read only
+    O_WRONLY_  = O_WRONLY,   // File access flag: Write only
+    O_RDWR_    = O_RDWR,     // File access flag: Read and write
+    O_CREAT_   = O_CREAT,    // File creation flag: Create file or open existing
+    O_EXCL_    = O_EXCL,     // File creation flag: Opens file, creates if DNE (use with O_CREAT)
+    O_TRUNC_   = O_TRUNC,    // File creation flag: Truncate file on open
+    O_APPEND_  = O_APPEND    // File status flag: Open file and shift fp to end of file
+  };
+
+  friend AccessMode operator&(AccessMode lhs, AccessMode rhs) {
+    return static_cast<AccessMode>(static_cast<uint32_t>(lhs) & static_cast<uint32_t>(rhs));
+  }
+  friend AccessMode operator|(AccessMode lhs, AccessMode rhs) {
+    return static_cast<AccessMode>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
+  }
+  static AccessMode getFileAccessMode(AccessMode mode) {
+    return mode & (AccessMode::O_RDONLY_ | AccessMode::O_WRONLY_ | AccessMode::O_RDWR_);
+  }
+
   // enum for symbolic constants mode, strictly follow linux usage
   // windows or another OS user should transfer the usage
   // ref : http://man7.org/linux/man-pages/man2/open.2.html
@@ -47,6 +67,57 @@ class pal::FileOp {
     S_IWOTH_   = 0002,
     S_IXOTH_   = 0001
   };
+
+  friend FileMode operator&(FileMode lhs, FileMode rhs) {
+    return static_cast<FileMode>(static_cast<uint32_t>(lhs) & static_cast<uint32_t>(rhs));
+  }
+  friend FileMode operator|(FileMode lhs, FileMode rhs) {
+    return static_cast<FileMode>(static_cast<uint32_t>(lhs) | static_cast<uint32_t>(rhs));
+  }
+
+  //---------------------------------------------------------------------------
+  /// @brief
+  ///   Open a file
+  /// @param path, flags
+  ///   Path to check, flags to set permissions
+  /// @return
+  ///   Returns a file descriptor or -1 to indicate a failure
+  ///
+  /// For examples:
+  /// -# open a write/read file:
+  ///    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ///    int32_t fd = pal::FileOp::open(path, pal::FileOp::AccessMode::O_RDWR_);
+  ///    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  /// -# open a read-only file:
+  ///    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ///    int32_t fd = pal::FileOp::open(path, pal::FileOp::AccessMode::O_RDONLY_);
+  ///    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  /// -# open a write only file with append:
+  ///    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ///    int32_t fd = pal::FileOp::open(path, pal::FileOp::AccessMode::O_WRONLY_ |
+  ///                                         pal::FileOp::AccessMode::O_APPEND);
+  ///    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  /// -# open/create a new file with user write/read/exec + other read only
+  ///    + group read only
+  ///    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ///    int32_t fd = pal::FileOp::open(path, pal::FileOp::AccessMode::O_CREAT_ |
+  ///    pal::FileOp::AccessMode::O_RDWR_, pal::FileOp::FileMode::S_IRWXU_ |
+  ///    pal::FileOp::FileMode::S_IRGRP_ | pal::FileOp::FileMode::S_IROTH_);
+  ///    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ///    In this case, linux can work as expected. Windows will creat a file with
+  ///    both read and write since at least one of three kinds can read.
+  //--------------------------------------------------------------------------
+  static int32_t open(const std::string &path, AccessMode flags, FileMode mode = FileMode::S_DEFAULT_);
+
+  //---------------------------------------------------------------------------
+  /// @brief
+  ///   Closes a file
+  /// @param fd
+  ///   File descriptor
+  /// @return
+  ///   Returns 0 if successful, -1 otherwise
+  //---------------------------------------------------------------------------
+  static int32_t close(int32_t fd);
 
   //---------------------------------------------------------------------------
   /// @brief

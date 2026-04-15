@@ -1,4 +1,4 @@
-nntrainer_inc += include_directories('.')
+qnn_inc += include_directories('.')
 
 
 wrapper_util_sources = [
@@ -10,10 +10,10 @@ wrapper_util_headers=[
 ]
 
 foreach s : wrapper_util_sources
-  nntrainer_sources += meson.current_source_dir() / s
+  qnn_sources += meson.current_source_dir() / s
 endforeach
 
-qnn_include_dir = nntrainer_prefix / 'include' / 'nntrainer' / 'npu' / 'qnn'
+qnn_include_dir = quick_dot_ai_prefix / 'include' / 'nntrainer' / 'npu' / 'qnn'
 
 install_subdir ('WrapperUtils', install_dir : qnn_include_dir )
 

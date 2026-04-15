@@ -34,7 +34,7 @@ qnn_dir_headers=[
  'QnnSignal.h',
 ]
 
-qnn_include_dir = nntrainer_prefix / 'include' / 'nntrainer' / 'npu' / 'qnn'
+qnn_include_dir = quick_dot_ai_prefix / 'include' / 'nntrainer' / 'npu' / 'qnn'
 
 install_subdir ('QNN', install_dir : qnn_include_dir )
 
