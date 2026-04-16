@@ -13,6 +13,7 @@
 
 #include <limits>
 #include <llm_util.hpp>
+#include <unordered_set>
 #include <utility>
 
 std::vector<unsigned int> generate_multi_tokens(
@@ -53,11 +54,21 @@ std::vector<unsigned int> generate_multi_tokens(
 void applyRepetitionPenalty(float *logits, unsigned int *input_ids,
                             unsigned int NUM_INPUT_IDS,
                             float repetition_penalty) {
+  // Apply the penalty *once per unique token id*. The previous implementation
+  // walked input_ids directly, so a token that appeared k times got penalised
+  // k times (i.e. logit /= repetition_penalty^k for positive logits), which
+  // compounds exponentially over long contexts. HuggingFace applies the
+  // penalty once per unique token; matching that behaviour here.
+  std::unordered_set<unsigned int> seen;
+  seen.reserve(NUM_INPUT_IDS);
   for (unsigned int i = 0; i < NUM_INPUT_IDS; ++i) {
-    if (logits[input_ids[i]] < 0) {
-      logits[input_ids[i]] *= repetition_penalty;
+    const unsigned int id = input_ids[i];
+    if (!seen.insert(id).second)
+      continue;
+    if (logits[id] < 0) {
+      logits[id] *= repetition_penalty;
     } else {
-      logits[input_ids[i]] /= repetition_penalty;
+      logits[id] /= repetition_penalty;
     }
   }
 }
