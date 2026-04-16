@@ -7,6 +7,9 @@
 .cache/
 .idea/
 
+# meson wrap lock file (local to each dev's setup)
+/subprojects/.wraplock
+
 # jni build files
 libs/
 obj/
