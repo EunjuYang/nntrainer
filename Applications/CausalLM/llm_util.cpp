@@ -171,3 +171,97 @@ float applyTKP(float *logits, int len, float temperature, unsigned int top_k,
 
   return heap[0].first;
 }
+
+/**
+ * @brief Compact variant of applyTKP.
+ *
+ *        See the declaration in llm_util.hpp. This version is used by the
+ *        token-generation hot path so that the subsequent softmax and sampler
+ *        only touch the `k` (<= top_k) survivors rather than the full
+ *        vocabulary.
+ */
+float applyTKPCompact(const float *logits, int len, float temperature,
+                      unsigned int top_k, float top_p,
+                      std::vector<std::pair<int, float>> &survivors) {
+
+  // Temperature scaling is monotonic for temperature > 0, so we can do top-k
+  // on unscaled logits and only scale the survivors. This avoids a full-vocab
+  // pass for temperature.
+  const bool apply_temp =
+    (temperature > 1e-5f && std::fabs(temperature - 1.0f) > 1e-6f);
+  const float inv_temp = apply_temp ? (1.0f / temperature) : 1.0f;
+
+  const bool disable_topk =
+    (top_k == 0 || top_k >= static_cast<unsigned int>(len));
+  const bool disable_topp = (top_p >= 1.0f);
+
+  // Fast path: no top-k and no top-p. Only the argmax matters in practice;
+  // but callers that request this path still need survivors populated so they
+  // can sample. Because sampling over the entire vocabulary is what the user
+  // asked for in this case, fall through to the generic selection below with
+  // k == len.
+  const unsigned int k =
+    disable_topk ? static_cast<unsigned int>(len) : top_k;
+
+  survivors.clear();
+  survivors.reserve(k);
+
+  // min-heap by logit value -- smallest on top so we can evict efficiently.
+  auto min_heap_cmp = [](const std::pair<int, float> &a,
+                         const std::pair<int, float> &b) {
+    return a.second > b.second;
+  };
+
+  // Build a size-k min-heap over (index, unscaled-logit) pairs.
+  for (unsigned int i = 0; i < k; ++i)
+    survivors.emplace_back(static_cast<int>(i), logits[i]);
+  std::make_heap(survivors.begin(), survivors.end(), min_heap_cmp);
+
+  for (int i = static_cast<int>(k); i < len; ++i) {
+    if (logits[i] > survivors.front().second) {
+      std::pop_heap(survivors.begin(), survivors.end(), min_heap_cmp);
+      survivors.back() = {i, logits[i]};
+      std::push_heap(survivors.begin(), survivors.end(), min_heap_cmp);
+    }
+  }
+
+  // Sort survivors in descending order of logit.
+  std::sort(survivors.begin(), survivors.end(),
+            [](const std::pair<int, float> &a,
+               const std::pair<int, float> &b) {
+              return a.second > b.second;
+            });
+
+  // Apply temperature scaling on the (up to) k survivors.
+  if (apply_temp) {
+    for (auto &p : survivors)
+      p.second *= inv_temp;
+  }
+
+  // Apply top-p (nucleus) on probabilities. Numerically-stable softmax over
+  // the k survivors, then cumulative-sum cutoff.
+  if (!disable_topp) {
+    const float max_l = survivors[0].second;
+    float sum_exp = 0.0f;
+    std::vector<float> probs(survivors.size());
+    for (size_t i = 0; i < survivors.size(); ++i) {
+      probs[i] = std::exp(survivors[i].second - max_l);
+      sum_exp += probs[i];
+    }
+    const float inv_sum = (sum_exp > 0.0f) ? (1.0f / sum_exp) : 0.0f;
+    float cum = 0.0f;
+    size_t keep = 0;
+    for (size_t i = 0; i < probs.size(); ++i) {
+      cum += probs[i] * inv_sum;
+      ++keep;
+      if (cum >= top_p)
+        break;
+    }
+    if (keep == 0)
+      keep = 1;
+    survivors.resize(keep);
+  }
+
+  return survivors.empty() ? -std::numeric_limits<float>::infinity()
+                           : survivors[0].second;
+}

@@ -251,25 +251,25 @@ std::vector<unsigned int> CausalLM::generate(float *logits, bool do_sample,
         std::distance(logits, std::max_element(logits, logits + NUM_VOCAB));
       outputs.push_back(argmax_idx);
     } else {
-      // apply temperature & top-k & top-p to logits
-      float max_logits = applyTKP(logits, NUM_VOCAB, TEMPERATURE, TOP_K, TOP_P);
-      // transform logits to softmax
-      float sum_exp_logits = 0;
-      for (unsigned int i = 0; i < NUM_VOCAB; i++) {
-        float exp_x = exp(logits[i] - max_logits);
-        sum_exp_logits += exp_x;
-        logits[i] = exp_x;
+      // Run temperature + top-k + top-p on a compact survivors buffer so
+      // the softmax and sampler only touch the (at most) top_k candidates
+      // instead of the full vocabulary (typically 100k+ entries).
+      std::vector<std::pair<int, float>> survivors;
+      float max_logit = applyTKPCompact(logits, NUM_VOCAB, TEMPERATURE, TOP_K,
+                                        TOP_P, survivors);
+
+      // Softmax over survivors only. `discrete_distribution` normalises
+      // internally, so passing raw exps is sufficient.
+      std::vector<float> probs(survivors.size());
+      for (size_t i = 0; i < survivors.size(); ++i) {
+        probs[i] = std::exp(survivors[i].second - max_logit);
       }
 
-      for (unsigned int i = 0; i < NUM_VOCAB; ++i) {
-        logits[i] /= sum_exp_logits;
-      }
+      std::discrete_distribution<size_t> dist(probs.begin(), probs.end());
+      size_t local_idx = dist(rng);
+      unsigned int sampled_idx =
+        static_cast<unsigned int>(survivors[local_idx].first);
 
-      // sample from final logits
-      std::discrete_distribution<int> dist(logits, logits + NUM_VOCAB);
-      unsigned int sampled_idx = dist(rng);
-
-      // add sampled word
       outputs.push_back(sampled_idx);
     }
 

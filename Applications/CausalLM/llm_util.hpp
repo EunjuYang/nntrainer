@@ -17,6 +17,8 @@
 #include <algorithm> // sort
 #include <math.h>    // INFINITY
 #include <optional>
+#include <utility> // pair
+#include <vector>
 
 #include <base_properties.h>
 #include <common.h>
@@ -112,5 +114,27 @@ void applyBadWordsPenalty(float *logits, unsigned int *bad_words_ids,
  */
 float applyTKP(float *logits, int len, float temperature, unsigned int top_k,
                float top_p);
+
+/**
+ * @brief Compact variant of applyTKP.
+ *
+ *        Does not mutate the input logits. Instead it populates `survivors`
+ *        with the (vocab_index, temperature-scaled logit) pairs of the tokens
+ *        that pass the top-k and top-p filters, sorted by logit descending.
+ *        The caller can then run softmax + sampling over just those `k`
+ *        entries (typically k <= 64), avoiding two O(NUM_VOCAB) passes per
+ *        generated token.
+ *
+ * @param[in]  logits       raw model logits of length `len`.
+ * @param[in]  len          vocabulary length.
+ * @param[in]  temperature  temperature (<=1e-5 means "disabled").
+ * @param[in]  top_k        0 or >=len to disable.
+ * @param[in]  top_p        1.0 or greater to disable.
+ * @param[out] survivors    resized & filled with survivors (desc. by logit).
+ * @return Max logit among the survivors.
+ */
+float applyTKPCompact(const float *logits, int len, float temperature,
+                      unsigned int top_k, float top_p,
+                      std::vector<std::pair<int, float>> &survivors);
 
 #endif // __LLM_UTIL_HPP__
