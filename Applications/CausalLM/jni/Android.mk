@@ -13,9 +13,6 @@ endif
 
 NNTRAINER_INCLUDES := $(NNTRAINER_ROOT)/builddir/android_build_result/include/nntrainer
 
-# TurboQuant header (may not yet be in prebuilt includes)
-NNTRAINER_INCLUDES += $(NNTRAINER_ROOT)/nntrainer/tensor/cpu_backend
-
 # Common Includes Definition
 CAUSALLM_COMMON_INCLUDES := \
     $(LOCAL_PATH)/.. \
