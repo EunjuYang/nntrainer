@@ -33,20 +33,53 @@ std::vector<unsigned int> generate_multi_tokens(
   if (bad_words_ids != nullptr && NUM_BAD_WORDS_IDS != 0)
     applyBadWordsPenalty(logits, bad_words_ids, NUM_BAD_WORDS_IDS);
 
-  // Sort and generate multiple tokens
-  std::vector<std::pair<unsigned int, float>> top_indices_and_logits;
-  for (unsigned int i = 0; i < NUM_VOCAB; ++i) {
-    top_indices_and_logits.push_back({i, logits[i]});
-  }
-  std::partial_sort(top_indices_and_logits.begin(),
-                    top_indices_and_logits.begin() + NUM_TARGET_TOKENS,
-                    top_indices_and_logits.end(),
-                    [](auto &a, auto &b) { return a.second > b.second; });
+  if (NUM_TARGET_TOKENS == 0 || NUM_VOCAB == 0)
+    return outputs;
 
-  // add sampled words
-  for (unsigned int i = 0; i < NUM_TARGET_TOKENS; ++i) {
-    outputs.push_back(top_indices_and_logits[i].first);
+  // Fast path for NUM_TARGET_TOKENS == 1 (BATCH_SIZE == 1 is the typical
+  // deployment): just argmax. Avoids a ~NUM_VOCAB * sizeof(pair) allocation
+  // per prefill call (~1.2 MB for vocab_size=151936).
+  if (NUM_TARGET_TOKENS == 1) {
+    unsigned int argmax_idx = static_cast<unsigned int>(std::distance(
+      logits, std::max_element(logits, logits + NUM_VOCAB)));
+    outputs.push_back(argmax_idx);
+    return outputs;
   }
+
+  // General path: bounded min-heap over (logit, index) of size
+  // NUM_TARGET_TOKENS -- O(N log k) with heap memory ~k pairs instead of N.
+  const unsigned int k = std::min(NUM_TARGET_TOKENS, NUM_VOCAB);
+
+  std::vector<std::pair<float, unsigned int>> heap;
+  heap.reserve(k);
+
+  auto min_heap_cmp = [](const std::pair<float, unsigned int> &a,
+                         const std::pair<float, unsigned int> &b) {
+    return a.first > b.first; // min on top
+  };
+
+  for (unsigned int i = 0; i < k; ++i)
+    heap.emplace_back(logits[i], i);
+  std::make_heap(heap.begin(), heap.end(), min_heap_cmp);
+
+  for (unsigned int i = k; i < NUM_VOCAB; ++i) {
+    if (logits[i] > heap.front().first) {
+      std::pop_heap(heap.begin(), heap.end(), min_heap_cmp);
+      heap.back() = {logits[i], i};
+      std::push_heap(heap.begin(), heap.end(), min_heap_cmp);
+    }
+  }
+
+  // Sort top-k survivors in descending order.
+  std::sort(heap.begin(), heap.end(),
+            [](const std::pair<float, unsigned int> &a,
+               const std::pair<float, unsigned int> &b) {
+              return a.first > b.first;
+            });
+
+  outputs.reserve(k);
+  for (unsigned int i = 0; i < k; ++i)
+    outputs.push_back(heap[i].second);
 
   return outputs;
 }
