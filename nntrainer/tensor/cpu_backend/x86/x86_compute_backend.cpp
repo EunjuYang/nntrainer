@@ -512,6 +512,13 @@ void transform_int4_osv32_isv2_to_q4_0(size_t N, size_t K,
 void quantize_kv_turboquant(const float *input, uint8_t *out_packed,
                             float *out_norms, const float *rot_signs,
                             int head_dim, int num_heads) {
+#ifdef __AVX2__
+  if (head_dim == 64 || head_dim == 128) {
+    nntrainer::avx2::quantize_kv_turboquant(input, out_packed, out_norms,
+                                            rot_signs, head_dim, num_heads);
+    return;
+  }
+#endif
   __fallback_quantize_kv_turboquant(input, out_packed, out_norms, rot_signs,
                                     head_dim, num_heads);
 }

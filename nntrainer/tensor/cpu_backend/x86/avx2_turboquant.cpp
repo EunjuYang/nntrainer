@@ -126,13 +126,86 @@ static inline void rotate_query(const float *q, const float *signs, float *rq,
   fwht_avx2(rq, head_dim);
 }
 
+/**
+ * @brief Per-head TurboQuant quantize (paper Algorithm 1), AVX2 path.
+ *        head_dim must be 64 or 128; caller is responsible for gating.
+ *
+ *        Pipeline:
+ *          1) norm^2 via FMA accumulator, then sqrt.
+ *          2) rotated[i] = input[i] * (1/norm) * rot_signs[i], then FWHT.
+ *          3) Lloyd-Max quantize: idx = count of boundaries that val > b_k,
+ *             computed across 8 lanes at a time as 15 compare+sub passes.
+ *          4) Pack two nibbles per byte into out_packed.
+ */
+static inline void quantize_head_avx2(const float *input, int head_dim,
+                                      uint8_t *out_packed, float *out_norm,
+                                      const float *rot_signs,
+                                      const nntrainer::LloydMaxCodebook &cb) {
+  const int chunks = head_dim / 8; // 8 or 16
+
+  // Step 1: norm^2 → norm.
+  __m256 sum_sq = _mm256_setzero_ps();
+  for (int k = 0; k < chunks; ++k) {
+    __m256 x = _mm256_loadu_ps(input + 8 * k);
+    sum_sq = _mm256_fmadd_ps(x, x, sum_sq);
+  }
+  const float norm = std::sqrt(hsum256_ps(sum_sq));
+  *out_norm = norm;
+  const float inv_norm = (norm > 1e-10f) ? (1.0f / norm) : 0.0f;
+  const __m256 inv_norm_v = _mm256_set1_ps(inv_norm);
+
+  // Step 2: rotated = input * inv_norm * rot_signs, then FWHT.
+  alignas(32) float rotated[128];
+  for (int k = 0; k < chunks; ++k) {
+    __m256 x = _mm256_loadu_ps(input + 8 * k);
+    __m256 s = _mm256_loadu_ps(rot_signs + 8 * k);
+    _mm256_storeu_ps(rotated + 8 * k,
+                     _mm256_mul_ps(_mm256_mul_ps(x, inv_norm_v), s));
+  }
+  fwht_avx2(rotated, head_dim);
+
+  // Steps 3+4: 4-bit Lloyd-Max quantize + pack 2 nibbles per byte.
+  for (int k = 0; k < chunks; ++k) {
+    __m256 val = _mm256_loadu_ps(rotated + 8 * k);
+    __m256i idx = _mm256_setzero_si256();
+    // idx lane = #(boundaries that val > b_i). Since boundaries are sorted
+    // ascending, this yields the target bin index in [0, 15].
+    for (int b = 0; b < 15; ++b) {
+      __m256 bnd = _mm256_set1_ps(cb.boundaries[b]);
+      __m256 cmp = _mm256_cmp_ps(val, bnd, _CMP_GT_OQ);
+      // cmp lane is either all-ones (int32 = -1) or 0; subtracting -1 adds 1.
+      idx = _mm256_sub_epi32(idx, _mm256_castps_si256(cmp));
+    }
+
+    alignas(32) int32_t q[8];
+    _mm256_store_si256(reinterpret_cast<__m256i *>(q), idx);
+
+    uint8_t *out = out_packed + 4 * k;
+    out[0] = (uint8_t)((q[1] << 4) | q[0]);
+    out[1] = (uint8_t)((q[3] << 4) | q[2]);
+    out[2] = (uint8_t)((q[5] << 4) | q[4]);
+    out[3] = (uint8_t)((q[7] << 4) | q[6]);
+  }
+}
+
 } // namespace
 
 void quantize_kv_turboquant(const float *input, uint8_t *out_packed,
                             float *out_norms, const float *rot_signs,
                             int head_dim, int num_heads) {
-  nntrainer::__fallback_quantize_kv_turboquant(
-    input, out_packed, out_norms, rot_signs, head_dim, num_heads);
+  if (head_dim != 64 && head_dim != 128) {
+    nntrainer::__fallback_quantize_kv_turboquant(
+      input, out_packed, out_norms, rot_signs, head_dim, num_heads);
+    return;
+  }
+
+  const nntrainer::LloydMaxCodebook &cb = nntrainer::get_codebook(head_dim);
+  const int packed_head_bytes = head_dim / 2;
+  for (int h = 0; h < num_heads; ++h) {
+    quantize_head_avx2(input + h * head_dim, head_dim,
+                       out_packed + h * packed_head_bytes, out_norms + h,
+                       rot_signs, cb);
+  }
 }
 
 void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
