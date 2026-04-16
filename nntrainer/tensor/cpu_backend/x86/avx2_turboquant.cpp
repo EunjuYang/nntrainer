@@ -202,9 +202,59 @@ void compute_vcache_packed4(int row_num, const float *attn_weights,
                             int num_cache_head, int gqa_size, int head_dim,
                             const float *rot_signs, size_t local_window_size,
                             int head_start, int head_end) {
-  nntrainer::__fallback_compute_vcache_packed4(
-    row_num, attn_weights, vcache_packed, vcache_norms, output, num_cache_head,
-    gqa_size, head_dim, rot_signs, local_window_size, head_start, head_end);
+  if (head_dim != 64 && head_dim != 128) {
+    nntrainer::__fallback_compute_vcache_packed4(
+      row_num, attn_weights, vcache_packed, vcache_norms, output,
+      num_cache_head, gqa_size, head_dim, rot_signs, local_window_size,
+      head_start, head_end);
+    return;
+  }
+
+  const nntrainer::LloydMaxCodebook &cb = nntrainer::get_codebook(head_dim);
+  const int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  const int packed_row_bytes = num_cache_head * head_dim / 2;
+  const int packed_head_bytes = head_dim / 2;
+  const int j_start = (size_t)row_num < local_window_size
+                        ? 0
+                        : row_num + 1 - (int)local_window_size;
+  const int chunks = head_dim / 8; // 8 or 16
+
+  alignas(32) float acc[128]; // head_dim <= 128
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    for (int h = 0; h < gqa_size; ++h) {
+      // Zero the accumulator (vectorized).
+      const __m256 zero = _mm256_setzero_ps();
+      for (int k = 0; k < chunks; ++k)
+        _mm256_storeu_ps(acc + 8 * k, zero);
+
+      for (int j = j_start; j <= row_num; ++j) {
+        const float a_val =
+          attn_weights[((j - j_start) * num_cache_head + n) * gqa_size + h];
+        const uint8_t *packed_ptr =
+          vcache_packed + j * packed_row_bytes + n * packed_head_bytes;
+        const float norm = vcache_norms[j * num_cache_head + n];
+        const __m256 scale_v = _mm256_set1_ps(a_val * norm);
+
+        for (int k = 0; k < chunks; ++k) {
+          __m256i idx = unpack_4bytes_to_8_indices(packed_ptr + 4 * k);
+          __m256 centroid = _mm256_i32gather_ps(cb.centroids, idx, 4);
+          __m256 a = _mm256_loadu_ps(acc + 8 * k);
+          a = _mm256_fmadd_ps(scale_v, centroid, a);
+          _mm256_storeu_ps(acc + 8 * k, a);
+        }
+      }
+
+      fwht_avx2(acc, head_dim);
+
+      float *out_head = output + (n * gqa_size + h) * head_dim;
+      for (int k = 0; k < chunks; ++k) {
+        __m256 a = _mm256_loadu_ps(acc + 8 * k);
+        __m256 s = _mm256_loadu_ps(rot_signs + 8 * k);
+        _mm256_storeu_ps(out_head + 8 * k, _mm256_mul_ps(a, s));
+      }
+    }
+  }
 }
 
 } // namespace nntrainer::avx2
