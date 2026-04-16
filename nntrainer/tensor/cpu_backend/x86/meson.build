@@ -1,10 +1,12 @@
 simd_interface_x86_headers = [
   'x86_compute_backend.h',
   'avx2_impl.h',
+  'avx2_turboquant.h',
 ]
 simd_interface_x86_sources = [
   'x86_compute_backend.cpp',
   'avx2_impl.cpp',
+  'avx2_turboquant.cpp',
 ]
 
 # Note : if we need avx512 support in the future, remove avx2_impl.cpp from the default list
