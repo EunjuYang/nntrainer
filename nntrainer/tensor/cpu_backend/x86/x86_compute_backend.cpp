@@ -14,6 +14,7 @@
 #include <assert.h>
 
 #include <avx2_impl.h>
+#include <avx2_turboquant.h>
 #ifdef USE_BLAS
 #include <cblas_interface.h>
 #endif
@@ -511,8 +512,11 @@ void transform_int4_osv32_isv2_to_q4_0(size_t N, size_t K,
 void quantize_kv_turboquant(const float *input, uint8_t *out_packed,
                             float *out_norms, const float *rot_signs,
                             int head_dim, int num_heads) {
-  __fallback_quantize_kv_turboquant(input, out_packed, out_norms, rot_signs,
-                                    head_dim, num_heads);
+  if (head_dim == 64 || head_dim == 128) {
+    nntrainer::avx2::quantize_kv_turboquant(input, out_packed, out_norms,
+                                            rot_signs, head_dim, num_heads);
+    return;
+  }
 }
 
 void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
@@ -521,10 +525,13 @@ void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
                              int gqa_size, int tile_size,
                              const float *rot_signs, size_t local_window_size,
                              int head_start, int head_end) {
-  __fallback_compute_kcaches_packed4(query, kcache_packed, kcache_norms, output,
-                                     num_rows, num_cache_head, head_dim,
-                                     gqa_size, tile_size, rot_signs,
-                                     local_window_size, head_start, head_end);
+  if (head_dim == 64 || head_dim == 128) {
+    nntrainer::avx2::compute_kcaches_packed4(
+      query, kcache_packed, kcache_norms, output, num_rows, num_cache_head,
+      head_dim, gqa_size, tile_size, rot_signs, local_window_size, head_start,
+      head_end);
+    return;
+  }
 }
 
 void compute_vcache_packed4(int row_num, const float *attn_weights,
@@ -533,9 +540,13 @@ void compute_vcache_packed4(int row_num, const float *attn_weights,
                             int num_cache_head, int gqa_size, int head_dim,
                             const float *rot_signs, size_t local_window_size,
                             int head_start, int head_end) {
-  __fallback_compute_vcache_packed4(
-    row_num, attn_weights, vcache_packed, vcache_norms, output, num_cache_head,
-    gqa_size, head_dim, rot_signs, local_window_size, head_start, head_end);
+  if (head_dim == 64 || head_dim == 128) {
+    nntrainer::avx2::compute_vcache_packed4(
+      row_num, attn_weights, vcache_packed, vcache_norms, output,
+      num_cache_head, gqa_size, head_dim, rot_signs, local_window_size,
+      head_start, head_end);
+    return;
+  }
 }
 
 } /* namespace nntrainer */
