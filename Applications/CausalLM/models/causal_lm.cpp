@@ -98,6 +98,15 @@ void CausalLM::setupParameters(json &cfg, json &generation_cfg,
   TEMPERATURE = generation_cfg.contains("temperature")
                   ? generation_cfg["temperature"].get<float>()
                   : 0.7;
+
+  // Seed the sampling RNG. std::mt19937's default seed (5489) made every run
+  // deterministic, which is rarely what users of do_sample=true want.
+  // Allow reproducibility by honouring generation_cfg["seed"] when present.
+  unsigned int rng_seed = generation_cfg.contains("seed")
+                            ? generation_cfg["seed"].get<unsigned int>()
+                            : std::random_device{}();
+  rng.seed(rng_seed);
+
   global_token_len = 0;
 }
 
