@@ -964,6 +964,7 @@ void compute_rotary_emb_value_uint16(unsigned int width, unsigned int dim,
                                      const float *sin_,
                                      bool only_convert_to_fp16);
 #endif
+
 } // namespace nntrainer::neon
 
 #endif /* __cplusplus */

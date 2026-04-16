@@ -2395,4 +2395,5 @@ void compute_rotary_emb_value_uint16(unsigned int width, unsigned int dim,
   }
 }
 #endif
+
 } // namespace nntrainer::neon
