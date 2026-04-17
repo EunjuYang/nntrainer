@@ -517,6 +517,10 @@ void quantize_kv_turboquant(const float *input, uint8_t *out_packed,
                                             rot_signs, head_dim, num_heads);
     return;
   }
+  // AVX2 codebooks only cover head_dim 64/128. Route everything else to the
+  // scalar reference so callers always get initialized output.
+  __fallback_quantize_kv_turboquant(input, out_packed, out_norms, rot_signs,
+                                    head_dim, num_heads);
 }
 
 void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
@@ -532,6 +536,10 @@ void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
       head_end);
     return;
   }
+  __fallback_compute_kcaches_packed4(query, kcache_packed, kcache_norms, output,
+                                     num_rows, num_cache_head, head_dim,
+                                     gqa_size, tile_size, rot_signs,
+                                     local_window_size, head_start, head_end);
 }
 
 void compute_vcache_packed4(int row_num, const float *attn_weights,
@@ -547,6 +555,9 @@ void compute_vcache_packed4(int row_num, const float *attn_weights,
       head_start, head_end);
     return;
   }
+  __fallback_compute_vcache_packed4(
+    row_num, attn_weights, vcache_packed, vcache_norms, output, num_cache_head,
+    gqa_size, head_dim, rot_signs, local_window_size, head_start, head_end);
 }
 
 } /* namespace nntrainer */
