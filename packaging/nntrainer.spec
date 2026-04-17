@@ -620,6 +620,7 @@ cp -r result %{buildroot}%{_datadir}/nntrainer/unittest/
 %{_includedir}/nntrainer/neon_setting.h
 %{_includedir}/nntrainer/neon_mathfun.h
 %{_includedir}/nntrainer/neon_mathfun.hxx
+%{_includedir}/nntrainer/neon_turboquant.h
 %{_includedir}/nntrainer/matrix_transpose_neon.h
 %if 0%{?enable_fp16}
 %{_includedir}/nntrainer/hgemm.h
