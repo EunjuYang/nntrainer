@@ -612,6 +612,7 @@ cp -r result %{buildroot}%{_datadir}/nntrainer/unittest/
 %ifarch %{ix86} x86_64
 %{_includedir}/nntrainer/x86_compute_backend.h
 %{_includedir}/nntrainer/avx2_impl.h
+%{_includedir}/nntrainer/avx2_turboquant.h
 %endif
 %ifarch aarch64
 %{_includedir}/nntrainer/arm_compute_backend.h
