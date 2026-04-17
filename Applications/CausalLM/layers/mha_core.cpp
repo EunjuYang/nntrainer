@@ -264,6 +264,11 @@ void MHACoreLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
       throw std::invalid_argument(
         "to shouldn't greater than max_timestep for initial forwarding");
     } else {
+      // KV-cache shifting (ring-buffer / slide) is not implemented yet, so we
+      // refuse to write past the allocated cache rows. Without this guard the
+      // decode step silently overwrites the last row repeatedly, corrupting
+      // attention outputs.
+      throw std::runtime_error("NYI: cache shift is not available");
       // exceeds the kv_cache size
       // KV_cache is shifted!
       cache_shift = true;
