@@ -1,0 +1,141 @@
+name: "Qwen3-0.6B x86 Performance Gate"
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+    paths:
+      - 'nntrainer/**'
+      - 'Applications/CausalLM/**'
+      - 'meson.build'
+      - 'meson_options.txt'
+      - '.github/workflows/qwen3_x86_perf.yml'
+      - 'tools/ci/qwen3_**'
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 1'
+
+jobs:
+  qwen3_x86_perf:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          lfs: false
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install PPA and apt dependencies
+        run: |
+          sudo add-apt-repository -y ppa:nnstreamer/ppa
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ pkg-config libopenblas-dev \
+            libiniparser-dev libjsoncpp-dev libcurl3-dev tensorflow2-lite-dev \
+            nnstreamer-dev libglib2.0-dev libgstreamer1.0-dev libgtest-dev \
+            ml-api-common-dev flatbuffers-compiler ml-inference-api-dev \
+            libunwind-dev python3-dev python3-numpy python3 \
+            linux-tools-common linux-tools-generic || true
+
+      - name: Upgrade to gcc-13
+        run: |
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test -y
+          sudo apt-get update
+          sudo apt-get install -y --fix-broken build-essential
+          sudo apt-get install -y gcc-13 g++-13 libcc1-0 libgcc-13-dev
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 1000
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 1000
+          sudo update-alternatives --set gcc /usr/bin/gcc-13
+
+      - name: Install meson and ninja
+        run: sudo apt-get install -y meson ninja-build
+
+      - name: Fetch Qwen3-0.6B Q4_0 x86 model
+        run: |
+          git clone --depth 1 --branch main \
+            https://github.com/eunjuyang/nntrainer-causallm-models.git models
+          cd models/qwen3-0.6b-q40-x86
+          chmod +x combine.sh
+          ./combine.sh
+          test -s nntr_qwen3_0.6b_w4e4a32.bin
+          echo "Model binary size: $(du -h nntr_qwen3_0.6b_w4e4a32.bin | cut -f1)"
+
+      - name: Meson configure
+        run: |
+          meson setup build \
+            -Denable-fp16=true \
+            -Dthread-backend=omp \
+            -Denable-transformer=true \
+            -Domp-num-threads=4 \
+            -Dinstall-app=false \
+            -Denable-benchmarks=false
+        env:
+          CC: gcc
+          CXX: g++
+
+      - name: Build nntr_causallm
+        run: ninja -C build Applications/CausalLM/nntr_causallm
+
+      - name: Smoke test (correctness gate)
+        id: smoke
+        env:
+          OMP_NUM_THREADS: "4"
+          OMP_WAIT_POLICY: "active"
+          OMP_PROC_BIND: "true"
+          OMP_PLACES: "cores"
+        run: |
+          set -o pipefail
+          ./build/Applications/CausalLM/nntr_causallm \
+            "$GITHUB_WORKSPACE/models/qwen3-0.6b-q40-x86" "hello" \
+            2>&1 | tee smoke.log
+          grep -q 'generation:' smoke.log
+          grep -q '\[e2e time\]:' smoke.log
+          echo "Smoke test passed — model loads and generates successfully"
+
+      - name: Performance run (3 iterations)
+        env:
+          OMP_NUM_THREADS: "4"
+          OMP_WAIT_POLICY: "active"
+          OMP_PROC_BIND: "true"
+          OMP_PLACES: "cores"
+        run: |
+          set -o pipefail
+          for i in 1 2 3; do
+            echo "=== iteration $i ==="
+            ./build/Applications/CausalLM/nntr_causallm \
+              "$GITHUB_WORKSPACE/models/qwen3-0.6b-q40-x86" \
+              2>&1 | tee -a run.log
+            echo ""
+          done
+
+      - name: Collect perf stat (informational, non-fatal)
+        run: |
+          perf stat -e cycles,instructions \
+            ./build/Applications/CausalLM/nntr_causallm \
+            "$GITHUB_WORKSPACE/models/qwen3-0.6b-q40-x86" "hello" \
+            > perfstat.log 2>&1 || echo "perf stat unavailable (perf_event_paranoid)"
+          cat perfstat.log || true
+        env:
+          OMP_NUM_THREADS: "4"
+
+      - name: Gate against baseline
+        run: |
+          python3 tools/ci/qwen3_perf_check.py \
+            --log run.log \
+            --baseline tools/ci/qwen3_0.6b_q40_baseline.json \
+            --summary-out perf_summary.json
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwen3-0.6b-x86-perf
+          path: |
+            smoke.log
+            run.log
+            perfstat.log
+            perf_summary.json

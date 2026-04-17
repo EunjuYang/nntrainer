@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "runner": "ubuntu-22.04 (github-hosted, noisy shared VM)",
+  "model": "qwen3-0.6b-q40-x86",
+  "meson_flags": "-Denable-fp16=true -Dthread-backend=omp -Denable-transformer=true -Domp-num-threads=4",
+  "omp_num_threads": 4,
+  "iterations": 3,
+  "aggregation": "median",
+  "metrics": {
+    "prefill_tps_min": null,
+    "generation_tps_min": null,
+    "e2e_ms_max": null
+  },
+  "tolerance": {
+    "prefill_tps_pct": 20,
+    "generation_tps_pct": 20,
+    "e2e_ms_pct": 25
+  },
+  "notes": "Tolerances wide because runner is noisy. First CI run will report observed values — seed the baseline by committing actual numbers. Re-baseline after 3+ consecutive green scheduled runs on main."
+}
