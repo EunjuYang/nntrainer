@@ -324,7 +324,7 @@ void MHACoreLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   ml::train::TensorDim cache_key_step_dim = get_step_dim(cache_key_dim);
   ml::train::TensorDim cache_value_step_dim = get_step_dim(cache_value_dim);
 
-  unsigned int batch_size = (_from) ? 1 : query_dim.batch();
+  unsigned int batch_size = query_dim.batch();
 
   if (use_turboquant) {
     // TurboQuant 4-bit packed KV cache path
