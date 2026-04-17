@@ -264,11 +264,14 @@ void MHACoreLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
       throw std::invalid_argument(
         "to shouldn't greater than max_timestep for initial forwarding");
     } else {
-      // exceeds the kv_cache size
-      // KV_cache is shifted!
-      cache_shift = true;
-      from = max_timestep - 1;
-      to = max_timestep;
+      // KV-cache shifting (ring-buffer / slide) is not implemented yet, so we
+      // refuse to write past the allocated cache rows. Without this guard the
+      // decode step silently overwrites the last row repeatedly, corrupting
+      // attention outputs.
+      throw std::runtime_error("NYI: cache shift is not available");
+      // cache_shift = true;
+      // from = max_timestep - 1;
+      // to = max_timestep;
     }
   }
 
@@ -324,7 +327,7 @@ void MHACoreLayer::incremental_forwarding(nntrainer::RunLayerContext &context,
   ml::train::TensorDim cache_key_step_dim = get_step_dim(cache_key_dim);
   ml::train::TensorDim cache_value_step_dim = get_step_dim(cache_value_dim);
 
-  unsigned int batch_size = (_from) ? 1 : query_dim.batch();
+  unsigned int batch_size = query_dim.batch();
 
   if (use_turboquant) {
     // TurboQuant 4-bit packed KV cache path
