@@ -157,13 +157,83 @@ static inline void rotate_query(const float *q, const float *signs, float *rq,
   fwht_neon(rq, head_dim);
 }
 
+/**
+ * @brief Per-head TurboQuant quantize (paper Algorithm 1), NEON path.
+ *        head_dim must be 64 or 128; caller is responsible for gating.
+ *
+ *        Pipeline:
+ *          1) norm^2 via FMA accumulator, then sqrt.
+ *          2) rotated[i] = input[i] * (1/norm) * rot_signs[i], then FWHT.
+ *          3) Lloyd-Max quantize: idx = count of boundaries that val > b_k,
+ *             computed across 4 lanes at a time as 15 compare+sub passes.
+ *          4) Pack two nibbles per byte into out_packed.
+ */
+static inline void quantize_head_neon(const float *input, int head_dim,
+                                      uint8_t *out_packed, float *out_norm,
+                                      const float *rot_signs,
+                                      const nntrainer::LloydMaxCodebook &cb) {
+  const int chunks = head_dim / 4; // 16 or 32
+
+  // Step 1: norm^2 -> norm.
+  float32x4_t sum_sq = vdupq_n_f32(0.0f);
+  for (int k = 0; k < chunks; ++k) {
+    float32x4_t x = vld1q_f32(input + 4 * k);
+    sum_sq = vfmaq_f32(sum_sq, x, x);
+  }
+  const float norm = std::sqrt(hsum_f32x4(sum_sq));
+  *out_norm = norm;
+  const float inv_norm = (norm > 1e-10f) ? (1.0f / norm) : 0.0f;
+  const float32x4_t inv_norm_v = vdupq_n_f32(inv_norm);
+
+  // Step 2: rotated = input * inv_norm * rot_signs, then FWHT.
+  alignas(16) float rotated[128];
+  for (int k = 0; k < chunks; ++k) {
+    float32x4_t x = vld1q_f32(input + 4 * k);
+    float32x4_t s = vld1q_f32(rot_signs + 4 * k);
+    vst1q_f32(rotated + 4 * k, vmulq_f32(vmulq_f32(x, inv_norm_v), s));
+  }
+  fwht_neon(rotated, head_dim);
+
+  // Steps 3+4: 4-bit Lloyd-Max quantize + pack 2 nibbles per byte.
+  for (int k = 0; k < chunks; ++k) {
+    float32x4_t val = vld1q_f32(rotated + 4 * k);
+    uint32x4_t idx = vdupq_n_u32(0);
+    // idx lane = #(boundaries that val > b_i). Since boundaries are sorted
+    // ascending, this yields the target bin index in [0, 15]. cmp lane is
+    // either all-ones (treated as 2^32-1 by vsubq_u32 -> adds 1) or 0.
+    for (int b = 0; b < 15; ++b) {
+      float32x4_t bnd = vdupq_n_f32(cb.boundaries[b]);
+      uint32x4_t cmp = vcgtq_f32(val, bnd);
+      idx = vsubq_u32(idx, cmp);
+    }
+
+    alignas(16) uint32_t q[4];
+    vst1q_u32(q, idx);
+
+    uint8_t *out = out_packed + 2 * k;
+    out[0] = (uint8_t)((q[1] << 4) | q[0]);
+    out[1] = (uint8_t)((q[3] << 4) | q[2]);
+  }
+}
+
 } // namespace
 
 void quantize_kv_turboquant(const float *input, uint8_t *out_packed,
                             float *out_norms, const float *rot_signs,
                             int head_dim, int num_heads) {
-  nntrainer::__fallback_quantize_kv_turboquant(
-    input, out_packed, out_norms, rot_signs, head_dim, num_heads);
+  if (head_dim != 64 && head_dim != 128) {
+    nntrainer::__fallback_quantize_kv_turboquant(
+      input, out_packed, out_norms, rot_signs, head_dim, num_heads);
+    return;
+  }
+
+  const nntrainer::LloydMaxCodebook &cb = nntrainer::get_codebook(head_dim);
+  const int packed_head_bytes = head_dim / 2;
+  for (int h = 0; h < num_heads; ++h) {
+    quantize_head_neon(input + h * head_dim, head_dim,
+                       out_packed + h * packed_head_bytes, out_norms + h,
+                       rot_signs, cb);
+  }
 }
 
 void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
