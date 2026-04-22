@@ -600,6 +600,15 @@ void compute_kcaches_packed4(const float *query, const uint8_t *kcache_packed,
                              int gqa_size, int tile_size,
                              const float *rot_signs, size_t local_window_size,
                              int head_start, int head_end) {
+#ifdef __ARM_NEON
+  if (head_dim == 64 || head_dim == 128) {
+    nntrainer::neon::compute_kcaches_packed4(
+      query, kcache_packed, kcache_norms, output, num_rows, num_cache_head,
+      head_dim, gqa_size, tile_size, rot_signs, local_window_size, head_start,
+      head_end);
+    return;
+  }
+#endif
   __fallback_compute_kcaches_packed4(query, kcache_packed, kcache_norms, output,
                                      num_rows, num_cache_head, head_dim,
                                      gqa_size, tile_size, rot_signs,
