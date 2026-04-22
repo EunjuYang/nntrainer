@@ -621,6 +621,15 @@ void compute_vcache_packed4(int row_num, const float *attn_weights,
                             int num_cache_head, int gqa_size, int head_dim,
                             const float *rot_signs, size_t local_window_size,
                             int head_start, int head_end) {
+#ifdef __ARM_NEON
+  if (head_dim == 64 || head_dim == 128) {
+    nntrainer::neon::compute_vcache_packed4(
+      row_num, attn_weights, vcache_packed, vcache_norms, output,
+      num_cache_head, gqa_size, head_dim, rot_signs, local_window_size,
+      head_start, head_end);
+    return;
+  }
+#endif
   __fallback_compute_vcache_packed4(
     row_num, attn_weights, vcache_packed, vcache_norms, output, num_cache_head,
     gqa_size, head_dim, rot_signs, local_window_size, head_start, head_end);

@@ -232,9 +232,59 @@ void compute_vcache_packed4(int row_num, const float *attn_weights,
                             int num_cache_head, int gqa_size, int head_dim,
                             const float *rot_signs, size_t local_window_size,
                             int head_start, int head_end) {
-  nntrainer::__fallback_compute_vcache_packed4(
-    row_num, attn_weights, vcache_packed, vcache_norms, output, num_cache_head,
-    gqa_size, head_dim, rot_signs, local_window_size, head_start, head_end);
+  if (head_dim != 64 && head_dim != 128) {
+    nntrainer::__fallback_compute_vcache_packed4(
+      row_num, attn_weights, vcache_packed, vcache_norms, output,
+      num_cache_head, gqa_size, head_dim, rot_signs, local_window_size,
+      head_start, head_end);
+    return;
+  }
+
+  const nntrainer::LloydMaxCodebook &cb = nntrainer::get_codebook(head_dim);
+  const int actual_head_end = (head_end < 0) ? num_cache_head : head_end;
+  const int packed_row_bytes = num_cache_head * head_dim / 2;
+  const int packed_head_bytes = head_dim / 2;
+  const int j_start = (size_t)row_num < local_window_size
+                        ? 0
+                        : row_num + 1 - (int)local_window_size;
+  const int chunks = head_dim / 4; // 16 or 32
+
+  alignas(16) float acc[128]; // head_dim <= 128
+
+  for (int n = head_start; n < actual_head_end; ++n) {
+    for (int h = 0; h < gqa_size; ++h) {
+      // Zero the accumulator (vectorized).
+      const float32x4_t zero = vdupq_n_f32(0.0f);
+      for (int k = 0; k < chunks; ++k)
+        vst1q_f32(acc + 4 * k, zero);
+
+      for (int j = j_start; j <= row_num; ++j) {
+        const float a_val =
+          attn_weights[((j - j_start) * num_cache_head + n) * gqa_size + h];
+        const uint8_t *packed_ptr =
+          vcache_packed + j * packed_row_bytes + n * packed_head_bytes;
+        const float norm = vcache_norms[j * num_cache_head + n];
+        const float32x4_t scale_v = vdupq_n_f32(a_val * norm);
+
+        for (int k = 0; k < chunks; ++k) {
+          int32x4_t idx = unpack_2bytes_to_4_indices(packed_ptr + 2 * k);
+          float32x4_t centroid = gather_centroids(cb.centroids, idx);
+          float32x4_t a = vld1q_f32(acc + 4 * k);
+          a = vfmaq_f32(a, scale_v, centroid);
+          vst1q_f32(acc + 4 * k, a);
+        }
+      }
+
+      fwht_neon(acc, head_dim);
+
+      float *out_head = output + (n * gqa_size + h) * head_dim;
+      for (int k = 0; k < chunks; ++k) {
+        float32x4_t a = vld1q_f32(acc + 4 * k);
+        float32x4_t s = vld1q_f32(rot_signs + 4 * k);
+        vst1q_f32(out_head + 4 * k, vmulq_f32(a, s));
+      }
+    }
+  }
 }
 
 } // namespace nntrainer::neon
