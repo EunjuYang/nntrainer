@@ -4,10 +4,12 @@ arm_compute_backend_headers = [
     'neon_setting.h',
     'neon_mathfun.h',
     'neon_mathfun.hxx',
+    'neon_turboquant.h',
 ]
 arm_compute_backend_sources = [
     'arm_compute_backend.cpp',
     'neon_impl.cpp',
+    'neon_turboquant.cpp',
 ]
 
 

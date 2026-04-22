@@ -18,6 +18,7 @@
 #include <fallback_internal.h>
 #include <ggml_interface.h>
 #include <neon_impl.h>
+#include <neon_turboquant.h>
 #include <nntrainer_error.h>
 #include <q4_0_utils.h>
 
