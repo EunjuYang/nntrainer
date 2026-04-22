@@ -98,6 +98,11 @@ if get_option('enable-fp16')
   test_target += [['unittest_nntrainer_tensor_pool_fp16', []]]
 endif
 
+# arm-only: parity between scalar TurboQuant fallback and the NEON path.
+if host_machine.cpu_family() == 'arm' or host_machine.cpu_family() == 'aarch64'
+  test_target += [['unittest_turboquant_neon_parity', []]]
+endif
+
 if get_option('enable-profile')
   if gmock_dep.version().version_compare('>=1.10.0')
     test_target += [['unittest_nntrainer_profiler', []]]
