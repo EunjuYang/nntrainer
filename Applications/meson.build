@@ -55,9 +55,8 @@ if get_option('enable-transformer')
   if host_machine.system() != 'windows'
   subdir('PicoGPT/jni')
   endif
-  if (get_option('platform') != 'tizen') and (get_option('platform') != 'windows')
-    subdir('CausalLM')
-  endif
+  # CausalLM has been extracted to its own repository:
+  # https://github.com/EunjuYang/nntrainer-causallm
 endif
 
 subdir('Optimizers/jni')
