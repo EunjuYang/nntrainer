@@ -572,6 +572,10 @@ ErrorCode getPerformanceMetrics(PerformanceMetrics *metrics) {
   try {
     std::lock_guard<std::mutex> lock(g_mutex);
 
+    if (!g_model->hasRun()) {
+      return CAUSAL_LM_ERROR_INFERENCE_NOT_RUN;
+    }
+
     auto internal_metrics = g_model->getPerformanceMetrics();
     metrics->prefill_tokens = internal_metrics.prefill_tokens;
     metrics->prefill_duration_ms = internal_metrics.prefill_duration_ms;
