@@ -398,7 +398,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
   std::vector<int64_t> init_input;
   unsigned int _len = _input.size();
   unsigned int num_allow_str = MAX_SEQ_LEN - NUM_TO_GENERATE;
-  unsigned text_len = _len;
+  unsigned int text_len = _len;
 
   if (_len > num_allow_str)
     text_len = num_allow_str;
@@ -492,12 +492,13 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
     if (log_output) {
 
-      std::cout
-        << "kv caches are saved in " << PRE_COMPUTED_CACHE_PATH << std::endl
-        << "and the size of prompt is " << SYS_PROMP_LEN << ".\n"
-        << "You may need this prompt lenth to set the \"sys_prompt_token_size\""
-        << "\n==================================================\n"
-        << std::endl;
+      std::cout << "kv caches are saved in " << PRE_COMPUTED_CACHE_PATH
+                << std::endl
+                << "and the size of prompt is " << SYS_PROMP_LEN << ".\n"
+                << "You may need this prompt length to set the "
+                   "\"sys_prompt_token_size\""
+                << "\n==================================================\n"
+                << std::endl;
     }
     return;
   }
@@ -516,7 +517,7 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
 
   // post process of model output
   std::vector<unsigned int> id_list(
-    generate(output[0], do_sample, 1, ids_history, _len));
+    generate(output[0], do_sample, 1, ids_history, init_len));
 
   if (init_len < INIT_SEQ_LEN)
     registerOutputs(tokenizer, id_list, init_len, eos_list, log_output);
@@ -561,7 +562,8 @@ void CausalLM::run(const WSTR prompt, bool do_sample, const WSTR system_prompt,
       input_sample[static_cast<size_t>(b) * MAX_SEQ_LEN] =
         static_cast<float>(ids_list[b]);
     }
-    registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list, log_output);
+    registerOutputs(tokenizer, ids_list, token_generation_idx, eos_list,
+                    log_output);
     ++generation_cnt;
 
     // output should be deallocated after use
