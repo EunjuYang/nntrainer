@@ -338,13 +338,19 @@ void TimmViTTransformer::registerCustomLayers() {
 /**
  * @brief Run ViT inference on an image file path.
  */
-void TimmViTTransformer::run(const WSTR prompt, bool do_sample,
-                             const WSTR system_prompt, const WSTR tail_prompt,
+void TimmViTTransformer::run(const WSTR prompt, void *output_buf,
                              bool log_output) {
-  (void)do_sample;
+  run(prompt, WSTR(), WSTR(), output_buf, log_output);
+}
+
+/**
+ * @brief Run ViT inference on an image file path.
+ */
+void TimmViTTransformer::run(const WSTR prompt, const WSTR system_prompt,
+                             const WSTR tail_prompt, void *output_buf,
+                             bool log_output) {
   (void)system_prompt;
   (void)tail_prompt;
-  (void)log_output;
 
   if (!is_initialized) {
     throw std::runtime_error("TimmViT model is not initialized. Please call "
@@ -365,12 +371,22 @@ void TimmViTTransformer::run(const WSTR prompt, bool do_sample,
   std::vector<float *> output = model->incremental_inference(
     BATCH_SIZE, input, label, NUM_PATCHES, 0, NUM_PATCHES, false);
 
-  std::cout << std::setprecision(9) << "First 10 values: ";
-  const int print_count = DIM > 10 ? 10 : static_cast<int>(DIM);
-  for (int i = 0; i < print_count; ++i) {
-    std::cout << "[" << i << "]=" << output[0][i] << " ";
+  if (log_output) {
+    std::cout << std::setprecision(9) << "First 10 values: ";
+    const int print_count = DIM > 10 ? 10 : static_cast<int>(DIM);
+    for (int i = 0; i < print_count; ++i) {
+      std::cout << "[" << i << "]=" << output[0][i] << " ";
+    }
+    std::cout << std::endl;
   }
-  std::cout << std::endl;
+
+  if (output_buf != nullptr) {
+    *static_cast<std::vector<float *> *>(output_buf) = output;
+  } else {
+    for (auto out : output) {
+      delete[] out;
+    }
+  }
 }
 
 } // namespace causallm

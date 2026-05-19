@@ -51,7 +51,7 @@ public:
    * @brief run the SentenceTransformer model (full)
    */
   void run(const WSTR prompt, const WSTR system_prompt = WSTR(),
-           const WSTR tail_prmopt = WSTR(), void *output_buf = nullptr,
+           const WSTR tail_prompt = WSTR(), void *output_buf = nullptr,
            bool log_output = true) override;
 
   /**

@@ -145,7 +145,7 @@ protected:
   unsigned int TOP_K;
   float TOP_P;
 
-  bool DO_SAMPLE = false; /**< Whther to use sampling for generation */
+  bool DO_SAMPLE = false; /**< Whether to use sampling for generation */
 
   std::vector<unsigned int> BAD_WORD_IDS; /**< List of bad word IDs */
   unsigned int NUM_BADWORDS;              /**< Number of bad words */

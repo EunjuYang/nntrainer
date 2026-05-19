@@ -101,14 +101,14 @@ public:
   /**
    * @brief Get TransformerPerformanceMetrics
    */
-  TransformerPerformanceMetrics getPerformanceMetrics() const {
+  TransformerPerformanceMetrics getPerformanceMetrics() const override {
     return performance_metrics;
   }
 
   /**
    * @brief get the status of run
    */
-  bool hasRun() const { return has_run_; }
+  bool hasRun() const override { return has_run_; }
 
 protected:
   /**

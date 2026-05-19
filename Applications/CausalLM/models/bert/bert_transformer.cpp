@@ -247,8 +247,13 @@ Tensor BertTransformer::createMlp(const int layer_id, int dim, int hidden_dim,
   return down(activated);
 }
 
-void BertTransformer::run(const WSTR prompt, bool do_sample,
-                          const WSTR system_prompt, const WSTR tail_prompt,
+void BertTransformer::run(const WSTR prompt, void *output_buf,
+                          bool log_output) {
+  run(prompt, WSTR(), WSTR(), output_buf, log_output);
+}
+
+void BertTransformer::run(const WSTR prompt, const WSTR system_prompt,
+                          const WSTR tail_prompt, void *output_buf,
                           bool log_output) {
 
   try {
@@ -272,9 +277,14 @@ void BertTransformer::run(const WSTR prompt, bool do_sample,
       }
     }
 
-    // output should be deallocated after use.
-    for (auto out : results) {
-      delete[] out;
+    if (output_buf != nullptr) {
+      // Caller is responsible for deallocation.
+      *static_cast<std::vector<float *> *>(output_buf) = results;
+    } else {
+      // output should be deallocated after use.
+      for (auto out : results) {
+        delete[] out;
+      }
     }
   } catch (const std::exception &e) {
     std::cerr << "Error during embedding run: " << e.what() << std::endl;

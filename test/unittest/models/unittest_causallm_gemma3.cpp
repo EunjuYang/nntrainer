@@ -104,7 +104,7 @@ public:
    * @brief Run one prompt through the tiny Gemma3 model
    */
   void runPrompt(const std::string &prompt) override {
-    run(prompt, false, "", "", false);
+    run(prompt, "", "", nullptr, false);
   }
 
   /**

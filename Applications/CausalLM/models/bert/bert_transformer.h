@@ -96,10 +96,17 @@ public:
                                       const WSTR tail_prompt = "") = 0;
 
   /**
-   * @brief run the BertTransformer model
+   * @copydoc TransformerBase::run(const WSTR, void *, bool)
    */
-  void run(const WSTR prompt, bool do_sample = false,
-           const WSTR system_prompt = "", const WSTR tail_prmopt = "",
+  void run(const WSTR prompt, void *output_buf = nullptr,
+           bool log_output = true) override;
+
+  /**
+   * @brief TransformerBase::run(const WSTR, const WSTR, const WSTR, void *,
+   * bool)
+   */
+  void run(const WSTR prompt, const WSTR system_prompt = WSTR(),
+           const WSTR tail_prompt = WSTR(), void *output_buf = nullptr,
            bool log_output = true) override;
 };
 

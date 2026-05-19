@@ -30,6 +30,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 #include <layer.h>
@@ -132,8 +133,18 @@ public:
    * @param log_output Whether to log output to stdout
    */
   virtual void run(const WSTR prompt, const WSTR system_prompt = WSTR(),
-                   const WSTR tail_prompt = WSTR(),
-                   void *output_buf = nullptr, bool log_output = true) = 0;
+                   const WSTR tail_prompt = WSTR(), void *output_buf = nullptr,
+                   bool log_output = true) = 0;
+
+  /**
+   * @brief Get the latest transformer performance metrics.
+   */
+  virtual TransformerPerformanceMetrics getPerformanceMetrics() const = 0;
+
+  /**
+   * @brief Get whether run has completed successfully.
+   */
+  virtual bool hasRun() const = 0;
 
 protected:
   bool is_initialized = false; /**< Flag to check if the model is initialized */

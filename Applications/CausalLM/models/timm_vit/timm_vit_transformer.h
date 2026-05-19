@@ -81,8 +81,14 @@ protected:
   /**
    * @brief Run the model (override for ViT specific behavior)
    */
-  void run(const WSTR prompt, bool do_sample = false,
-           const WSTR system_prompt = WSTR(), const WSTR tail_prompt = WSTR(),
+  void run(const WSTR prompt, void *output_buf = nullptr,
+           bool log_output = true) override;
+
+  /**
+   * @brief Run the model (override for ViT specific behavior)
+   */
+  void run(const WSTR prompt, const WSTR system_prompt = WSTR(),
+           const WSTR tail_prompt = WSTR(), void *output_buf = nullptr,
            bool log_output = true) override;
 
 private:
